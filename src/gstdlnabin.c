@@ -78,7 +78,7 @@ gst_play_marshal_VOID__OBJECT_BOOLEAN (GClosure *closure,
 
 
 const GstElementDetails gst_dlna_bin_details
-= GST_ELEMENT_DETAILS("HTTP/DLNA client source -11/6 10:36",
+= GST_ELEMENT_DETAILS("HTTP/DLNA client source -11/6 10:47",
 		      "Source/Network",
 		      "Receive data as a client via HTTP with DLNA extensions",
 		      "Eric Winkelman <e.winkelman@cablelabs.com>");
