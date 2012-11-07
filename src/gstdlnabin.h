@@ -7,15 +7,15 @@
 G_BEGIN_DECLS
 
 #define GST_TYPE_DLNA_BIN \
-  (gst_dlna_bin_get_type())
+		(gst_dlna_bin_get_type())
 #define GST_DLNA_BIN(obj) \
-  (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_DLNA_BIN,GstDlnaBin))
+		(G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_DLNA_BIN,GstDlnaBin))
 #define GST_DLNA_BIN_CLASS(klass) \
-  (G_TYPE_CHECK_CLASS_CAST((klass),GST_TYPE_DLNA_BIN,GstDlnaBinClass))
+		(G_TYPE_CHECK_CLASS_CAST((klass),GST_TYPE_DLNA_BIN,GstDlnaBinClass))
 #define GST_IS_DLNA_BIN(obj) \
-  (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_DLNA_BIN))
+		(G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_DLNA_BIN))
 #define GST_IS_DLNA_BIN_CLASS(klass) \
-  (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_DLNA_BIN))
+		(G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_DLNA_BIN))
 
 #define VOLUME_MAX_DOUBLE 10.0
 
@@ -29,19 +29,20 @@ typedef struct _GstDlnaBinClass GstDlnaBinClass;
  */
 struct _GstDlnaBin
 {
-  GstBin bin;
+	GstBin bin;
 
-  // Stream info
-  char *uri;
+	// Stream info
+	char *uri;
 
-  // indication if the pipeline is live
-  //gboolean is_live;
+	GstElement* http_src;
+	// indication if the pipeline is live
+	//gboolean is_live;
 };
 
 
 struct _GstDlnaBinClass
 {
-  GstBinClass parent_class;
+	GstBinClass parent_class;
 
 };
 
