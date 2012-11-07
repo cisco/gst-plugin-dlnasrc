@@ -61,7 +61,7 @@ enum
 // Structure describing details of this element, used when initializing element
 //
 const GstElementDetails gst_dlna_bin_details
-= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/7/12 12:20 PM",
+= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/7/12 2:13 PM",
 		"Source/Network",
 		"Receive data as a client via HTTP with DLNA extensions",
 		"Eric Winkelman <e.winkelman@cablelabs.com>");
@@ -231,33 +231,7 @@ gst_dlna_bin_set_property (GObject * object, guint prop_id,
 
 	case ARG_URI:
 	{
-		GstElement *elem;
-
-		printf("%s() - Setting the URI property\n", __FUNCTION__);
-
-		// Set the uri in the bin
-		// (ew) Do we need to free the old value?
-		if (dlna_bin->uri) {
-			free(dlna_bin->uri);
-		}
-		dlna_bin->uri = g_value_dup_string(value);
-
-		// Get the http source
-		elem = gst_bin_get_by_name(&dlna_bin->bin, "http-source");
-
-		printf("%s() - Setting the URI to %s\n", __FUNCTION__, dlna_bin->uri);
-
-		// Set the URI
-		g_object_set(G_OBJECT(elem), "location", dlna_bin->uri, NULL);
-
-		if (1)
-		{
-			dlna_bin_non_dtcp_setup(dlna_bin);
-		}
-		else
-		{
-			dlna_bin_dtcp_setup(dlna_bin);
-		}
+		dlna_bin_setup_uri(dlna_bin, value);
 	}
 	break;
 
@@ -360,12 +334,13 @@ dlna_bin_setup_uri(GstDlnaBin *dlna_bin, const GValue * value)
 	dlna_bin->uri = g_value_dup_string(value);
 
 	// Get the http source
+	//elem = gst_bin_get_by_name(&dlna_bin->bin, "http-source");
 	elem = gst_bin_get_by_name(&dlna_bin->bin, ELEMENT_NAME_HTTP_SRC);
-
-	printf("%s() - Setting the URI to %s\n", dlna_bin->uri, __FUNCTION__);
 
 	// Set the URI
 	g_object_set(G_OBJECT(elem), "location", dlna_bin->uri, NULL);
+
+	printf("%s() - Set the URI to %s\n", __FUNCTION__, dlna_bin->uri);
 
 	// Parse URI to get socket info & content info to send head request
 	if (!dlna_bin_parse_uri(dlna_bin))
@@ -426,7 +401,7 @@ dlna_bin_parse_uri(GstDlnaBin *dlna_bin)
 	// *TODO* - fix me
 	// Extract port from uri
 	dlna_bin->port = 8008;
-	dlna_bin->addr="192.168.2.2";
+	dlna_bin->addr="192.168.0.111";
 
 	return TRUE;
 }
