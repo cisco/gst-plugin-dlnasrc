@@ -30,11 +30,19 @@ typedef struct _GstDlnaBinClass GstDlnaBinClass;
 struct _GstDlnaBin
 {
 	GstBin bin;
+	GstElement* http_src;
 
 	// Stream info
 	char *uri;
 
-	GstElement* http_src;
+	// Socket params used to issue HEAD request
+	gchar *addr;
+	guint port;
+	int sock;
+
+	// Requested URI content info
+	gboolean is_dtcp_encrypted;
+
 	// indication if the pipeline is live
 	//gboolean is_live;
 };

@@ -1,4 +1,5 @@
 #!/bin/sh
+rm *.txt
 GST_PLUGIN_PATH=/usr/local/lib/gstreamer-0.10
 gst-launch \
 	--gst-debug-level=1 --gst-mm=0.10\

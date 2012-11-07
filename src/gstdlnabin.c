@@ -19,9 +19,18 @@
 #include "config.h"
 #endif
 
+#include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include <gst/gst.h>
 #include <glib-object.h>
+
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#define CLOSESOCK(s) (void)close(s)
 
 #include "gstdlnabin.h"
 
@@ -52,7 +61,7 @@ enum
 // Structure describing details of this element, used when initializing element
 //
 const GstElementDetails gst_dlna_bin_details
-= GST_ELEMENT_DETAILS("HTTP/DLNA client source -11/7/12 9:00",
+= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/7/12 12:20 PM",
 		"Source/Network",
 		"Receive data as a client via HTTP with DLNA extensions",
 		"Eric Winkelman <e.winkelman@cablelabs.com>");
@@ -79,12 +88,26 @@ static void gst_dlna_bin_set_property (GObject * object, guint prop_id,
 static void gst_dlna_bin_get_property (GObject * object, guint prop_id,
 		GValue * value, GParamSpec * spec);
 
-static void dlna_bin_non_dtcp_setup(GstDlnaBin *dlna_bin);
 
 // **********************
 // Local method declarations
 //
 static GstDlnaBin* gst_dlna_build_bin (GstDlnaBin *dlna_bin);
+
+static void dlna_bin_setup_uri(GstDlnaBin *dlna_bin, const GValue * value);
+
+static void dlna_bin_non_dtcp_setup(GstDlnaBin *dlna_bin);
+
+static void dlna_bin_dtcp_setup(GstDlnaBin *dlna_bin);
+
+static gboolean dlna_bin_open_socket(GstDlnaBin *dlna_bin);
+
+static gboolean dlna_bin_parse_uri(GstDlnaBin *dlna_bin);
+
+static gboolean dlna_bin_formulate_head_request(GstDlnaBin *dlna_bin);
+
+static gboolean dlna_bin_issue_head_request(GstDlnaBin *dlna_bin);
+
 
 // *TODO* - is this really needed???
 void
@@ -227,7 +250,14 @@ gst_dlna_bin_set_property (GObject * object, guint prop_id,
 		// Set the URI
 		g_object_set(G_OBJECT(elem), "location", dlna_bin->uri, NULL);
 
-		dlna_bin_non_dtcp_setup(dlna_bin);
+		if (1)
+		{
+			dlna_bin_non_dtcp_setup(dlna_bin);
+		}
+		else
+		{
+			dlna_bin_dtcp_setup(dlna_bin);
+		}
 	}
 	break;
 
@@ -307,6 +337,213 @@ gst_dlna_build_bin (GstDlnaBin *dlna_bin)
 	//gst_object_unref (gpad);
 	 */
 	printf("%s() - Initializing the dlna bin - done\n", __FUNCTION__);
+
+	return dlna_bin;
+}
+
+/**
+ * Perform actions necessary based on supplied URI
+ *
+ * @param dlna_bin	this element
+ * @param value		specified URI to use
+ */
+static void
+dlna_bin_setup_uri(GstDlnaBin *dlna_bin, const GValue * value)
+{
+	GstElement *elem;
+
+	// Set the uri in the bin
+	// (ew) Do we need to free the old value?
+	if (dlna_bin->uri) {
+		free(dlna_bin->uri);
+	}
+	dlna_bin->uri = g_value_dup_string(value);
+
+	// Get the http source
+	elem = gst_bin_get_by_name(&dlna_bin->bin, ELEMENT_NAME_HTTP_SRC);
+
+	printf("%s() - Setting the URI to %s\n", dlna_bin->uri, __FUNCTION__);
+
+	// Set the URI
+	g_object_set(G_OBJECT(elem), "location", dlna_bin->uri, NULL);
+
+	// Parse URI to get socket info & content info to send head request
+	if (!dlna_bin_parse_uri(dlna_bin))
+	{
+		g_printerr ("Problems parsing URI\n");
+		// *TODO* - how should this error be handled???
+		return;
+	}
+
+	// Open socket to send HEAD request
+	if (!dlna_bin_open_socket(dlna_bin))
+	{
+		g_printerr ("Problems creating socket to send HEAD request\n");
+		// *TODO* - how should this error be handled???
+		return;
+	}
+
+	// Formulate HEAD request
+	if (!dlna_bin_formulate_head_request(dlna_bin))
+	{
+		g_printerr ("Problems formulating HEAD request\n");
+		// *TODO* - how should this error be handled???
+		return;
+	}
+
+	// Send HEAD Request and read response
+	if (!dlna_bin_issue_head_request(dlna_bin))
+	{
+		g_printerr ("Problems sending and receiving HEAD request\n");
+		// *TODO* - how should this error be handled???
+		return;
+	}
+
+	// Setup elements based on HEAD response
+	if (dlna_bin->is_dtcp_encrypted)
+	{
+		dlna_bin_dtcp_setup(dlna_bin);
+	}
+	else
+	{
+		dlna_bin_non_dtcp_setup(dlna_bin);
+	}
+}
+
+/**
+ * Parse URI and extract info necessary to open socket to send
+ * HEAD request
+ *
+ * @param dlna_bin	this element
+ *
+ * @return	true if successfully parsed, false if problems encountered
+ */
+static gboolean
+dlna_bin_parse_uri(GstDlnaBin *dlna_bin)
+{
+	printf("%s() - called\n", __FUNCTION__);
+
+	// *TODO* - fix me
+	// Extract port from uri
+	dlna_bin->port = 8008;
+	dlna_bin->addr="192.168.2.2";
+
+	return TRUE;
+}
+
+/**
+ * Create a socket for sending to HEAD request
+ *
+ * @param dlna_bin	this element
+ *
+ * @return	true if sucessful, false otherwise
+ */
+static gboolean
+dlna_bin_open_socket(GstDlnaBin *dlna_bin)
+{
+	printf("%s() - called\n", __FUNCTION__);
+
+	char portStr[8] = {0};
+    struct addrinfo hints = {0};
+    struct addrinfo* srvrInfo = NULL;
+    struct addrinfo* pSrvr = NULL;
+    int yes = 1;
+    int ret = 0;
+/*
+#ifdef RI_WIN32_SOCKETS
+    WSADATA wsd;
+
+    if (WSAStartup(MAKEWORD(2, 2), &wsd))
+    {
+        GST_ERROR_OBJECT(src, "%s WSAStartup() failed?\n", __func__);
+        return FALSE;
+    }
+#endif
+*/
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+    snprintf(portStr, sizeof(portStr), "%d", dlna_bin->port);
+
+    if (0 != (ret = getaddrinfo(dlna_bin->addr, portStr, &hints, &srvrInfo)))
+    {
+        GST_ERROR_OBJECT(dlna_bin, "%s getaddrinfo[%s]\n", __func__,
+                         gai_strerror(ret));
+        return FALSE;
+    }
+
+    for(pSrvr = srvrInfo; pSrvr != NULL; pSrvr = pSrvr->ai_next)
+    {
+        if (0 > (dlna_bin->sock = socket(pSrvr->ai_family,
+                                    pSrvr->ai_socktype,
+                                    pSrvr->ai_protocol)))
+        {
+            GST_ERROR_OBJECT(dlna_bin, "%s socket() failed?\n", __func__);
+            continue;
+        }
+
+        if (0 > setsockopt(dlna_bin->sock, SOL_SOCKET, SO_REUSEADDR,
+                           (char*) &yes, sizeof(yes)))
+        {
+            GST_ERROR_OBJECT(dlna_bin, "%s setsockopt() failed?\n", __func__);
+            return FALSE;
+        }
+
+        GST_INFO_OBJECT(dlna_bin, "%s got sock: %d\n", __func__, dlna_bin->sock);
+
+        if (0 > (bind(dlna_bin->sock, pSrvr->ai_addr, pSrvr->ai_addrlen)))
+        {
+            CLOSESOCK(dlna_bin->sock);
+            GST_ERROR_OBJECT(dlna_bin, "%s bind() failed?\n", __func__);
+            continue;
+        }
+
+        // We successfully bound!
+        break;
+    }
+
+    if (NULL == pSrvr)
+    {
+        GST_ERROR_OBJECT(dlna_bin, "%s failed to bind\n", __func__);
+        freeaddrinfo(srvrInfo);
+        return FALSE;
+    }
+
+    freeaddrinfo(srvrInfo);
+    return TRUE;
+}
+
+/**
+ * Creates the string which represents the HEAD request to send
+ * to server to get info related to URI
+ *
+ * @param dlna_bin	this element
+ *
+ * @return	true if sucessful, false otherwise
+ */
+static gboolean
+dlna_bin_formulate_head_request(GstDlnaBin *dlna_bin)
+{
+	printf("%s() - called\n", __FUNCTION__);
+
+	return TRUE;
+}
+
+/**
+ * Sends the HEAD request to server, reads response, parses and
+ * stores info related to this URI.
+ *
+ * @param dlna_bin	this element
+ *
+ * @return	true if sucessful, false otherwise
+ */
+static gboolean
+dlna_bin_issue_head_request(GstDlnaBin *dlna_bin)
+{
+	printf("%s() - called\n", __FUNCTION__);
+
+	dlna_bin->is_dtcp_encrypted = FALSE;
+
+	return TRUE;
 }
 
 /**
@@ -317,7 +554,7 @@ gst_dlna_build_bin (GstDlnaBin *dlna_bin)
 static void
 dlna_bin_non_dtcp_setup(GstDlnaBin *dlna_bin)
 {
-	printf("%s() - Creating non-dtcp sink\n");
+	printf("%s() - Creating non-dtcp sink\n", __FUNCTION__);
 
 	GstElement *non_dtcp_sink;
 
@@ -343,6 +580,39 @@ dlna_bin_non_dtcp_setup(GstDlnaBin *dlna_bin)
 	}
 }
 
+/**
+ * Setup this bin in order to handle DTCP encrypted content
+ *
+ * @param dlna_bin	this element
+ */
+static void
+dlna_bin_dtcp_setup(GstDlnaBin *dlna_bin)
+{
+	printf("%s() - Creating dtcp sink\n", __FUNCTION__);
+
+	GstElement *dtcp_sink;
+
+	// Create non-encrypt sink element
+	dtcp_sink = gst_element_factory_make ("filesink", ELEMENT_NAME_DTCP_SINK);
+	if (!dtcp_sink) {
+		g_printerr ("The sink element could not be created. Exiting.\n");
+		exit(1);
+	}
+
+	// *TODO* - this should be property of this element???
+	// Hardcode the file sink location to be tmp.txt
+	g_object_set (G_OBJECT(dtcp_sink), "location", "dtcp.txt", NULL);
+
+	// Add this element to the bin
+	gst_bin_add(GST_BIN(&dlna_bin->bin), dtcp_sink);
+
+	// Link elements together
+	if (!gst_element_link_many(dlna_bin->http_src, dtcp_sink, NULL))
+	{
+		g_printerr ("Problems linking elements in bin. Exiting.\n");
+		exit(1);
+	}
+}
 
 /* 
  * The following section supports the GStreamer auto plugging infrastructure. 
