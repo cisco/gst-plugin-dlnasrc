@@ -40,6 +40,8 @@ struct _GstDlnaBin
 	guint uri_port;
 	int sock;
 
+	gchar *head_request_str;
+
 	// Requested URI content info
 	gboolean is_dtcp_encrypted;
 
