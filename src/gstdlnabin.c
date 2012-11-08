@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <ctype.h>
 #include <gst/gst.h>
 #include <glib-object.h>
 
@@ -61,7 +62,7 @@ enum
 // Structure describing details of this element, used when initializing element
 //
 const GstElementDetails gst_dlna_bin_details
-= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/7/12 2:13 PM",
+= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/7/12 5:43 PM",
 		"Source/Network",
 		"Receive data as a client via HTTP with DLNA extensions",
 		"Eric Winkelman <e.winkelman@cablelabs.com>");
@@ -334,7 +335,6 @@ dlna_bin_setup_uri(GstDlnaBin *dlna_bin, const GValue * value)
 	dlna_bin->uri = g_value_dup_string(value);
 
 	// Get the http source
-	//elem = gst_bin_get_by_name(&dlna_bin->bin, "http-source");
 	elem = gst_bin_get_by_name(&dlna_bin->bin, ELEMENT_NAME_HTTP_SRC);
 
 	// Set the URI
@@ -396,12 +396,53 @@ dlna_bin_setup_uri(GstDlnaBin *dlna_bin, const GValue * value)
 static gboolean
 dlna_bin_parse_uri(GstDlnaBin *dlna_bin)
 {
-	printf("%s() - called\n", __FUNCTION__);
+	printf("%s() - called with URI: %s\n", __FUNCTION__, dlna_bin->uri);
 
-	// *TODO* - fix me
-	// Extract port from uri
-	dlna_bin->port = 8008;
-	dlna_bin->addr="192.168.0.111";
+	// URI format is:
+	// <scheme>:<hierarchical_part>[?query][#fragment]
+	// where hierarchical part is:
+	// [user_info@]<host_info>[:port][/path]
+	// where host info can be ip address
+	//
+	// An example is:
+	// http://192.168.0.111:8008/ocaphn/recording?rrid=1&profile=MPEG_TS_SD_NA_ISO&mime=video/mpeg
+
+	// Verify scheme is HTTP if one was supplied.
+	// Scheme could not be specified or not (absolute URIs include scheme, relative URIs do not)
+	int i = 0;
+	char* scheme = NULL;
+	scheme = strtok(dlna_bin->uri, "://");
+	if (scheme != NULL)
+	{
+		// Convert scheme to uppercase
+		for (i = 0; scheme[i]; i++)
+			scheme[i] = toupper(scheme[i]);
+		if (strcmp(scheme, "HTTP") != 0)
+		{
+			g_printerr ("Only supporting HTTP URIs, unsupported URI: %s\n",
+					dlna_bin->uri);
+			return FALSE;
+		}
+	}
+	else
+	{
+		g_printerr ("No scheme specified, assuming relative URI: %s\n", dlna_bin->uri);
+	}
+	printf("%s() - URI scheme supported: %s\n", __FUNCTION__, scheme);
+
+	// Extract host and port
+	dlna_bin->uri_addr = strtok(NULL, "://");
+	char* portStr = strtok(NULL, "://");
+	if (portStr != NULL)
+	{
+		dlna_bin->uri_port = strtol(portStr, NULL, 10);
+	}
+	else
+	{
+		dlna_bin->uri_port = 80;
+	}
+	printf("%s() - URI address: %s\n", __FUNCTION__, dlna_bin->uri_addr);
+	printf("%s() - URI port: %d\n", __FUNCTION__, dlna_bin->uri_port);
 
 	return TRUE;
 }
@@ -437,9 +478,9 @@ dlna_bin_open_socket(GstDlnaBin *dlna_bin)
 */
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_DGRAM;
-    snprintf(portStr, sizeof(portStr), "%d", dlna_bin->port);
+    snprintf(portStr, sizeof(portStr), "%d", dlna_bin->uri_port);
 
-    if (0 != (ret = getaddrinfo(dlna_bin->addr, portStr, &hints, &srvrInfo)))
+    if (0 != (ret = getaddrinfo(dlna_bin->uri_addr, portStr, &hints, &srvrInfo)))
     {
         GST_ERROR_OBJECT(dlna_bin, "%s getaddrinfo[%s]\n", __func__,
                          gai_strerror(ret));

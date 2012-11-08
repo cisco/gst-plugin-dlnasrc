@@ -36,8 +36,8 @@ struct _GstDlnaBin
 	char *uri;
 
 	// Socket params used to issue HEAD request
-	gchar *addr;
-	guint port;
+	gchar *uri_addr;
+	guint uri_port;
 	int sock;
 
 	// Requested URI content info
