@@ -62,7 +62,7 @@ enum
 // Structure describing details of this element, used when initializing element
 //
 const GstElementDetails gst_dlna_bin_details
-= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/7/12 5:43 PM",
+= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/8/12 6:03 AM",
 		"Source/Network",
 		"Receive data as a client via HTTP with DLNA extensions",
 		"Eric Winkelman <e.winkelman@cablelabs.com>");
