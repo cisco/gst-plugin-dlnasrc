@@ -116,6 +116,8 @@ static gboolean dlna_bin_close_socket(GstDlnaBin *dlna_bin);
 
 static gboolean dlna_bin_parse_head_response(GstDlnaBin *dlna_bin);
 
+static gboolean dlna_bin_head_response_struct_to_str(GstDlnaBin *dlna_bin);
+
 
 // *TODO* - is this really needed???
 void
@@ -514,8 +516,8 @@ dlna_bin_open_socket(GstDlnaBin *dlna_bin)
         return FALSE;
     }
 
-    int ret = 0;
-    char portStr[8] = {0};
+    gint ret = 0;
+    gchar portStr[8] = {0};
     snprintf(portStr, sizeof(portStr), "%d", dlna_bin->uri_port);
 
     struct addrinfo* srvrInfo = NULL;
@@ -604,8 +606,8 @@ dlna_bin_formulate_head_request(GstDlnaBin *dlna_bin)
 {
 	GST_DEBUG_OBJECT(dlna_bin, "Formulating head request");
 
-    char requestStr[MAX_HTTP_BUF_SIZE];
-    char tmpStr[32];
+    gchar requestStr[MAX_HTTP_BUF_SIZE];
+    gchar tmpStr[32];
 
     strcpy(requestStr, "HEAD ");
 
@@ -618,7 +620,7 @@ dlna_bin_formulate_head_request(GstDlnaBin *dlna_bin)
     strcat(requestStr, dlna_bin->uri_addr);
     strcat(requestStr, ":");
 
-    (void) memset((char *)&tmpStr, 0, sizeof(tmpStr));
+    (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
     sprintf(tmpStr, "%d", dlna_bin->uri_port);
     strcat(requestStr, tmpStr);
     strcat(requestStr, CRLF);
@@ -632,8 +634,8 @@ dlna_bin_formulate_head_request(GstDlnaBin *dlna_bin)
     strcat(requestStr, CRLF);
 
     // Include time seek range if supported
-    //strcat(requestStr, "TimeSeekRange.dlna.org : npt=0-");
-    //strcat(requestStr, CRLF);
+    strcat(requestStr, "TimeSeekRange.dlna.org : npt=0-");
+    strcat(requestStr, CRLF);
 
     // Add termination characters for overall request
     strcat(requestStr, CRLF);
@@ -655,11 +657,11 @@ dlna_bin_formulate_head_request(GstDlnaBin *dlna_bin)
 static gboolean
 dlna_bin_issue_head_request(GstDlnaBin *dlna_bin)
 {
-	GST_LOG_OBJECT(dlna_bin, "Issuing head request: %s", dlna_bin->head_request_str);
+	GST_INFO_OBJECT(dlna_bin, "Issuing head request: %s", dlna_bin->head_request_str);
 
 	// Send HEAD request on socket
-    int bytesTxd = 0;
-    int bytesToTx = strlen(dlna_bin->head_request_str);
+    gint bytesTxd = 0;
+    gint bytesToTx = strlen(dlna_bin->head_request_str);
 
     if ((bytesTxd = send(dlna_bin->sock, dlna_bin->head_request_str, bytesToTx, 0)) < -1)
     {
@@ -679,8 +681,8 @@ dlna_bin_issue_head_request(GstDlnaBin *dlna_bin)
 	GST_INFO_OBJECT(dlna_bin, "Issued head request: %s", dlna_bin->head_request_str);
 
 	// Read HEAD response
-    int bytesRcvd = 0;
-    char responseStr[MAX_HTTP_BUF_SIZE];
+    gint bytesRcvd = 0;
+    gchar responseStr[MAX_HTTP_BUF_SIZE];
 
     if ((bytesRcvd = recv(dlna_bin->sock, responseStr, MAX_HTTP_BUF_SIZE, 0)) <= 0)
     {
@@ -688,7 +690,7 @@ dlna_bin_issue_head_request(GstDlnaBin *dlna_bin)
         return FALSE;
     }
     dlna_bin->head_response_str = g_strdup(responseStr);
-	GST_INFO_OBJECT(dlna_bin, "HEAD Response: %s", dlna_bin->head_response_str);
+	GST_LOG_OBJECT(dlna_bin, "HEAD Response: %s", dlna_bin->head_response_str);
 
 	return TRUE;
 }
@@ -703,10 +705,72 @@ dlna_bin_issue_head_request(GstDlnaBin *dlna_bin)
 static gboolean
 dlna_bin_parse_head_response(GstDlnaBin *dlna_bin)
 {
-	GST_LOG_OBJECT(dlna_bin, "Parsing HEAD Response: %s", dlna_bin->head_response_str);
+	GST_INFO_OBJECT(dlna_bin, "Parsing HEAD Response: %s", dlna_bin->head_response_str);
 
-	// Parse HEAD response and store info
-	dlna_bin->is_dtcp_encrypted = FALSE;
+	// Allocate storage
+	dlna_bin->head_response = g_try_malloc0(sizeof(GstDlnaBinHeadResponse));
+	dlna_bin->head_response->content_features = g_try_malloc0(sizeof(GstDlnaBinHeadResponseContentFeatures));
+
+	// Initialize structs
+	dlna_bin->head_response->http_rev = NULL;
+	dlna_bin->head_response->ret_code = 0;
+	dlna_bin->head_response->ret_msg = NULL;
+	dlna_bin->head_response->time_seek_npt_start = NULL;
+	dlna_bin->head_response->time_seek_npt_end = NULL;
+	dlna_bin->head_response->byte_seek_start = 0;
+	dlna_bin->head_response->byte_seek_end = 0;
+	dlna_bin->head_response->transfer_mode = NULL;
+	dlna_bin->head_response->transfer_encoding = NULL;
+	dlna_bin->head_response->date = NULL;
+	dlna_bin->head_response->server = NULL;
+	dlna_bin->head_response->content_type = NULL;
+
+	dlna_bin->head_response->content_features->profile = NULL;
+	dlna_bin->head_response->content_features->op_time_seek_supported = FALSE;
+	dlna_bin->head_response->content_features->op_range_supported = FALSE;
+
+	dlna_bin->head_response->content_features->playspeeds_cnt = 0;
+
+	dlna_bin->head_response->content_features->flag_sender_paced_set = FALSE;
+	dlna_bin->head_response->content_features->flag_limited_time_seek_set = FALSE;
+	dlna_bin->head_response->content_features->flag_limited_byte_seek_set = FALSE;
+	dlna_bin->head_response->content_features->flag_play_container_set = FALSE;
+	dlna_bin->head_response->content_features->flag_so_increasing_set = FALSE;
+	dlna_bin->head_response->content_features->flag_sn_increasing_set = FALSE;
+	dlna_bin->head_response->content_features->flag_rtsp_pause_set = FALSE;
+	dlna_bin->head_response->content_features->flag_streaming_mode_set = FALSE;
+	dlna_bin->head_response->content_features->flag_interactive_mode_set = FALSE;
+	dlna_bin->head_response->content_features->flag_background_mode_set = FALSE;
+	dlna_bin->head_response->content_features->flag_stalling_set = FALSE;
+	dlna_bin->head_response->content_features->flag_dlna_v15_set = FALSE;
+	dlna_bin->head_response->content_features->flag_link_protected_set = FALSE;
+	dlna_bin->head_response->content_features->flag_full_clear_text_set = FALSE;
+	dlna_bin->head_response->content_features->flag_limited_clear_text_set = FALSE;
+
+	if (!dlna_bin_head_response_struct_to_str(dlna_bin))
+	{
+        GST_ERROR_OBJECT(dlna_bin, "Problems converting HEAD response struct to string");
+        return FALSE;
+	}
+	else
+	{
+        GST_INFO_OBJECT(dlna_bin, "HEAD Response struct: %s",
+        		dlna_bin->head_response->struct_str);
+	}
+	return TRUE;
+}
+
+/**
+ * Format HEAD response structure into string representation.
+ *
+ * @param	dlna_bin	this element instance
+ *
+ * @return	returns TRUE if no problems are encountered, false otherwise
+ */
+static gboolean
+dlna_bin_head_response_struct_to_str(GstDlnaBin *dlna_bin)
+{
+	GST_LOG_OBJECT(dlna_bin, "Formatting HEAD Response struct");
 
 	return TRUE;
 }
