@@ -59,13 +59,13 @@ enum
 #define ELEMENT_NAME_NON_DTCP_SINK "non-dtcp-sink"
 #define ELEMENT_NAME_DTCP_SINK "dtcp-sink"
 
-#define MAX_HTTP_REQUEST_SIZE 256
+#define MAX_HTTP_BUF_SIZE 512
 static const char CRLF[] = "\r\n";
 
 // Structure describing details of this element, used when initializing element
 //
 const GstElementDetails gst_dlna_bin_details
-= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/8/12 10:26 AM",
+= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/9/12 8:20 AM",
 		"Source/Network",
 		"Receive data as a client via HTTP with DLNA extensions",
 		"Eric Winkelman <e.winkelman@cablelabs.com>");
@@ -111,6 +111,10 @@ static gboolean dlna_bin_parse_uri(GstDlnaBin *dlna_bin);
 static gboolean dlna_bin_formulate_head_request(GstDlnaBin *dlna_bin);
 
 static gboolean dlna_bin_issue_head_request(GstDlnaBin *dlna_bin);
+
+static gboolean dlna_bin_close_socket(GstDlnaBin *dlna_bin);
+
+static gboolean dlna_bin_parse_head_response(GstDlnaBin *dlna_bin);
 
 
 // *TODO* - is this really needed???
@@ -380,6 +384,19 @@ dlna_bin_setup_uri(GstDlnaBin *dlna_bin, const GValue * value)
 		return FALSE;
 	}
 
+	// Close socket
+	if (!dlna_bin_close_socket(dlna_bin))
+	{
+		GST_ERROR_OBJECT(dlna_bin, "Problems closing socket used to send HEAD request\n");
+	}
+
+	// Parse HEAD response to gather info about URI content item
+	if (!dlna_bin_parse_head_response(dlna_bin))
+	{
+		GST_ERROR_OBJECT(dlna_bin, "Problems parsing HEAD response\n");
+		return FALSE;
+	}
+
 	// Setup elements based on HEAD response
 	if (dlna_bin->is_dtcp_encrypted)
 	{
@@ -422,45 +439,6 @@ dlna_bin_parse_uri(GstDlnaBin *dlna_bin)
 	// An example is:
 	// http://192.168.0.111:8008/ocaphn/recording?rrid=1&profile=MPEG_TS_SD_NA_ISO&mime=video/mpeg
 
-	// Verify scheme is HTTP if one was supplied.
-	// Scheme could not be specified or not (absolute URIs include scheme, relative URIs do not)
-	/*
-	int i = 0;
-	char* scheme = NULL;
-	scheme = strtok(dlna_bin->uri, "://");
-	if (scheme != NULL)
-	{
-		// Convert scheme to uppercase
-		for (i = 0; scheme[i]; i++)
-			scheme[i] = toupper(scheme[i]);
-		if (strcmp(scheme, "HTTP") != 0)
-		{
-			g_printerr ("Only supporting HTTP URIs, unsupported URI: %s\n",
-					dlna_bin->uri);
-			return FALSE;
-		}
-	}
-	else
-	{
-		g_printerr ("No scheme specified, assuming relative URI: %s\n", dlna_bin->uri);
-	}
-	printf("%s() - URI scheme supported: %s\n", __FUNCTION__, scheme);
-
-	// Extract host and port
-	dlna_bin->uri_addr = strtok(NULL, "://");
-	char* portStr = strtok(NULL, "://");
-	if (portStr != NULL)
-	{
-		dlna_bin->uri_port = strtol(portStr, NULL, 10);
-	}
-	else
-	{	printf("%s() - called with URI: %s\n", __FUNCTION__, );
-
-		dlna_bin->uri_port = 80;
-	}
-	printf("%s() - URI address: %s\n", __FUNCTION__, dlna_bin->uri_addr);
-	printf("%s() - URI port: %d\n", __FUNCTION__, dlna_bin->uri_port);
-*/
     gchar *p = NULL;
     gchar *addr = NULL;
     gchar *protocol = gst_uri_get_protocol(dlna_bin->uri);
@@ -482,7 +460,10 @@ dlna_bin_parse_uri(GstDlnaBin *dlna_bin)
                 {
                     g_free(dlna_bin->uri_addr);
                 }
-                dlna_bin->uri_addr = g_strdup(addr);
+                if (NULL == dlna_bin->uri_addr || 0 != strcmp(dlna_bin->uri_addr, addr))
+                {
+                	dlna_bin->uri_addr = g_strdup(addr);
+                }
                 GST_INFO_OBJECT(dlna_bin, "New addr set: \"%s\".", dlna_bin->uri_addr);
                 g_free(addr);
                 g_free(protocol);
@@ -521,73 +502,93 @@ dlna_bin_open_socket(GstDlnaBin *dlna_bin)
 {
 	GST_DEBUG_OBJECT(dlna_bin, "Opening socket to URI src");
 
-	char portStr[8] = {0};
+    // Create socket
     struct addrinfo hints = {0};
-    struct addrinfo* srvrInfo = NULL;
-    struct addrinfo* pSrvr = NULL;
-    int yes = 1;
-    int ret = 0;
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = 0;
 
-#ifdef RI_WIN32_SOCKETS
-    WSADATA wsd;
-
-    if (WSAStartup(MAKEWORD(2, 2), &wsd))
+    if ((dlna_bin->sock = socket(hints.ai_family, hints.ai_socktype, hints.ai_protocol)) == -1)
     {
-        GST_ERROR_OBJECT(src, "%s WSAStartup() failed?\n", __func__);
+        GST_ERROR_OBJECT(dlna_bin, "Socket creation failed");
         return FALSE;
     }
-#endif
 
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_DGRAM;
+    int ret = 0;
+    char portStr[8] = {0};
     snprintf(portStr, sizeof(portStr), "%d", dlna_bin->uri_port);
 
+    struct addrinfo* srvrInfo = NULL;
     if (0 != (ret = getaddrinfo(dlna_bin->uri_addr, portStr, &hints, &srvrInfo)))
     {
-        GST_ERROR_OBJECT(dlna_bin, "%s getaddrinfo[%s]\n", __func__,
-                         gai_strerror(ret));
+        GST_ERROR_OBJECT(dlna_bin, "getaddrinfo[%s]\n", gai_strerror(ret));
         return FALSE;
     }
 
+    struct addrinfo* pSrvr = NULL;
     for(pSrvr = srvrInfo; pSrvr != NULL; pSrvr = pSrvr->ai_next)
     {
         if (0 > (dlna_bin->sock = socket(pSrvr->ai_family,
                                     pSrvr->ai_socktype,
                                     pSrvr->ai_protocol)))
         {
-            GST_ERROR_OBJECT(dlna_bin, "%s socket() failed?\n", __func__);
+            GST_ERROR_OBJECT(dlna_bin, "socket() failed?");
             continue;
         }
 
+        /*
         if (0 > setsockopt(dlna_bin->sock, SOL_SOCKET, SO_REUSEADDR,
                            (char*) &yes, sizeof(yes)))
         {
-            GST_ERROR_OBJECT(dlna_bin, "%s setsockopt() failed?\n", __func__);
+            GST_ERROR_OBJECT(dlna_bin, "setsockopt() failed?");
             return FALSE;
         }
+		*/
+        GST_LOG_OBJECT(dlna_bin, "Got sock: %d\n", dlna_bin->sock);
 
-        GST_INFO_OBJECT(dlna_bin, "Got sock: %d\n", dlna_bin->sock);
-
-        if (0 > (bind(dlna_bin->sock, pSrvr->ai_addr, pSrvr->ai_addrlen)))
+        if (connect(dlna_bin->sock, pSrvr->ai_addr, pSrvr->ai_addrlen) != 0)
         {
-            CLOSESOCK(dlna_bin->sock);
-            GST_ERROR_OBJECT(dlna_bin, "%s bind() failed?\n", __func__);
+            GST_WARNING_OBJECT(dlna_bin, "bind() failed?");
             continue;
         }
 
-        // We successfully bound!
+        // Successfully connected
+        GST_INFO_OBJECT(dlna_bin, "Successful connect to sock: %d\n", dlna_bin->sock);
         break;
     }
 
     if (NULL == pSrvr)
     {
-        GST_ERROR_OBJECT(dlna_bin, "%s failed to bind\n", __func__);
+        GST_ERROR_OBJECT(dlna_bin, "failed to bind");
         freeaddrinfo(srvrInfo);
         return FALSE;
     }
 
     freeaddrinfo(srvrInfo);
+
     return TRUE;
+}
+
+/**
+ * Close socket used to send HEAD request.
+ *
+ * @param	this element instance
+ *
+ * @return	false if problems encountered, true otherwise
+ */
+static gboolean
+dlna_bin_close_socket(GstDlnaBin *dlna_bin)
+{
+	GST_LOG_OBJECT(dlna_bin, "Closing socket used for HEAD request");
+
+	if (dlna_bin->sock >= 0)
+		CLOSESOCK(dlna_bin->sock);
+
+#ifdef RI_WIN32_SOCKETS
+	WSACleanup();
+#endif
+
+	return TRUE;
 }
 
 /**
@@ -603,7 +604,7 @@ dlna_bin_formulate_head_request(GstDlnaBin *dlna_bin)
 {
 	GST_DEBUG_OBJECT(dlna_bin, "Formulating head request");
 
-    char requestStr[MAX_HTTP_REQUEST_SIZE];
+    char requestStr[MAX_HTTP_BUF_SIZE];
     char tmpStr[32];
 
     strcpy(requestStr, "HEAD ");
@@ -616,6 +617,7 @@ dlna_bin_formulate_head_request(GstDlnaBin *dlna_bin)
     strcat(requestStr, "HOST: ");
     strcat(requestStr, dlna_bin->uri_addr);
     strcat(requestStr, ":");
+
     (void) memset((char *)&tmpStr, 0, sizeof(tmpStr));
     sprintf(tmpStr, "%d", dlna_bin->uri_port);
     strcat(requestStr, tmpStr);
@@ -630,29 +632,14 @@ dlna_bin_formulate_head_request(GstDlnaBin *dlna_bin)
     strcat(requestStr, CRLF);
 
     // Include time seek range if supported
-    strcat(requestStr, "TimeSeekRange.dlna.org : npt=0-");
-    strcat(requestStr, CRLF);
+    //strcat(requestStr, "TimeSeekRange.dlna.org : npt=0-");
+    //strcat(requestStr, CRLF);
 
     // Add termination characters for overall request
     strcat(requestStr, CRLF);
 
-    /*
-    // Request memory to store request
-    int requestSize = strlen(requestStr) + 1;
-
-    if (mpe_memAlloc(requestSize, (void **) &player->httpHeadRequestStr)
-            != MPE_SUCCESS)
-    {
-        MPEOS_LOG(MPE_LOG_ERROR, MPE_MOD_HN,
-                "%s() - Could not allocate %d bytes of memory for HEAD request string\n",
-                __FUNCTION__, requestSize);
-        return MPE_HN_ERR_OS_FAILURE;
-    }
-    else
-    {
-        memcpy(dlna_bin->head_request_str, requestStr, requestSize);
-    }
-    */
+    dlna_bin->head_request_str = g_strdup(requestStr);
+	GST_LOG_OBJECT(dlna_bin, "HEAD Request: %s", dlna_bin->head_request_str);
 
     return TRUE;
 }
@@ -668,8 +655,57 @@ dlna_bin_formulate_head_request(GstDlnaBin *dlna_bin)
 static gboolean
 dlna_bin_issue_head_request(GstDlnaBin *dlna_bin)
 {
-	GST_INFO_OBJECT(dlna_bin, "Issuing head request: %s", dlna_bin->head_request_str);
+	GST_LOG_OBJECT(dlna_bin, "Issuing head request: %s", dlna_bin->head_request_str);
 
+	// Send HEAD request on socket
+    int bytesTxd = 0;
+    int bytesToTx = strlen(dlna_bin->head_request_str);
+
+    if ((bytesTxd = send(dlna_bin->sock, dlna_bin->head_request_str, bytesToTx, 0)) < -1)
+    {
+        GST_ERROR_OBJECT(dlna_bin, "Problems sending on socket");
+        return FALSE;
+    }
+    else if (bytesTxd == -1)
+    {
+        GST_ERROR_OBJECT(dlna_bin, "Problems sending on socket, got back -1");
+        return FALSE;
+    }
+    else if (bytesTxd != bytesToTx)
+    {
+        GST_ERROR_OBJECT(dlna_bin, "Sent %d bytes instead of %d", bytesTxd, bytesToTx);
+        return FALSE;
+    }
+	GST_INFO_OBJECT(dlna_bin, "Issued head request: %s", dlna_bin->head_request_str);
+
+	// Read HEAD response
+    int bytesRcvd = 0;
+    char responseStr[MAX_HTTP_BUF_SIZE];
+
+    if ((bytesRcvd = recv(dlna_bin->sock, responseStr, MAX_HTTP_BUF_SIZE, 0)) <= 0)
+    {
+        GST_ERROR_OBJECT(dlna_bin, "HEAD Response recv() failed");
+        return FALSE;
+    }
+    dlna_bin->head_response_str = g_strdup(responseStr);
+	GST_INFO_OBJECT(dlna_bin, "HEAD Response: %s", dlna_bin->head_response_str);
+
+	return TRUE;
+}
+
+/**
+ * Parse HEAD response into specific values related to URI content item.
+ *
+ * @param	dlna_bin	this element instance
+ *
+ * @return	returns TRUE if no problems are encountered, false otherwise
+ */
+static gboolean
+dlna_bin_parse_head_response(GstDlnaBin *dlna_bin)
+{
+	GST_LOG_OBJECT(dlna_bin, "Parsing HEAD Response: %s", dlna_bin->head_response_str);
+
+	// Parse HEAD response and store info
 	dlna_bin->is_dtcp_encrypted = FALSE;
 
 	return TRUE;
