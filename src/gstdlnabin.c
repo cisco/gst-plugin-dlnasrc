@@ -62,10 +62,27 @@ enum
 #define MAX_HTTP_BUF_SIZE 1024
 static const char CRLF[] = "\r\n";
 
+// Constant strings identifiers for header fields in HEAD response
+static const char* HEAD_RESP_HDR_HTTP = "HTTP";
+static const char* HEAD_RESP_HDR_TIMESEEKRANGE = "TIMESEEKRANGE.DLNA.ORG";
+static const char* HEAD_RESP_HDR_NPT = "NPT";
+static const char* HEAD_RESP_HDR_BYTES = "BYTES";
+static const char* HEAD_RESP_HDR_TRANSFERMODE = "TRANSFERMODE.DLNA.ORG";
+static const char* HEAD_RESP_HDR_DATE = "DATE";
+static const char* HEAD_RESP_HDR_CONTENT_TYPE = "CONTENT-TYPE";
+static const char* HEAD_RESP_HDR_SERVER = "SERVER";
+static const char* HEAD_RESP_HDR_TRANSFER_ENCODING = "TRANSFER-ENCODING";
+static const char* HEAD_RESP_HDR_CONTENT_FEATURES = "CONTENTFEATURES.DLNA.ORG";
+static const char* HEAD_RESP_HDR_DLNA_PN = "DLNA.ORG_PN";
+static const char* HEAD_RESP_HDR_DLNA_OP = "DLNA.ORG_OP";
+static const char* HEAD_RESP_HDR_DLNA_PS = "DLNA.ORG_PS";
+static const char* HEAD_RESP_HDR_DLNA_FLAGS = "DLNA.ORG_FLAGS";
+
+
 // Structure describing details of this element, used when initializing element
 //
 const GstElementDetails gst_dlna_bin_details
-= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/12/12 8:50 AM",
+= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/12/12 12:30 PM",
 		"Source/Network",
 		"Receive data as a client via HTTP with DLNA extensions",
 		"Eric Winkelman <e.winkelman@cablelabs.com>");
@@ -114,7 +131,9 @@ static gboolean dlna_bin_issue_head_request(GstDlnaBin *dlna_bin);
 
 static gboolean dlna_bin_close_socket(GstDlnaBin *dlna_bin);
 
-static gboolean dlna_bin_parse_head_response(GstDlnaBin *dlna_bin);
+static gboolean dlna_bin_head_response_parse(GstDlnaBin *dlna_bin);
+
+static gboolean dlna_bin_head_response_init_struct(GstDlnaBin *dlna_bin);
 
 static gboolean dlna_bin_head_response_struct_to_str(GstDlnaBin *dlna_bin);
 
@@ -393,7 +412,7 @@ dlna_bin_setup_uri(GstDlnaBin *dlna_bin, const GValue * value)
 	}
 
 	// Parse HEAD response to gather info about URI content item
-	if (!dlna_bin_parse_head_response(dlna_bin))
+	if (!dlna_bin_head_response_parse(dlna_bin))
 	{
 		GST_ERROR_OBJECT(dlna_bin, "Problems parsing HEAD response\n");
 		return FALSE;
@@ -703,34 +722,110 @@ dlna_bin_issue_head_request(GstDlnaBin *dlna_bin)
  * @return	returns TRUE if no problems are encountered, false otherwise
  */
 static gboolean
-dlna_bin_parse_head_response(GstDlnaBin *dlna_bin)
+dlna_bin_head_response_parse(GstDlnaBin *dlna_bin)
 {
 	GST_INFO_OBJECT(dlna_bin, "Parsing HEAD Response: %s", dlna_bin->head_response_str);
 
+	// Initialize structure to hold parsed HEAD Response
+	if (!dlna_bin_head_response_init_struct(dlna_bin))
+	{
+        GST_ERROR_OBJECT(dlna_bin, "Problems initializing struct to store HEAD response");
+        return FALSE;
+	}
+
+	// Convert all header field strings to upper case to aid in parsing
+	int i = 0;
+	for (i = 0; dlna_bin->head_response_str[i]; i++)
+	{
+		dlna_bin->head_response_str[i] = toupper(dlna_bin->head_response_str[i]);
+	}
+
+	// Tokenize HEAD response into individual field values using CRLF as delim
+	char* fields = strtok(dlna_bin->head_response_str, CRLF);
+	while (fields != NULL)
+	{
+		GST_INFO_OBJECT(dlna_bin, "Got Field:%s", fields);
+
+		// Look for field header contained in this string
+		// Extract value of field header
+
+		// Go on to next field
+		fields = strtok(NULL, CRLF);
+	}
+
+	// Print out results of HEAD request
+	if (!dlna_bin_head_response_struct_to_str(dlna_bin))
+	{
+        GST_ERROR_OBJECT(dlna_bin, "Problems converting HEAD response struct to string");
+        return FALSE;
+	}
+	else
+	{
+        GST_INFO_OBJECT(dlna_bin, "Parsed HEAD Response struct: %s",
+        		dlna_bin->head_response->struct_str);
+	}
+	return TRUE;
+}
+
+/**
+ * Initialize structure to store HEAD Response
+ *
+ * @param	dlna_bin	this element instance
+ *
+ * @return	returns TRUE if no problems are encountered, false otherwise
+ */
+static gboolean
+dlna_bin_head_response_init_struct(GstDlnaBin *dlna_bin)
+{
 	// Allocate storage
 	dlna_bin->head_response = g_try_malloc0(sizeof(GstDlnaBinHeadResponse));
 	dlna_bin->head_response->content_features = g_try_malloc0(sizeof(GstDlnaBinHeadResponseContentFeatures));
 
 	// Initialize structs
+	dlna_bin->head_response->http_rev_hdr = HEAD_RESP_HDR_HTTP;
 	dlna_bin->head_response->http_rev = NULL;
 	dlna_bin->head_response->ret_code = 0;
 	dlna_bin->head_response->ret_msg = NULL;
+
+	dlna_bin->head_response->time_seek_hdr = HEAD_RESP_HDR_TIMESEEKRANGE;
+
+	dlna_bin->head_response->npt_seek_hdr = HEAD_RESP_HDR_NPT;
 	dlna_bin->head_response->time_seek_npt_start = NULL;
 	dlna_bin->head_response->time_seek_npt_end = NULL;
+
+	dlna_bin->head_response->byte_seek_hdr = HEAD_RESP_HDR_BYTES;
 	dlna_bin->head_response->byte_seek_start = 0;
 	dlna_bin->head_response->byte_seek_end = 0;
+
+	dlna_bin->head_response->transfer_mode_hdr = HEAD_RESP_HDR_TRANSFERMODE;
 	dlna_bin->head_response->transfer_mode = NULL;
+
+	dlna_bin->head_response->transfer_encoding_hdr = HEAD_RESP_HDR_TRANSFER_ENCODING;
 	dlna_bin->head_response->transfer_encoding = NULL;
+
+	dlna_bin->head_response->date_hdr = HEAD_RESP_HDR_DATE;
 	dlna_bin->head_response->date = NULL;
+
+	dlna_bin->head_response->server_hdr = HEAD_RESP_HDR_SERVER;
 	dlna_bin->head_response->server = NULL;
+
+	dlna_bin->head_response->content_type_hdr = HEAD_RESP_HDR_CONTENT_TYPE;
 	dlna_bin->head_response->content_type = NULL;
 
-	dlna_bin->head_response->content_features->profile = NULL;
+	dlna_bin->head_response->content_features_hdr = HEAD_RESP_HDR_CONTENT_FEATURES;
+
+	dlna_bin->head_response->content_features->profile_hdr = HEAD_RESP_HDR_DLNA_PN;
+    dlna_bin->head_response->content_features->profile = NULL;
+
+    dlna_bin->head_response->content_features->operations_hdr = HEAD_RESP_HDR_DLNA_OP;
 	dlna_bin->head_response->content_features->op_time_seek_supported = FALSE;
 	dlna_bin->head_response->content_features->op_range_supported = FALSE;
 
-	dlna_bin->head_response->content_features->playspeeds_cnt = 0;
+	dlna_bin->head_response->content_features->playspeeds_hdr = HEAD_RESP_HDR_DLNA_PS;
+    dlna_bin->head_response->content_features->playspeeds_cnt = 0;
+    // *TODO* - playspeed array
 
+	dlna_bin->head_response->content_features->flags_hdr = HEAD_RESP_HDR_DLNA_FLAGS;
 	dlna_bin->head_response->content_features->flag_sender_paced_set = FALSE;
 	dlna_bin->head_response->content_features->flag_limited_time_seek_set = FALSE;
 	dlna_bin->head_response->content_features->flag_limited_byte_seek_set = FALSE;
@@ -747,16 +842,6 @@ dlna_bin_parse_head_response(GstDlnaBin *dlna_bin)
 	dlna_bin->head_response->content_features->flag_full_clear_text_set = FALSE;
 	dlna_bin->head_response->content_features->flag_limited_clear_text_set = FALSE;
 
-	if (!dlna_bin_head_response_struct_to_str(dlna_bin))
-	{
-        GST_ERROR_OBJECT(dlna_bin, "Problems converting HEAD response struct to string");
-        return FALSE;
-	}
-	else
-	{
-        GST_INFO_OBJECT(dlna_bin, "HEAD Response struct: %s",
-        		dlna_bin->head_response->struct_str);
-	}
 	return TRUE;
 }
 
@@ -775,60 +860,78 @@ dlna_bin_head_response_struct_to_str(GstDlnaBin *dlna_bin)
     gchar structStr[MAX_HTTP_BUF_SIZE];
     gchar tmpStr[32];
 
-    strcpy(structStr, "HTTP Version: ");
+    strcpy(structStr, "\nHTTP Version: ");
     if (dlna_bin->head_response->http_rev != NULL)
     	strcat(structStr, dlna_bin->head_response->http_rev);
+    else
+        strcat(structStr, "\n");
 
     strcat(structStr, "HEAD Ret Code: ");
     (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-    sprintf(tmpStr, "%d", dlna_bin->head_response->ret_code);
+    sprintf(tmpStr, "%d\n", dlna_bin->head_response->ret_code);
     strcat(structStr, tmpStr);
 
     strcat(structStr, "HEAD Ret Msg: ");
     if (dlna_bin->head_response->ret_msg != NULL)
     	strcat(structStr, dlna_bin->head_response->ret_msg);
+    else
+        strcat(structStr, "\n");
 
     strcat(structStr, "Server: ");
     if (dlna_bin->head_response->server != NULL)
     	strcat(structStr, dlna_bin->head_response->server);
+    else
+        strcat(structStr, "\n");
 
     strcat(structStr, "Date: ");
     if (dlna_bin->head_response->date != NULL)
     	strcat(structStr, dlna_bin->head_response->date);
+    else
+        strcat(structStr, "\n");
 
     strcat(structStr, "Content Type: ");
     if (dlna_bin->head_response->content_type != NULL)
     	strcat(structStr, dlna_bin->head_response->content_type);
+    else
+        strcat(structStr, "\n");
 
     strcat(structStr, "HTTP Transfer Encoding: ");
     if (dlna_bin->head_response->transfer_encoding != NULL)
     	strcat(structStr, dlna_bin->head_response->transfer_encoding);
+    else
+        strcat(structStr, "\n");
 
 	strcat(structStr, "DLNA Transfer Mode: ");
     if (dlna_bin->head_response->transfer_mode != NULL)
     	strcat(structStr, dlna_bin->head_response->transfer_mode);
+    else
+        strcat(structStr, "\n");
 
     strcat(structStr, "Time Seek NPT Start: ");
     if (dlna_bin->head_response->time_seek_npt_start != NULL)
     	strcat(structStr, dlna_bin->head_response->time_seek_npt_start);
+    else
+        strcat(structStr, "\n");
 
     strcat(structStr, "Time Seek NPT End: ");
     if (dlna_bin->head_response->time_seek_npt_end != NULL)
     	strcat(structStr, dlna_bin->head_response->time_seek_npt_end);
+    else
+        strcat(structStr, "\n");
 
     strcat(structStr, "Byte Seek Start: ");
     (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-    sprintf(tmpStr, "%lld", dlna_bin->head_response->byte_seek_start);
+    sprintf(tmpStr, "%lld\n", dlna_bin->head_response->byte_seek_start);
     strcat(structStr, tmpStr);
 
     strcat(structStr, "Byte Seek End: ");
     (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-    sprintf(tmpStr, "%lld", dlna_bin->head_response->byte_seek_end);
+    sprintf(tmpStr, "%lld\n", dlna_bin->head_response->byte_seek_end);
     strcat(structStr, tmpStr);
 
     strcat(structStr, "Supported Playspeed Cnt: ");
     (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-    sprintf(tmpStr, "%d", dlna_bin->head_response->content_features->playspeeds_cnt);
+    sprintf(tmpStr, "%d\n", dlna_bin->head_response->content_features->playspeeds_cnt);
     strcat(structStr, tmpStr);
 
     gint i = 0;
@@ -836,60 +939,63 @@ dlna_bin_head_response_struct_to_str(GstDlnaBin *dlna_bin)
     {
         strcat(structStr, "Playspeed");
         (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-        sprintf(tmpStr, "[%d] = %f", i, dlna_bin->head_response->content_features->playspeeds[i]);
+        sprintf(tmpStr, "[%d] = %f\n", i, dlna_bin->head_response->content_features->playspeeds[i]);
         strcat(structStr, tmpStr);
     }
 
     strcat(structStr, "Time Seek Supported?: ");
-    strcat(structStr, (dlna_bin->head_response->content_features->op_time_seek_supported) ? "TRUE" : "FALSE");
+    strcat(structStr, (dlna_bin->head_response->content_features->op_time_seek_supported) ? "TRUE\n" : "FALSE\n");
 
     strcat(structStr, "Range Supported?: ");
-    strcat(structStr, (dlna_bin->head_response->content_features->op_range_supported) ? "TRUE" : "FALSE");
+    strcat(structStr, (dlna_bin->head_response->content_features->op_range_supported) ? "TRUE\n" : "FALSE\n");
 
     strcat(structStr, "Sender Paced?: ");
-    strcat(structStr, (dlna_bin->head_response->content_features->flag_sender_paced_set) ? "TRUE" : "FALSE");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_sender_paced_set) ? "TRUE\n" : "FALSE\n");
 
     strcat(structStr, "Limited Time Seek?: ");
-    strcat(structStr, (dlna_bin->head_response->content_features->flag_limited_time_seek_set) ? "TRUE" : "FALSE");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_limited_time_seek_set) ? "TRUE\n" : "FALSE\n");
 
     strcat(structStr, "Limited Byte Seek?: ");
-    strcat(structStr, (dlna_bin->head_response->content_features->flag_limited_byte_seek_set) ? "TRUE" : "FALSE");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_limited_byte_seek_set) ? "TRUE\n" : "FALSE\n");
 
     strcat(structStr, "Play Container?: ");
-    strcat(structStr, (dlna_bin->head_response->content_features->flag_play_container_set) ? "TRUE" : "FALSE");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_play_container_set) ? "TRUE\n" : "FALSE\n");
 
     strcat(structStr, "S0 Increasing?: ");
-    strcat(structStr, (dlna_bin->head_response->content_features->flag_so_increasing_set) ? "TRUE" : "FALSE");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_so_increasing_set) ? "TRUE\n" : "FALSE\n");
 
     strcat(structStr, "Sn Increasing?: ");
-    strcat(structStr, (dlna_bin->head_response->content_features->flag_sn_increasing_set) ? "TRUE" : "FALSE");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_sn_increasing_set) ? "TRUE\n" : "FALSE\n");
 
     strcat(structStr, "RTSP Pause?: ");
-    strcat(structStr, (dlna_bin->head_response->content_features->flag_rtsp_pause_set) ? "TRUE" : "FALSE");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_rtsp_pause_set) ? "TRUE\n" : "FALSE\n");
 
     strcat(structStr, "Streaming Mode Supported?: ");
-    strcat(structStr, (dlna_bin->head_response->content_features->flag_streaming_mode_set) ? "TRUE" : "FALSE");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_streaming_mode_set) ? "TRUE\n" : "FALSE\n");
 
     strcat(structStr, "Interactive Mode Supported?: ");
-    strcat(structStr, (dlna_bin->head_response->content_features->flag_interactive_mode_set) ? "TRUE" : "FALSE");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_interactive_mode_set) ? "TRUE\n" : "FALSE\n");
 
     strcat(structStr, "Background Mode Supported?: ");
-    strcat(structStr, (dlna_bin->head_response->content_features->flag_background_mode_set) ? "TRUE" : "FALSE");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_background_mode_set) ? "TRUE\n" : "FALSE\n");
 
     strcat(structStr, "Connection Stalling Supported?: ");
-    strcat(structStr, (dlna_bin->head_response->content_features->flag_stalling_set) ? "TRUE" : "FALSE");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_stalling_set) ? "TRUE\n" : "FALSE\n");
 
     strcat(structStr, "DLNA Ver. 1.5?: ");
-    strcat(structStr, (dlna_bin->head_response->content_features->flag_dlna_v15_set) ? "TRUE" : "FALSE");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_dlna_v15_set) ? "TRUE\n" : "FALSE\n");
 
     strcat(structStr, "Link Protected?: ");
-    strcat(structStr, (dlna_bin->head_response->content_features->flag_link_protected_set) ? "TRUE" : "FALSE");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_link_protected_set) ? "TRUE\n" : "FALSE\n");
 
     strcat(structStr, "Full Clear Text?: ");
-    strcat(structStr, (dlna_bin->head_response->content_features->flag_full_clear_text_set) ? "TRUE" : "FALSE");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_full_clear_text_set) ? "TRUE\n" : "FALSE\n");
 
     strcat(structStr, "Limited Clear Text?: ");
-    strcat(structStr, (dlna_bin->head_response->content_features->flag_limited_clear_text_set) ? "TRUE" : "FALSE");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_limited_clear_text_set) ? "TRUE\n" : "FALSE\n");
+
+    // Copy local string to struct str
+    dlna_bin->head_response->struct_str = g_strdup(structStr);
 
 	return TRUE;
 }
@@ -898,6 +1004,8 @@ dlna_bin_head_response_struct_to_str(GstDlnaBin *dlna_bin)
  * Setup this bin in order to handle non-DTCP encrypted content
  *
  * @param dlna_bin	this element
+ *
+ * @return	returns TRUE if no problems are encountered, false otherwise
  */
 static gboolean
 dlna_bin_non_dtcp_setup(GstDlnaBin *dlna_bin)
@@ -1007,8 +1115,7 @@ GST_PLUGIN_DEFINE (
 		VERSION,
 		"LGPL",
 		"gst-cablelabs_ri",
-		"http://gstreamer.net/"
-)
+		"http://gstreamer.net/");
 
 #endif
 

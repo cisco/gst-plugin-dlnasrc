@@ -57,31 +57,61 @@ struct _GstDlnaBin
 
 struct _GstDlnaBinHeadResponse
 {
+	gchar *head_response_uppercase_str;
+	gchar* struct_str;
+
 	gchar* http_rev;
+	const gchar* http_rev_hdr;
+
 	gint ret_code;
+	const gchar* ret_code_hdr;
+
 	gchar* ret_msg;
+	const gchar* ret_msg_hdr;
+
+	const gchar* time_seek_hdr;
+
 	gchar* time_seek_npt_start;
 	gchar* time_seek_npt_end;
+	const gchar* npt_seek_hdr;
+
 	gint64 byte_seek_start;
 	gint64 byte_seek_end;
+	const gchar* byte_seek_hdr;
+
 	gchar* transfer_mode;
+	const gchar* transfer_mode_hdr;
+
 	gchar* transfer_encoding;
+	const gchar* transfer_encoding_hdr;
+
 	gchar* date;
+	const gchar* date_hdr;
+
 	gchar* server;
+	const gchar* server_hdr;
+
 	gchar* content_type;
-	gchar* struct_str;
+	const gchar* content_type_hdr;
+
 	GstDlnaBinHeadResponseContentFeatures* content_features;
+	const gchar*  content_features_hdr;
 };
 
 struct _GstDlnaBinHeadResponseContentFeatures
 {
+	const gchar*  profile_hdr;
 	gchar* profile;
+
+	const gchar*  operations_hdr;
 	gboolean op_time_seek_supported;
 	gboolean op_range_supported;
 
+	const gchar*  playspeeds_hdr;
 	guint playspeeds_cnt;
 	gfloat playspeeds[PLAYSPEEDS_MAX];
 
+	const gchar*  flags_hdr;
 	gboolean flag_sender_paced_set;
 	gboolean flag_limited_time_seek_set;
 	gboolean flag_limited_byte_seek_set;
