@@ -59,13 +59,13 @@ enum
 #define ELEMENT_NAME_NON_DTCP_SINK "non-dtcp-sink"
 #define ELEMENT_NAME_DTCP_SINK "dtcp-sink"
 
-#define MAX_HTTP_BUF_SIZE 512
+#define MAX_HTTP_BUF_SIZE 1024
 static const char CRLF[] = "\r\n";
 
 // Structure describing details of this element, used when initializing element
 //
 const GstElementDetails gst_dlna_bin_details
-= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/9/12 8:20 AM",
+= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/12/12 8:50 AM",
 		"Source/Network",
 		"Receive data as a client via HTTP with DLNA extensions",
 		"Eric Winkelman <e.winkelman@cablelabs.com>");
@@ -771,6 +771,125 @@ static gboolean
 dlna_bin_head_response_struct_to_str(GstDlnaBin *dlna_bin)
 {
 	GST_LOG_OBJECT(dlna_bin, "Formatting HEAD Response struct");
+
+    gchar structStr[MAX_HTTP_BUF_SIZE];
+    gchar tmpStr[32];
+
+    strcpy(structStr, "HTTP Version: ");
+    if (dlna_bin->head_response->http_rev != NULL)
+    	strcat(structStr, dlna_bin->head_response->http_rev);
+
+    strcat(structStr, "HEAD Ret Code: ");
+    (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
+    sprintf(tmpStr, "%d", dlna_bin->head_response->ret_code);
+    strcat(structStr, tmpStr);
+
+    strcat(structStr, "HEAD Ret Msg: ");
+    if (dlna_bin->head_response->ret_msg != NULL)
+    	strcat(structStr, dlna_bin->head_response->ret_msg);
+
+    strcat(structStr, "Server: ");
+    if (dlna_bin->head_response->server != NULL)
+    	strcat(structStr, dlna_bin->head_response->server);
+
+    strcat(structStr, "Date: ");
+    if (dlna_bin->head_response->date != NULL)
+    	strcat(structStr, dlna_bin->head_response->date);
+
+    strcat(structStr, "Content Type: ");
+    if (dlna_bin->head_response->content_type != NULL)
+    	strcat(structStr, dlna_bin->head_response->content_type);
+
+    strcat(structStr, "HTTP Transfer Encoding: ");
+    if (dlna_bin->head_response->transfer_encoding != NULL)
+    	strcat(structStr, dlna_bin->head_response->transfer_encoding);
+
+	strcat(structStr, "DLNA Transfer Mode: ");
+    if (dlna_bin->head_response->transfer_mode != NULL)
+    	strcat(structStr, dlna_bin->head_response->transfer_mode);
+
+    strcat(structStr, "Time Seek NPT Start: ");
+    if (dlna_bin->head_response->time_seek_npt_start != NULL)
+    	strcat(structStr, dlna_bin->head_response->time_seek_npt_start);
+
+    strcat(structStr, "Time Seek NPT End: ");
+    if (dlna_bin->head_response->time_seek_npt_end != NULL)
+    	strcat(structStr, dlna_bin->head_response->time_seek_npt_end);
+
+    strcat(structStr, "Byte Seek Start: ");
+    (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
+    sprintf(tmpStr, "%lld", dlna_bin->head_response->byte_seek_start);
+    strcat(structStr, tmpStr);
+
+    strcat(structStr, "Byte Seek End: ");
+    (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
+    sprintf(tmpStr, "%lld", dlna_bin->head_response->byte_seek_end);
+    strcat(structStr, tmpStr);
+
+    strcat(structStr, "Supported Playspeed Cnt: ");
+    (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
+    sprintf(tmpStr, "%d", dlna_bin->head_response->content_features->playspeeds_cnt);
+    strcat(structStr, tmpStr);
+
+    gint i = 0;
+    for (i = 0; i < dlna_bin->head_response->content_features->playspeeds_cnt; i++)
+    {
+        strcat(structStr, "Playspeed");
+        (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
+        sprintf(tmpStr, "[%d] = %f", i, dlna_bin->head_response->content_features->playspeeds[i]);
+        strcat(structStr, tmpStr);
+    }
+
+    strcat(structStr, "Time Seek Supported?: ");
+    strcat(structStr, (dlna_bin->head_response->content_features->op_time_seek_supported) ? "TRUE" : "FALSE");
+
+    strcat(structStr, "Range Supported?: ");
+    strcat(structStr, (dlna_bin->head_response->content_features->op_range_supported) ? "TRUE" : "FALSE");
+
+    strcat(structStr, "Sender Paced?: ");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_sender_paced_set) ? "TRUE" : "FALSE");
+
+    strcat(structStr, "Limited Time Seek?: ");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_limited_time_seek_set) ? "TRUE" : "FALSE");
+
+    strcat(structStr, "Limited Byte Seek?: ");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_limited_byte_seek_set) ? "TRUE" : "FALSE");
+
+    strcat(structStr, "Play Container?: ");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_play_container_set) ? "TRUE" : "FALSE");
+
+    strcat(structStr, "S0 Increasing?: ");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_so_increasing_set) ? "TRUE" : "FALSE");
+
+    strcat(structStr, "Sn Increasing?: ");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_sn_increasing_set) ? "TRUE" : "FALSE");
+
+    strcat(structStr, "RTSP Pause?: ");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_rtsp_pause_set) ? "TRUE" : "FALSE");
+
+    strcat(structStr, "Streaming Mode Supported?: ");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_streaming_mode_set) ? "TRUE" : "FALSE");
+
+    strcat(structStr, "Interactive Mode Supported?: ");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_interactive_mode_set) ? "TRUE" : "FALSE");
+
+    strcat(structStr, "Background Mode Supported?: ");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_background_mode_set) ? "TRUE" : "FALSE");
+
+    strcat(structStr, "Connection Stalling Supported?: ");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_stalling_set) ? "TRUE" : "FALSE");
+
+    strcat(structStr, "DLNA Ver. 1.5?: ");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_dlna_v15_set) ? "TRUE" : "FALSE");
+
+    strcat(structStr, "Link Protected?: ");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_link_protected_set) ? "TRUE" : "FALSE");
+
+    strcat(structStr, "Full Clear Text?: ");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_full_clear_text_set) ? "TRUE" : "FALSE");
+
+    strcat(structStr, "Limited Clear Text?: ");
+    strcat(structStr, (dlna_bin->head_response->content_features->flag_limited_clear_text_set) ? "TRUE" : "FALSE");
 
 	return TRUE;
 }
