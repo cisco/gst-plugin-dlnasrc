@@ -61,57 +61,58 @@ struct _GstDlnaBinHeadResponse
 	gchar* struct_str;
 
 	gchar* http_rev;
-	const gchar* http_rev_hdr;
+	gint http_rev_idx;
 
 	gint ret_code;
-	const gchar* ret_code_hdr;
+	gint ret_code_idx;
 
 	gchar* ret_msg;
-	const gchar* ret_msg_hdr;
+	gint ret_msg_idx;
 
 	const gchar* time_seek_hdr;
+	gint time_seek_idx;
 
 	gchar* time_seek_npt_start;
 	gchar* time_seek_npt_end;
-	const gchar* npt_seek_hdr;
+	gint npt_seek_idx;
 
 	gint64 byte_seek_start;
 	gint64 byte_seek_end;
-	const gchar* byte_seek_hdr;
+	gint byte_seek_idx;
 
 	gchar* transfer_mode;
-	const gchar* transfer_mode_hdr;
+	gint transfer_mode_idx;
 
 	gchar* transfer_encoding;
-	const gchar* transfer_encoding_hdr;
+	gint transfer_encoding_idx;
 
 	gchar* date;
-	const gchar* date_hdr;
+	gint date_idx;
 
 	gchar* server;
-	const gchar* server_hdr;
+	gint server_idx;
 
 	gchar* content_type;
-	const gchar* content_type_hdr;
+	gint content_type_idx;
 
 	GstDlnaBinHeadResponseContentFeatures* content_features;
-	const gchar*  content_features_hdr;
+	gint  content_features_idx;
 };
 
 struct _GstDlnaBinHeadResponseContentFeatures
 {
-	const gchar*  profile_hdr;
+	gint  profile_idx;
 	gchar* profile;
 
-	const gchar*  operations_hdr;
+	gint  operations_idx;
 	gboolean op_time_seek_supported;
 	gboolean op_range_supported;
 
-	const gchar*  playspeeds_hdr;
+	gint playspeeds_idx;
 	guint playspeeds_cnt;
 	gfloat playspeeds[PLAYSPEEDS_MAX];
 
-	const gchar*  flags_hdr;
+	gint  flags_idx;
 	gboolean flag_sender_paced_set;
 	gboolean flag_limited_time_seek_set;
 	gboolean flag_limited_byte_seek_set;

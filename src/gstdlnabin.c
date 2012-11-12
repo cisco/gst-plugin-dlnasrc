@@ -62,22 +62,41 @@ enum
 #define MAX_HTTP_BUF_SIZE 1024
 static const char CRLF[] = "\r\n";
 
-// Constant strings identifiers for header fields in HEAD response
-static const char* HEAD_RESP_HDR_HTTP = "HTTP";
-static const char* HEAD_RESP_HDR_TIMESEEKRANGE = "TIMESEEKRANGE.DLNA.ORG";
-static const char* HEAD_RESP_HDR_NPT = "NPT";
-static const char* HEAD_RESP_HDR_BYTES = "BYTES";
-static const char* HEAD_RESP_HDR_TRANSFERMODE = "TRANSFERMODE.DLNA.ORG";
-static const char* HEAD_RESP_HDR_DATE = "DATE";
-static const char* HEAD_RESP_HDR_CONTENT_TYPE = "CONTENT-TYPE";
-static const char* HEAD_RESP_HDR_SERVER = "SERVER";
-static const char* HEAD_RESP_HDR_TRANSFER_ENCODING = "TRANSFER-ENCODING";
-static const char* HEAD_RESP_HDR_CONTENT_FEATURES = "CONTENTFEATURES.DLNA.ORG";
-static const char* HEAD_RESP_HDR_DLNA_PN = "DLNA.ORG_PN";
-static const char* HEAD_RESP_HDR_DLNA_OP = "DLNA.ORG_OP";
-static const char* HEAD_RESP_HDR_DLNA_PS = "DLNA.ORG_PS";
-static const char* HEAD_RESP_HDR_DLNA_FLAGS = "DLNA.ORG_FLAGS";
+enum field_type
+{
+	STRING_TYPE,
+	NUMERIC_TYPE,
+	BYTE_RANGE_TYPE,
+	NPT_RANGE_TYPE,
+	FLAG_TYPE,
+};
 
+typedef struct _headRespFieldInfo
+{
+	const char* field_name;
+	gint field_type;
+
+} headRespFieldInfo;
+
+// Constant strings identifiers for header fields in HEAD response
+static const headRespFieldInfo HEAD_RESPONSE_FIELDS[] = {
+		{"HTTP", STRING_TYPE},						// 0
+		{"VARY", STRING_TYPE},						// 1
+		{"TIMESEEKRANGE.DLNA.ORG", STRING_TYPE},	// 2
+		{"NPT", NPT_RANGE_TYPE},					// 3
+		{"BYTES", BYTE_RANGE_TYPE},					// 4
+		{"TRANSFERMODE.DLNA.ORG", STRING_TYPE},		// 5
+		{"DATE", STRING_TYPE},						// 6
+		{"CONTENT-TYPE", STRING_TYPE},				// 7
+		{"SERVER", STRING_TYPE},					// 8
+		{"TRANSFER-ENCODING", STRING_TYPE},			// 9
+		{"CONTENTFEATURES.DLNA.ORG", STRING_TYPE},	// 10
+		{"DLNA.ORG_PN", STRING_TYPE},				// 11
+		{"DLNA.ORG_OP", FLAG_TYPE},					// 12
+		{"DLNA.ORG_PS", NUMERIC_TYPE},				// 13
+		{"DLNA.ORG_FLAGS", FLAG_TYPE}				// 14
+};
+static const gint HEAD_RESPONSE_FIELDS_CNT = 15;
 
 // Structure describing details of this element, used when initializing element
 //
@@ -132,6 +151,10 @@ static gboolean dlna_bin_issue_head_request(GstDlnaBin *dlna_bin);
 static gboolean dlna_bin_close_socket(GstDlnaBin *dlna_bin);
 
 static gboolean dlna_bin_head_response_parse(GstDlnaBin *dlna_bin);
+
+static gint dlna_bin_head_response_get_field_idx(GstDlnaBin *dlna_bin, gchar* field_str);
+
+static gboolean dlna_bin_head_response_assign_field_value(GstDlnaBin *dlna_bin, gint idx, gchar* field_str);
 
 static gboolean dlna_bin_head_response_init_struct(GstDlnaBin *dlna_bin);
 
@@ -220,7 +243,7 @@ static void
 gst_dlna_bin_init (GstDlnaBin * dlna_bin,
 		GstDlnaBinClass * gclass)
 {
-    GST_DEBUG_OBJECT(dlna_bin, "Initializing");
+    GST_LOG_OBJECT(dlna_bin, "Initializing");
 
     gst_dlna_build_bin(dlna_bin);
 
@@ -256,7 +279,7 @@ gst_dlna_bin_set_property (GObject * object, guint prop_id,
 {
 	GstDlnaBin *dlna_bin = GST_DLNA_BIN (object);
 
-    GST_INFO_OBJECT(dlna_bin, "Setting property: %d", prop_id);
+    GST_LOG_OBJECT(dlna_bin, "Setting property: %d", prop_id);
 
     switch (prop_id) {
 
@@ -266,8 +289,8 @@ gst_dlna_bin_set_property (GObject * object, guint prop_id,
 		{
 		    GST_ERROR_OBJECT(dlna_bin, "Failed to set URI property");
 		}
+		break;
 	}
-	break;
 
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -298,7 +321,6 @@ gst_dlna_bin_get_property (GObject * object, guint prop_id, GValue * value,
 
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
-		break;
 	}
 }
 
@@ -310,7 +332,7 @@ gst_dlna_bin_get_property (GObject * object, guint prop_id, GValue * value,
 static GstDlnaBin*
 gst_dlna_build_bin (GstDlnaBin *dlna_bin)
 {
-	GST_DEBUG_OBJECT(dlna_bin, "Building bin");
+	GST_LOG_OBJECT(dlna_bin, "Building bin");
 
 	//gst_dlna_build_bin(dlna_bin);
 	//GstElement *http_src;
@@ -319,7 +341,7 @@ gst_dlna_build_bin (GstDlnaBin *dlna_bin)
 	// Create source element
 	dlna_bin->http_src = gst_element_factory_make ("souphttpsrc", ELEMENT_NAME_HTTP_SRC);
 	if (!dlna_bin->http_src) {
-		GST_DEBUG_OBJECT(dlna_bin, "The source element could not be created. Exiting.\n");
+		GST_ERROR_OBJECT(dlna_bin, "The source element could not be created. Exiting.\n");
 		// *TODO* - do we really want to exit here???
 		exit(1);
 	}
@@ -358,7 +380,7 @@ gst_dlna_build_bin (GstDlnaBin *dlna_bin)
 static gboolean
 dlna_bin_setup_uri(GstDlnaBin *dlna_bin, const GValue * value)
 {
-	GST_DEBUG_OBJECT(dlna_bin, "Setting up URI");
+	GST_LOG_OBJECT(dlna_bin, "Setting up URI");
 
 	GstElement *elem;
 
@@ -449,7 +471,7 @@ dlna_bin_setup_uri(GstDlnaBin *dlna_bin, const GValue * value)
 static gboolean
 dlna_bin_parse_uri(GstDlnaBin *dlna_bin)
 {
-	GST_INFO_OBJECT(dlna_bin, "Parsing URI: %s", dlna_bin->uri);
+	GST_LOG_OBJECT(dlna_bin, "Parsing URI: %s", dlna_bin->uri);
 
 	// URI format is:
 	// <scheme>:<hierarchical_part>[?query][#fragment]
@@ -521,7 +543,7 @@ dlna_bin_parse_uri(GstDlnaBin *dlna_bin)
 static gboolean
 dlna_bin_open_socket(GstDlnaBin *dlna_bin)
 {
-	GST_DEBUG_OBJECT(dlna_bin, "Opening socket to URI src");
+	GST_LOG_OBJECT(dlna_bin, "Opening socket to URI src");
 
     // Create socket
     struct addrinfo hints = {0};
@@ -574,7 +596,7 @@ dlna_bin_open_socket(GstDlnaBin *dlna_bin)
         }
 
         // Successfully connected
-        GST_INFO_OBJECT(dlna_bin, "Successful connect to sock: %d\n", dlna_bin->sock);
+        GST_DEBUG_OBJECT(dlna_bin, "Successful connect to sock: %d\n", dlna_bin->sock);
         break;
     }
 
@@ -623,7 +645,7 @@ dlna_bin_close_socket(GstDlnaBin *dlna_bin)
 static gboolean
 dlna_bin_formulate_head_request(GstDlnaBin *dlna_bin)
 {
-	GST_DEBUG_OBJECT(dlna_bin, "Formulating head request");
+	GST_LOG_OBJECT(dlna_bin, "Formulating head request");
 
     gchar requestStr[MAX_HTTP_BUF_SIZE];
     gchar tmpStr[32];
@@ -676,7 +698,7 @@ dlna_bin_formulate_head_request(GstDlnaBin *dlna_bin)
 static gboolean
 dlna_bin_issue_head_request(GstDlnaBin *dlna_bin)
 {
-	GST_INFO_OBJECT(dlna_bin, "Issuing head request: %s", dlna_bin->head_request_str);
+	GST_LOG_OBJECT(dlna_bin, "Issuing head request: %s", dlna_bin->head_request_str);
 
 	// Send HEAD request on socket
     gint bytesTxd = 0;
@@ -709,7 +731,7 @@ dlna_bin_issue_head_request(GstDlnaBin *dlna_bin)
         return FALSE;
     }
     dlna_bin->head_response_str = g_strdup(responseStr);
-	GST_LOG_OBJECT(dlna_bin, "HEAD Response: %s", dlna_bin->head_response_str);
+	GST_INFO_OBJECT(dlna_bin, "HEAD Response received: %s", dlna_bin->head_response_str);
 
 	return TRUE;
 }
@@ -724,7 +746,7 @@ dlna_bin_issue_head_request(GstDlnaBin *dlna_bin)
 static gboolean
 dlna_bin_head_response_parse(GstDlnaBin *dlna_bin)
 {
-	GST_INFO_OBJECT(dlna_bin, "Parsing HEAD Response: %s", dlna_bin->head_response_str);
+	GST_LOG_OBJECT(dlna_bin, "Parsing HEAD Response: %s", dlna_bin->head_response_str);
 
 	// Initialize structure to hold parsed HEAD Response
 	if (!dlna_bin_head_response_init_struct(dlna_bin))
@@ -744,10 +766,21 @@ dlna_bin_head_response_parse(GstDlnaBin *dlna_bin)
 	char* fields = strtok(dlna_bin->head_response_str, CRLF);
 	while (fields != NULL)
 	{
-		GST_INFO_OBJECT(dlna_bin, "Got Field:%s", fields);
-
 		// Look for field header contained in this string
-		// Extract value of field header
+		gint idx = dlna_bin_head_response_get_field_idx(dlna_bin, fields);
+
+		// If found field header, extract value
+		if (idx != -1)
+		{
+			GST_INFO_OBJECT(dlna_bin, "Got Idx %d for Field:%s", idx, fields);
+
+			// Extract value of field header
+			dlna_bin_head_response_assign_field_value(dlna_bin, idx, fields);
+		}
+		else
+		{
+			GST_INFO_OBJECT(dlna_bin, "No Idx found for Field:%s", fields);
+		}
 
 		// Go on to next field
 		fields = strtok(NULL, CRLF);
@@ -761,7 +794,7 @@ dlna_bin_head_response_parse(GstDlnaBin *dlna_bin)
 	}
 	else
 	{
-        GST_INFO_OBJECT(dlna_bin, "Parsed HEAD Response struct: %s",
+        GST_INFO_OBJECT(dlna_bin, "Parsed HEAD Response into struct: %s",
         		dlna_bin->head_response->struct_str);
 	}
 	return TRUE;
@@ -782,50 +815,64 @@ dlna_bin_head_response_init_struct(GstDlnaBin *dlna_bin)
 	dlna_bin->head_response->content_features = g_try_malloc0(sizeof(GstDlnaBinHeadResponseContentFeatures));
 
 	// Initialize structs
-	dlna_bin->head_response->http_rev_hdr = HEAD_RESP_HDR_HTTP;
+	// {"HTTP", STRING_TYPE} // 0
+	dlna_bin->head_response->http_rev_idx = 0;
 	dlna_bin->head_response->http_rev = NULL;
 	dlna_bin->head_response->ret_code = 0;
 	dlna_bin->head_response->ret_msg = NULL;
 
-	dlna_bin->head_response->time_seek_hdr = HEAD_RESP_HDR_TIMESEEKRANGE;
+	// {"TIMESEEKRANGE.DLNA.ORG", STRING_TYPE},	// 2
+	dlna_bin->head_response->time_seek_idx = 2;
 
-	dlna_bin->head_response->npt_seek_hdr = HEAD_RESP_HDR_NPT;
+	// {"NPT", NPT_RANGE_TYPE},	// 3
+	dlna_bin->head_response->npt_seek_idx = 3;
 	dlna_bin->head_response->time_seek_npt_start = NULL;
 	dlna_bin->head_response->time_seek_npt_end = NULL;
 
-	dlna_bin->head_response->byte_seek_hdr = HEAD_RESP_HDR_BYTES;
+	// {"BYTES", BYTE_RANGE_TYPE}, // 4
+	dlna_bin->head_response->byte_seek_idx = 4;
 	dlna_bin->head_response->byte_seek_start = 0;
 	dlna_bin->head_response->byte_seek_end = 0;
 
-	dlna_bin->head_response->transfer_mode_hdr = HEAD_RESP_HDR_TRANSFERMODE;
+	// {"TRANSFERMODE.DLNA.ORG", STRING_TYPE}, // 5
+	dlna_bin->head_response->transfer_mode_idx = 5;
 	dlna_bin->head_response->transfer_mode = NULL;
 
-	dlna_bin->head_response->transfer_encoding_hdr = HEAD_RESP_HDR_TRANSFER_ENCODING;
+	// {"TRANSFER-ENCODING", STRING_TYPE}, // 9
+	dlna_bin->head_response->transfer_encoding_idx = 9;
 	dlna_bin->head_response->transfer_encoding = NULL;
 
-	dlna_bin->head_response->date_hdr = HEAD_RESP_HDR_DATE;
+	// {"DATE", STRING_TYPE}, // 6
+	dlna_bin->head_response->date_idx = 6;
 	dlna_bin->head_response->date = NULL;
 
-	dlna_bin->head_response->server_hdr = HEAD_RESP_HDR_SERVER;
+	// {"SERVER", STRING_TYPE},	// 8
+	dlna_bin->head_response->server_idx = 8;
 	dlna_bin->head_response->server = NULL;
 
-	dlna_bin->head_response->content_type_hdr = HEAD_RESP_HDR_CONTENT_TYPE;
+	// {"CONTENT-TYPE", STRING_TYPE}, // 7
+	dlna_bin->head_response->content_type_idx = 7;
 	dlna_bin->head_response->content_type = NULL;
 
-	dlna_bin->head_response->content_features_hdr = HEAD_RESP_HDR_CONTENT_FEATURES;
+	// {"CONTENTFEATURES.DLNA.ORG", STRING_TYPE}, // 10
+	dlna_bin->head_response->content_features_idx = 10;
 
-	dlna_bin->head_response->content_features->profile_hdr = HEAD_RESP_HDR_DLNA_PN;
+	// {"DLNA.ORG_PN", STRING_TYPE}, // 11
+	dlna_bin->head_response->content_features->profile_idx = 11;
     dlna_bin->head_response->content_features->profile = NULL;
 
-    dlna_bin->head_response->content_features->operations_hdr = HEAD_RESP_HDR_DLNA_OP;
+	// {"DLNA.ORG_OP", FLAG_TYPE},	// 12
+    dlna_bin->head_response->content_features->operations_idx = 12;
 	dlna_bin->head_response->content_features->op_time_seek_supported = FALSE;
 	dlna_bin->head_response->content_features->op_range_supported = FALSE;
 
-	dlna_bin->head_response->content_features->playspeeds_hdr = HEAD_RESP_HDR_DLNA_PS;
+	// {"DLNA.ORG_PS", NUMERIC_TYPE}, // 13
+	dlna_bin->head_response->content_features->playspeeds_idx = 13;
     dlna_bin->head_response->content_features->playspeeds_cnt = 0;
     // *TODO* - playspeed array
 
-	dlna_bin->head_response->content_features->flags_hdr = HEAD_RESP_HDR_DLNA_FLAGS;
+	// {"DLNA.ORG_FLAGS", FLAG_TYPE} // 14
+	dlna_bin->head_response->content_features->flags_idx = 14;
 	dlna_bin->head_response->content_features->flag_sender_paced_set = FALSE;
 	dlna_bin->head_response->content_features->flag_limited_time_seek_set = FALSE;
 	dlna_bin->head_response->content_features->flag_limited_byte_seek_set = FALSE;
@@ -841,6 +888,50 @@ dlna_bin_head_response_init_struct(GstDlnaBin *dlna_bin)
 	dlna_bin->head_response->content_features->flag_link_protected_set = FALSE;
 	dlna_bin->head_response->content_features->flag_full_clear_text_set = FALSE;
 	dlna_bin->head_response->content_features->flag_limited_clear_text_set = FALSE;
+
+	return TRUE;
+}
+
+/**
+ * Looks for a matching HEAD response field in supplied string.
+ *
+ * @param	look for HEAD response field in this string
+ *
+ * @return	index of matching HEAD response field,
+ * 			-1 if does not contain a HEAD response field header
+ */
+static gint
+dlna_bin_head_response_get_field_idx(GstDlnaBin *dlna_bin, gchar* field_str)
+{
+	GST_LOG_OBJECT(dlna_bin, "Determine associated HEAD response field");
+
+	gint idx = -1;
+	int i = 0;
+	for (i = 0; i < HEAD_RESPONSE_FIELDS_CNT; i++)
+	{
+		if (strstr(field_str, HEAD_RESPONSE_FIELDS[i].field_name) != NULL)
+		{
+			idx = i;
+			break;
+		}
+	}
+
+	return idx;
+}
+
+/**
+ * Initialize associated value in HEAD response struct
+ *
+ * @param	dlna_bin	this element instance
+ * @param	idx			index which describes HEAD response field and type
+ * @param	fieldStr	string containing HEAD response field header and value
+ *
+ * @return	returns TRUE if no problems are encountered, false otherwise
+ */
+static gboolean
+dlna_bin_head_response_assign_field_value(GstDlnaBin *dlna_bin, gint idx, gchar* fieldStr)
+{
+	GST_LOG_OBJECT(dlna_bin, "Store value received in HEAD response field");
 
 	return TRUE;
 }
