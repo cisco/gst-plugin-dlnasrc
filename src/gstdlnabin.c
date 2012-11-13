@@ -61,42 +61,27 @@ enum
 
 #define MAX_HTTP_BUF_SIZE 1024
 static const char CRLF[] = "\r\n";
-
-enum field_type
-{
-	STRING_TYPE,
-	NUMERIC_TYPE,
-	BYTE_RANGE_TYPE,
-	NPT_RANGE_TYPE,
-	FLAG_TYPE,
-};
-
-typedef struct _headRespFieldInfo
-{
-	const char* field_name;
-	gint field_type;
-
-} headRespFieldInfo;
+static const char COLON[] = ":";
 
 // Constant strings identifiers for header fields in HEAD response
-static const headRespFieldInfo HEAD_RESPONSE_FIELDS[] = {
-		{"HTTP", STRING_TYPE},						// 0
-		{"VARY", STRING_TYPE},						// 1
-		{"TIMESEEKRANGE.DLNA.ORG", STRING_TYPE},	// 2
-		{"NPT", NPT_RANGE_TYPE},					// 3
-		{"BYTES", BYTE_RANGE_TYPE},					// 4
-		{"TRANSFERMODE.DLNA.ORG", STRING_TYPE},		// 5
-		{"DATE", STRING_TYPE},						// 6
-		{"CONTENT-TYPE", STRING_TYPE},				// 7
-		{"SERVER", STRING_TYPE},					// 8
-		{"TRANSFER-ENCODING", STRING_TYPE},			// 9
-		{"CONTENTFEATURES.DLNA.ORG", STRING_TYPE},	// 10
-		{"DLNA.ORG_PN", STRING_TYPE},				// 11
-		{"DLNA.ORG_OP", FLAG_TYPE},					// 12
-		{"DLNA.ORG_PS", NUMERIC_TYPE},				// 13
-		{"DLNA.ORG_FLAGS", FLAG_TYPE}				// 14
+static const char* HEAD_RESPONSE_HDRS[] = {
+		"HTTP/",					// 0
+		"VARY", 					// 1
+		"TIMESEEKRANGE.DLNA.ORG", 	// 2
+		"NPT",						// 3
+		"BYTES", 					// 4
+		"TRANSFERMODE.DLNA.ORG",	// 5
+		"DATE", 					// 6
+		"CONTENT-TYPE",				// 7
+		"SERVER", 					// 8
+		"TRANSFER-ENCODING", 		// 9
+		"CONTENTFEATURES.DLNA.ORG", // 10
+		"DLNA.ORG_PN", 				// 11
+		"DLNA.ORG_OP", 				// 12
+		"DLNA.ORG_PS",				// 13
+		"DLNA.ORG_FLAGS",			// 14
 };
-static const gint HEAD_RESPONSE_FIELDS_CNT = 15;
+static const gint HEAD_RESPONSE_HDRS_CNT = 15;
 
 // Structure describing details of this element, used when initializing element
 //
@@ -772,14 +757,14 @@ dlna_bin_head_response_parse(GstDlnaBin *dlna_bin)
 		// If found field header, extract value
 		if (idx != -1)
 		{
-			GST_INFO_OBJECT(dlna_bin, "Got Idx %d for Field:%s", idx, fields);
+			GST_LOG_OBJECT(dlna_bin, "Got Idx %d for Field:%s", idx, fields);
 
 			// Extract value of field header
 			dlna_bin_head_response_assign_field_value(dlna_bin, idx, fields);
 		}
 		else
 		{
-			GST_INFO_OBJECT(dlna_bin, "No Idx found for Field:%s", fields);
+			GST_WARNING_OBJECT(dlna_bin, "No Idx found for Field:%s", fields);
 		}
 
 		// Go on to next field
@@ -907,9 +892,9 @@ dlna_bin_head_response_get_field_idx(GstDlnaBin *dlna_bin, gchar* field_str)
 
 	gint idx = -1;
 	int i = 0;
-	for (i = 0; i < HEAD_RESPONSE_FIELDS_CNT; i++)
+	for (i = 0; i < HEAD_RESPONSE_HDRS_CNT; i++)
 	{
-		if (strstr(field_str, HEAD_RESPONSE_FIELDS[i].field_name) != NULL)
+		if (strstr(field_str, HEAD_RESPONSE_HDRS[i]) != NULL)
 		{
 			idx = i;
 			break;
@@ -929,11 +914,80 @@ dlna_bin_head_response_get_field_idx(GstDlnaBin *dlna_bin, gchar* field_str)
  * @return	returns TRUE if no problems are encountered, false otherwise
  */
 static gboolean
-dlna_bin_head_response_assign_field_value(GstDlnaBin *dlna_bin, gint idx, gchar* fieldStr)
+dlna_bin_head_response_assign_field_value(GstDlnaBin *dlna_bin, gint idx, gchar* field_str)
 {
 	GST_LOG_OBJECT(dlna_bin, "Store value received in HEAD response field");
 
-	return TRUE;
+	gboolean rc = TRUE;
+	// *TODO* - figure out max size
+	char tmp1[32];
+	char tmp2[32];
+	gint int_value = 0;
+	gint ret_code = 0;
+
+	// Get value based on index
+	switch (idx)
+	{
+	// "HTTP"
+	case 0:
+		if ((ret_code = sscanf(field_str, "%s %d %s", tmp1, &int_value, tmp2)) != 3)
+		{
+			GST_WARNING_OBJECT(dlna_bin, "Problems with HEAD response field hdr %s, idx: %d, value: %s, retcode: %d, tmp: %s, %s, %s, %s",
+					HEAD_RESPONSE_HDRS[idx], idx, field_str, ret_code, tmp1, tmp2);
+		}
+		else
+		{
+			dlna_bin->head_response->http_rev = g_strdup(tmp1);
+			dlna_bin->head_response->ret_code = int_value;
+			dlna_bin->head_response->ret_msg = g_strdup(tmp2);
+		}
+		break;
+
+	// "VARY"
+	case 1:
+		// Ignore field values
+		break;
+
+	//"TIMESEEKRANGE.DLNA.ORG"
+		//"NPT
+		//"BYTES"
+	case 2:
+		break;
+
+	//"TRANSFERMODE.DLNA.ORG"
+	case 5:
+		break;
+
+	//"DATE"
+	case 6:
+		break;
+
+	// "CONTENT-TYPE"
+	case 7:
+		break;
+
+	//"SERVER"
+	case 8:
+		break;
+
+	//"TRANSFER-ENCODING"
+	case 9:
+		break;
+
+	//"CONTENTFEATURES.DLNA.ORG"
+		//"DLNA.ORG_PN"
+		//"DLNA.ORG_OP"
+		//"DLNA.ORG_PS"
+		//"DLNA.ORG_FLAGS"
+	case 10:
+		break;
+
+	default:
+		GST_WARNING_OBJECT(dlna_bin, "Unsupported HEAD response field idx: %d", idx);
+		rc = FALSE;
+	}
+
+	return rc;
 }
 
 /**
@@ -954,76 +1008,71 @@ dlna_bin_head_response_struct_to_str(GstDlnaBin *dlna_bin)
     strcpy(structStr, "\nHTTP Version: ");
     if (dlna_bin->head_response->http_rev != NULL)
     	strcat(structStr, dlna_bin->head_response->http_rev);
-    else
-        strcat(structStr, "\n");
+    strcat(structStr, "\n");
 
     strcat(structStr, "HEAD Ret Code: ");
     (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-    sprintf(tmpStr, "%d\n", dlna_bin->head_response->ret_code);
+    sprintf(tmpStr, "%d", dlna_bin->head_response->ret_code);
     strcat(structStr, tmpStr);
+    strcat(structStr, "\n");
 
     strcat(structStr, "HEAD Ret Msg: ");
     if (dlna_bin->head_response->ret_msg != NULL)
     	strcat(structStr, dlna_bin->head_response->ret_msg);
-    else
-        strcat(structStr, "\n");
+    strcat(structStr, "\n");
 
     strcat(structStr, "Server: ");
     if (dlna_bin->head_response->server != NULL)
     	strcat(structStr, dlna_bin->head_response->server);
-    else
-        strcat(structStr, "\n");
+    strcat(structStr, "\n");
 
     strcat(structStr, "Date: ");
     if (dlna_bin->head_response->date != NULL)
     	strcat(structStr, dlna_bin->head_response->date);
-    else
-        strcat(structStr, "\n");
+    strcat(structStr, "\n");
 
     strcat(structStr, "Content Type: ");
     if (dlna_bin->head_response->content_type != NULL)
     	strcat(structStr, dlna_bin->head_response->content_type);
-    else
-        strcat(structStr, "\n");
+    strcat(structStr, "\n");
 
     strcat(structStr, "HTTP Transfer Encoding: ");
     if (dlna_bin->head_response->transfer_encoding != NULL)
     	strcat(structStr, dlna_bin->head_response->transfer_encoding);
-    else
-        strcat(structStr, "\n");
+    strcat(structStr, "\n");
 
 	strcat(structStr, "DLNA Transfer Mode: ");
     if (dlna_bin->head_response->transfer_mode != NULL)
     	strcat(structStr, dlna_bin->head_response->transfer_mode);
-    else
-        strcat(structStr, "\n");
+    strcat(structStr, "\n");
 
     strcat(structStr, "Time Seek NPT Start: ");
     if (dlna_bin->head_response->time_seek_npt_start != NULL)
     	strcat(structStr, dlna_bin->head_response->time_seek_npt_start);
-    else
-        strcat(structStr, "\n");
+    strcat(structStr, "\n");
 
     strcat(structStr, "Time Seek NPT End: ");
     if (dlna_bin->head_response->time_seek_npt_end != NULL)
     	strcat(structStr, dlna_bin->head_response->time_seek_npt_end);
-    else
-        strcat(structStr, "\n");
+    strcat(structStr, "\n");
 
     strcat(structStr, "Byte Seek Start: ");
     (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-    sprintf(tmpStr, "%lld\n", dlna_bin->head_response->byte_seek_start);
+    sprintf(tmpStr, "%lld", dlna_bin->head_response->byte_seek_start);
     strcat(structStr, tmpStr);
+    strcat(structStr, "\n");
 
     strcat(structStr, "Byte Seek End: ");
     (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-    sprintf(tmpStr, "%lld\n", dlna_bin->head_response->byte_seek_end);
+    sprintf(tmpStr, "%lld", dlna_bin->head_response->byte_seek_end);
     strcat(structStr, tmpStr);
+    strcat(structStr, "\n");
 
     strcat(structStr, "Supported Playspeed Cnt: ");
     (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-    sprintf(tmpStr, "%d\n", dlna_bin->head_response->content_features->playspeeds_cnt);
+    sprintf(tmpStr, "%d", dlna_bin->head_response->content_features->playspeeds_cnt);
     strcat(structStr, tmpStr);
+    strcat(structStr, "\n");
 
     gint i = 0;
     for (i = 0; i < dlna_bin->head_response->content_features->playspeeds_cnt; i++)
