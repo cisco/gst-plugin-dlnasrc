@@ -86,7 +86,7 @@ static const gint HEAD_RESPONSE_HDRS_CNT = 15;
 // Structure describing details of this element, used when initializing element
 //
 const GstElementDetails gst_dlna_bin_details
-= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/12/12 12:30 PM",
+= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/13/12 10:12 AM",
 		"Source/Network",
 		"Receive data as a client via HTTP with DLNA extensions",
 		"Eric Winkelman <e.winkelman@cablelabs.com>");
@@ -928,11 +928,37 @@ dlna_bin_head_response_assign_field_value(GstDlnaBin *dlna_bin, gint idx, gchar*
 	// Get value based on index
 	switch (idx)
 	{
+	//"TRANSFERMODE.DLNA.ORG"
+	case 5:
+		dlna_bin->head_response->transfer_mode = g_strdup(strstr(field_str, ":"));
+		break;
+
+	//"DATE"
+	case 6:
+		dlna_bin->head_response->date = g_strdup(strstr(field_str, ":"));
+		break;
+
+	// "CONTENT-TYPE"
+	case 7:
+		dlna_bin->head_response->content_type = g_strdup(strstr(field_str, ":"));
+		break;
+
+	//"SERVER"
+	case 8:
+		dlna_bin->head_response->server = g_strdup(strstr(field_str, ":"));
+		break;
+
+	//"TRANSFER-ENCODING"
+	case 9:
+		dlna_bin->head_response->transfer_encoding = g_strdup(strstr(field_str, ":"));
+		break;
+
 	// "HTTP"
 	case 0:
+		// *TODO* - verify this is correct based on allowable white spaces
 		if ((ret_code = sscanf(field_str, "%s %d %s", tmp1, &int_value, tmp2)) != 3)
 		{
-			GST_WARNING_OBJECT(dlna_bin, "Problems with HEAD response field hdr %s, idx: %d, value: %s, retcode: %d, tmp: %s, %s, %s, %s",
+			GST_WARNING_OBJECT(dlna_bin, "Problems with HEAD response field hdr %s, idx: %d, value: %s, retcode: %d, tmp: %s, %s",
 					HEAD_RESPONSE_HDRS[idx], idx, field_str, ret_code, tmp1, tmp2);
 		}
 		else
@@ -943,35 +969,10 @@ dlna_bin_head_response_assign_field_value(GstDlnaBin *dlna_bin, gint idx, gchar*
 		}
 		break;
 
-	// "VARY"
-	case 1:
-		// Ignore field values
-		break;
-
 	//"TIMESEEKRANGE.DLNA.ORG"
 		//"NPT
 		//"BYTES"
 	case 2:
-		break;
-
-	//"TRANSFERMODE.DLNA.ORG"
-	case 5:
-		break;
-
-	//"DATE"
-	case 6:
-		break;
-
-	// "CONTENT-TYPE"
-	case 7:
-		break;
-
-	//"SERVER"
-	case 8:
-		break;
-
-	//"TRANSFER-ENCODING"
-	case 9:
 		break;
 
 	//"CONTENTFEATURES.DLNA.ORG"
@@ -980,6 +981,11 @@ dlna_bin_head_response_assign_field_value(GstDlnaBin *dlna_bin, gint idx, gchar*
 		//"DLNA.ORG_PS"
 		//"DLNA.ORG_FLAGS"
 	case 10:
+		break;
+
+    // "VARY"
+	case 1:
+		// Ignore field values
 		break;
 
 	default:
