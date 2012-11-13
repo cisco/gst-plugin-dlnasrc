@@ -74,10 +74,12 @@ struct _GstDlnaBinHeadResponse
 
 	gchar* time_seek_npt_start;
 	gchar* time_seek_npt_end;
+	gchar* time_seek_npt_duration;
 	gint npt_seek_idx;
 
-	gint64 byte_seek_start;
-	gint64 byte_seek_end;
+	guint64 byte_seek_start;
+	guint64 byte_seek_end;
+	guint64 byte_seek_total;
 	gint byte_seek_idx;
 
 	gchar* transfer_mode;

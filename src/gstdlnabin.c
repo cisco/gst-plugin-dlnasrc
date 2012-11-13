@@ -86,7 +86,7 @@ static const gint HEAD_RESPONSE_HDRS_CNT = 15;
 // Structure describing details of this element, used when initializing element
 //
 const GstElementDetails gst_dlna_bin_details
-= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/13/12 10:12 AM",
+= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/13/12 1:25 PM",
 		"Source/Network",
 		"Receive data as a client via HTTP with DLNA extensions",
 		"Eric Winkelman <e.winkelman@cablelabs.com>");
@@ -140,6 +140,8 @@ static gboolean dlna_bin_head_response_parse(GstDlnaBin *dlna_bin);
 static gint dlna_bin_head_response_get_field_idx(GstDlnaBin *dlna_bin, gchar* field_str);
 
 static gboolean dlna_bin_head_response_assign_field_value(GstDlnaBin *dlna_bin, gint idx, gchar* field_str);
+
+//static gboolean dlna_bin_head_response_parse_npt(GstDlnaBin *dlna_bin, gchar* field_str);
 
 static gboolean dlna_bin_head_response_init_struct(GstDlnaBin *dlna_bin);
 
@@ -813,11 +815,13 @@ dlna_bin_head_response_init_struct(GstDlnaBin *dlna_bin)
 	dlna_bin->head_response->npt_seek_idx = 3;
 	dlna_bin->head_response->time_seek_npt_start = NULL;
 	dlna_bin->head_response->time_seek_npt_end = NULL;
+	dlna_bin->head_response->time_seek_npt_duration = NULL;
 
 	// {"BYTES", BYTE_RANGE_TYPE}, // 4
 	dlna_bin->head_response->byte_seek_idx = 4;
 	dlna_bin->head_response->byte_seek_start = 0;
 	dlna_bin->head_response->byte_seek_end = 0;
+	dlna_bin->head_response->byte_seek_total = 0;
 
 	// {"TRANSFERMODE.DLNA.ORG", STRING_TYPE}, // 5
 	dlna_bin->head_response->transfer_mode_idx = 5;
@@ -922,8 +926,15 @@ dlna_bin_head_response_assign_field_value(GstDlnaBin *dlna_bin, gint idx, gchar*
 	// *TODO* - figure out max size
 	char tmp1[32];
 	char tmp2[32];
+	char tmp3[32];
+	char tmp4[132];
+	char* tmp_str1 = NULL;
+	char* tmp_str2 = NULL;
 	gint int_value = 0;
 	gint ret_code = 0;
+	guint64 ullong1 = 0;
+	guint64 ullong2 = 0;
+	guint64 ullong3 = 0;
 
 	// Get value based on index
 	switch (idx)
@@ -958,7 +969,8 @@ dlna_bin_head_response_assign_field_value(GstDlnaBin *dlna_bin, gint idx, gchar*
 		// *TODO* - verify this is correct based on allowable white spaces
 		if ((ret_code = sscanf(field_str, "%s %d %s", tmp1, &int_value, tmp2)) != 3)
 		{
-			GST_WARNING_OBJECT(dlna_bin, "Problems with HEAD response field hdr %s, idx: %d, value: %s, retcode: %d, tmp: %s, %s",
+			GST_WARNING_OBJECT(dlna_bin,
+					"Problems with HEAD response field hdr %s, idx: %d, value: %s, retcode: %d, tmp: %s, %s",
 					HEAD_RESPONSE_HDRS[idx], idx, field_str, ret_code, tmp1, tmp2);
 		}
 		else
@@ -970,9 +982,64 @@ dlna_bin_head_response_assign_field_value(GstDlnaBin *dlna_bin, gint idx, gchar*
 		break;
 
 	//"TIMESEEKRANGE.DLNA.ORG"
-		//"NPT
-		//"BYTES"
+	// TimeSeekRange header formatting as specified in DLNA 7.4.40.5:
+	//
+    // TimeSeekRange.dlna.org : npt=335.1-336.1/40445.4 bytes=1539686400-1540210688/304857907200
 	case 2:
+		// Extract start and end NPT
+		tmp_str2 = strstr(field_str, "NPT");
+		tmp_str1 = strstr(tmp_str2, "=");
+		if (tmp_str1 != NULL)
+		{
+			tmp_str1++;
+			// *TODO* - add logic to deal with '*'
+			if ((ret_code = sscanf(tmp_str1, "%[^-]-%[^/]/%s %s", tmp1, tmp2, tmp3, tmp4)) != 4)
+			{
+				GST_WARNING_OBJECT(dlna_bin,
+					"Problems parsing NPT from HEAD response field hdr %s, idx: %d, value: %s, retcode: %d, tmp: %s, %s, %s",
+					HEAD_RESPONSE_HDRS[idx], idx, tmp_str1, ret_code, tmp1, tmp2, tmp3);
+			}
+			else
+			{
+				dlna_bin->head_response->time_seek_npt_start = g_strdup(tmp1);
+				dlna_bin->head_response->time_seek_npt_end = g_strdup(tmp2);
+				dlna_bin->head_response->time_seek_npt_duration = g_strdup(tmp3);
+			}
+		}
+		else
+		{
+			GST_WARNING_OBJECT(dlna_bin,
+				"No NPT found in time seek range HEAD response field hdr %s, idx: %d, value: %s",
+				HEAD_RESPONSE_HDRS[idx], idx, field_str);
+		}
+
+		// Extract start and end BYTES
+		tmp_str2 = strstr(field_str, "BYTES");
+		tmp_str1 = strstr(tmp_str2, "=");
+		if (tmp_str1 != NULL)
+		{
+			tmp_str1++;
+			// *TODO* - add logic to deal with '*'
+			if ((ret_code = sscanf(tmp_str1, "%llu-%llu/%llu",
+					&ullong1, &ullong2, &ullong3)) != 3)
+			{
+				GST_WARNING_OBJECT(dlna_bin,
+					"Problems parsing BYTES from HEAD response field hdr %s, idx: %d, value: %s, retcode: %d, ullong: %llu, %llu, %llu",
+					HEAD_RESPONSE_HDRS[idx], idx, tmp_str1, ret_code, ullong1, ullong2, ullong3);
+			}
+			else
+			{
+				dlna_bin->head_response->byte_seek_start = ullong1;
+				dlna_bin->head_response->byte_seek_end = ullong2;
+				dlna_bin->head_response->byte_seek_total = ullong3;
+			}
+		}
+		else
+		{
+			GST_WARNING_OBJECT(dlna_bin,
+				"No BYTES found in time seek range HEAD response field hdr %s, idx: %d, value: %s",
+				HEAD_RESPONSE_HDRS[idx], idx, field_str);
+		}
 		break;
 
 	//"CONTENTFEATURES.DLNA.ORG"
@@ -990,11 +1057,32 @@ dlna_bin_head_response_assign_field_value(GstDlnaBin *dlna_bin, gint idx, gchar*
 
 	default:
 		GST_WARNING_OBJECT(dlna_bin, "Unsupported HEAD response field idx: %d", idx);
-		rc = FALSE;
 	}
 
 	return rc;
 }
+
+/**
+ * TimeSeekRange header formatting as specified in DLNA 7.4.40.5:
+ *
+ * TimeSeekRange.dlna.org : npt=335.1-336.1/40445.4 bytes=1539686400-1540210688/304857907200
+  *
+ * The time seek range header can have two different formats
+ * Either:
+ * 	"npt = 1*DIGIT["."1*3DIGIT]
+ *		ntp sec = 0.232, or 1 or 15 or 16.652 (leading at one or more digits,
+ *		optionally followed by decimal point and 3 digits)
+ * OR
+ * 	"npt=00:00:00.000" where format is HH:MM:SS.mmm (hours, minutes, seconds, milliseconds)
+ *
+ */
+/* *TODO* - need more sophisticated parsing of NPT to handle different formats
+static gboolean
+dlna_bin_head_response_parse_npt(Gst	gchar* time_seek_npt_totDlnaBin *dlna_bin, gchar* field_str)
+{
+	return TRUE;
+}
+*/
 
 /**
  * Format HEAD response structure into string representation.
@@ -1062,6 +1150,11 @@ dlna_bin_head_response_struct_to_str(GstDlnaBin *dlna_bin)
     	strcat(structStr, dlna_bin->head_response->time_seek_npt_end);
     strcat(structStr, "\n");
 
+    strcat(structStr, "Time Seek NPT Duration: ");
+    if (dlna_bin->head_response->time_seek_npt_duration != NULL)
+    	strcat(structStr, dlna_bin->head_response->time_seek_npt_duration);
+    strcat(structStr, "\n");
+
     strcat(structStr, "Byte Seek Start: ");
     (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
     sprintf(tmpStr, "%lld", dlna_bin->head_response->byte_seek_start);
@@ -1071,6 +1164,12 @@ dlna_bin_head_response_struct_to_str(GstDlnaBin *dlna_bin)
     strcat(structStr, "Byte Seek End: ");
     (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
     sprintf(tmpStr, "%lld", dlna_bin->head_response->byte_seek_end);
+    strcat(structStr, tmpStr);
+    strcat(structStr, "\n");
+
+    strcat(structStr, "Byte Seek Total: ");
+    (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
+    sprintf(tmpStr, "%lld", dlna_bin->head_response->byte_seek_total);
     strcat(structStr, tmpStr);
     strcat(structStr, "\n");
 
