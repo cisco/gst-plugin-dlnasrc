@@ -83,10 +83,35 @@ static const char* HEAD_RESPONSE_HDRS[] = {
 };
 static const gint HEAD_RESPONSE_HDRS_CNT = 15;
 
+/**
+ * DLNA Flag parameters defined in DLNA spec
+ * primary flags - 8 hexadecimal digits representing 32 binary flags
+ * protocol info dlna org flags represented by primary flags followed
+ * by reserved data of 24 hexadecimal digits (zeros)
+ */
+static const gint SP_FLAG = 1 << 31; //(Sender Paced Flag), content src is clock
+static const gint LOP_NPT = 1 << 30; //(Limited Operations Flags: Time-Based Seek)
+static const gint LOP_BYTES = 1 << 29; //(Limited Operations Flags: Byte-Based Seek)
+static const gint PLAYCONTAINER_PARAM = 1 << 28; //(DLNA PlayContainer Flag)
+static const gint S0_INCREASING = 1 << 27; //(UCDAM s0 Increasing Flag) (content has no fixed beginning)
+static const gint SN_INCREASING = 1 << 26; //(UCDAM sN Increasing Flag) (content has no fixed ending)
+static const gint RTSP_PAUSE = 1 << 25; //(Pause media operation support for RTP Serving Endpoints)
+static const gint TM_S = 1 << 24; //(Streaming Mode Flag) - av content must have this set
+static const gint TM_I = 1 << 23; //(Interactive Mode Flag)
+static const gint TM_B = 1 << 22; //(Background Mode Flag)
+static const gint HTTP_STALLING = 1 << 21; //(HTTP Connection Stalling Flag)
+static const gint DLNA_V15_FLAG = 1 << 20; //(DLNA v1.5 versioning flag)
+static const gint LP_FLAG = 1 << 16; //(Link Content Flag)
+static const gint CLEARTEXTBYTESEEK_FULL_FLAG = 1 << 15;  // Support for Full RADA ClearTextByteSeek hdr
+static const gint LOP_CLEARTEXTBYTES = 1 << 14; // Support for Limited RADA ClearTextByteSeek hdr
+
+static const int RESERVED_FLAGS_LENGTH = 24;
+
+
 // Structure describing details of this element, used when initializing element
 //
 const GstElementDetails gst_dlna_bin_details
-= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/13/12 1:25 PM",
+= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/13/12 5:25 PM",
 		"Source/Network",
 		"Receive data as a client via HTTP with DLNA extensions",
 		"Eric Winkelman <e.winkelman@cablelabs.com>");
@@ -141,7 +166,19 @@ static gint dlna_bin_head_response_get_field_idx(GstDlnaBin *dlna_bin, gchar* fi
 
 static gboolean dlna_bin_head_response_assign_field_value(GstDlnaBin *dlna_bin, gint idx, gchar* field_str);
 
-//static gboolean dlna_bin_head_response_parse_npt(GstDlnaBin *dlna_bin, gchar* field_str);
+static gboolean dlna_bin_head_response_parse_time_seek(GstDlnaBin *dlna_bin, gint idx, gchar* field_str);
+
+static gboolean dlna_bin_head_response_parse_content_features(GstDlnaBin *dlna_bin, gint idx, gchar* field_str);
+
+static gboolean dlna_bin_head_response_parse_profile(GstDlnaBin *dlna_bin, gint idx, gchar* field_str);
+
+static gboolean dlna_bin_head_response_parse_operations(GstDlnaBin *dlna_bin, gint idx, gchar* field_str);
+
+static gboolean dlna_bin_head_response_parse_playspeeds(GstDlnaBin *dlna_bin, gint idx, gchar* field_str);
+
+static gboolean dlna_bin_head_response_parse_flags(GstDlnaBin *dlna_bin, gint idx, gchar* field_str);
+
+static gboolean dlna_bin_head_response_is_flag_set(char* flags_str, int flag);
 
 static gboolean dlna_bin_head_response_init_struct(GstDlnaBin *dlna_bin);
 
@@ -657,6 +694,7 @@ dlna_bin_formulate_head_request(GstDlnaBin *dlna_bin)
     strcat(requestStr, "getcontentFeatures.dlna.org : 1");
     strcat(requestStr, CRLF);
 
+    // *TODO* - should we be including this and/or TimeSeekRange???
     // Include available seek range
     strcat(requestStr, "getAvailableSeekRange.dlna.org : 1");
     strcat(requestStr, CRLF);
@@ -858,7 +896,6 @@ dlna_bin_head_response_init_struct(GstDlnaBin *dlna_bin)
 	// {"DLNA.ORG_PS", NUMERIC_TYPE}, // 13
 	dlna_bin->head_response->content_features->playspeeds_idx = 13;
     dlna_bin->head_response->content_features->playspeeds_cnt = 0;
-    // *TODO* - playspeed array
 
 	// {"DLNA.ORG_FLAGS", FLAG_TYPE} // 14
 	dlna_bin->head_response->content_features->flags_idx = 14;
@@ -926,15 +963,8 @@ dlna_bin_head_response_assign_field_value(GstDlnaBin *dlna_bin, gint idx, gchar*
 	// *TODO* - figure out max size
 	char tmp1[32];
 	char tmp2[32];
-	char tmp3[32];
-	char tmp4[132];
-	char* tmp_str1 = NULL;
-	char* tmp_str2 = NULL;
 	gint int_value = 0;
 	gint ret_code = 0;
-	guint64 ullong1 = 0;
-	guint64 ullong2 = 0;
-	guint64 ullong3 = 0;
 
 	// Get value based on index
 	switch (idx)
@@ -982,72 +1012,23 @@ dlna_bin_head_response_assign_field_value(GstDlnaBin *dlna_bin, gint idx, gchar*
 		break;
 
 	//"TIMESEEKRANGE.DLNA.ORG"
-	// TimeSeekRange header formatting as specified in DLNA 7.4.40.5:
-	//
-    // TimeSeekRange.dlna.org : npt=335.1-336.1/40445.4 bytes=1539686400-1540210688/304857907200
 	case 2:
-		// Extract start and end NPT
-		tmp_str2 = strstr(field_str, "NPT");
-		tmp_str1 = strstr(tmp_str2, "=");
-		if (tmp_str1 != NULL)
-		{
-			tmp_str1++;
-			// *TODO* - add logic to deal with '*'
-			if ((ret_code = sscanf(tmp_str1, "%[^-]-%[^/]/%s %s", tmp1, tmp2, tmp3, tmp4)) != 4)
-			{
-				GST_WARNING_OBJECT(dlna_bin,
-					"Problems parsing NPT from HEAD response field hdr %s, idx: %d, value: %s, retcode: %d, tmp: %s, %s, %s",
-					HEAD_RESPONSE_HDRS[idx], idx, tmp_str1, ret_code, tmp1, tmp2, tmp3);
-			}
-			else
-			{
-				dlna_bin->head_response->time_seek_npt_start = g_strdup(tmp1);
-				dlna_bin->head_response->time_seek_npt_end = g_strdup(tmp2);
-				dlna_bin->head_response->time_seek_npt_duration = g_strdup(tmp3);
-			}
-		}
-		else
+		if (!dlna_bin_head_response_parse_time_seek(dlna_bin, idx, field_str))
 		{
 			GST_WARNING_OBJECT(dlna_bin,
-				"No NPT found in time seek range HEAD response field hdr %s, idx: %d, value: %s",
-				HEAD_RESPONSE_HDRS[idx], idx, field_str);
-		}
-
-		// Extract start and end BYTES
-		tmp_str2 = strstr(field_str, "BYTES");
-		tmp_str1 = strstr(tmp_str2, "=");
-		if (tmp_str1 != NULL)
-		{
-			tmp_str1++;
-			// *TODO* - add logic to deal with '*'
-			if ((ret_code = sscanf(tmp_str1, "%llu-%llu/%llu",
-					&ullong1, &ullong2, &ullong3)) != 3)
-			{
-				GST_WARNING_OBJECT(dlna_bin,
-					"Problems parsing BYTES from HEAD response field hdr %s, idx: %d, value: %s, retcode: %d, ullong: %llu, %llu, %llu",
-					HEAD_RESPONSE_HDRS[idx], idx, tmp_str1, ret_code, ullong1, ullong2, ullong3);
-			}
-			else
-			{
-				dlna_bin->head_response->byte_seek_start = ullong1;
-				dlna_bin->head_response->byte_seek_end = ullong2;
-				dlna_bin->head_response->byte_seek_total = ullong3;
-			}
-		}
-		else
-		{
-			GST_WARNING_OBJECT(dlna_bin,
-				"No BYTES found in time seek range HEAD response field hdr %s, idx: %d, value: %s",
-				HEAD_RESPONSE_HDRS[idx], idx, field_str);
+					"Problems with HEAD response field hdr %s, value: %s",
+					HEAD_RESPONSE_HDRS[idx], field_str);
 		}
 		break;
 
 	//"CONTENTFEATURES.DLNA.ORG"
-		//"DLNA.ORG_PN"
-		//"DLNA.ORG_OP"
-		//"DLNA.ORG_PS"
-		//"DLNA.ORG_FLAGS"
 	case 10:
+		if (!dlna_bin_head_response_parse_content_features(dlna_bin, idx, field_str))
+		{
+			GST_WARNING_OBJECT(dlna_bin,
+					"Problems with HEAD response field hdr %s, value: %s",
+					HEAD_RESPONSE_HDRS[idx], field_str);
+		}
 		break;
 
     // "VARY"
@@ -1076,13 +1057,367 @@ dlna_bin_head_response_assign_field_value(GstDlnaBin *dlna_bin, gint idx, gchar*
  * 	"npt=00:00:00.000" where format is HH:MM:SS.mmm (hours, minutes, seconds, milliseconds)
  *
  */
-/* *TODO* - need more sophisticated parsing of NPT to handle different formats
 static gboolean
-dlna_bin_head_response_parse_npt(Gst	gchar* time_seek_npt_totDlnaBin *dlna_bin, gchar* field_str)
+dlna_bin_head_response_parse_time_seek(GstDlnaBin *dlna_bin, gint idx, gchar* field_str)
 {
+	char tmp1[32];
+	char tmp2[32];
+	char tmp3[32];
+	char tmp4[132];
+	char* tmp_str1 = NULL;
+	char* tmp_str2 = NULL;
+	gint ret_code = 0;
+	guint64 ullong1 = 0;
+	guint64 ullong2 = 0;
+	guint64 ullong3 = 0;
+
+	// *TODO* - need more sophisticated parsing of NPT to handle different formats
+	// Extract start and end NPT
+	tmp_str2 = strstr(field_str, "NPT");
+	tmp_str1 = strstr(tmp_str2, "=");
+	if (tmp_str1 != NULL)
+	{
+		tmp_str1++;
+		// *TODO* - add logic to deal with '*'
+		if ((ret_code = sscanf(tmp_str1, "%[^-]-%[^/]/%s %s", tmp1, tmp2, tmp3, tmp4)) != 4)
+		{
+			GST_WARNING_OBJECT(dlna_bin,
+				"Problems parsing NPT from HEAD response field hdr %s, value: %s, retcode: %d, tmp: %s, %s, %s",
+				HEAD_RESPONSE_HDRS[idx], tmp_str1, ret_code, tmp1, tmp2, tmp3);
+		}
+		else
+		{
+			dlna_bin->head_response->time_seek_npt_start = g_strdup(tmp1);
+			dlna_bin->head_response->time_seek_npt_end = g_strdup(tmp2);
+			dlna_bin->head_response->time_seek_npt_duration = g_strdup(tmp3);
+		}
+	}
+	else
+	{
+		GST_WARNING_OBJECT(dlna_bin,
+			"No NPT found in time seek range HEAD response field hdr %s, idx: %d, value: %s",
+			HEAD_RESPONSE_HDRS[idx], idx, field_str);
+	}
+
+	// Extract start and end BYTES
+	tmp_str2 = strstr(field_str, "BYTES");
+	tmp_str1 = strstr(tmp_str2, "=");
+	if (tmp_str1 != NULL)
+	{
+		tmp_str1++;
+		// *TODO* - add logic to deal with '*'
+		if ((ret_code = sscanf(tmp_str1, "%llu-%llu/%llu",
+				&ullong1, &ullong2, &ullong3)) != 3)
+		{
+			GST_WARNING_OBJECT(dlna_bin,
+				"Problems parsing BYTES from HEAD response field hdr %s, idx: %d, value: %s, retcode: %d, ullong: %llu, %llu, %llu",
+				HEAD_RESPONSE_HDRS[idx], idx, tmp_str1, ret_code, ullong1, ullong2, ullong3);
+		}
+		else
+		{
+			dlna_bin->head_response->byte_seek_start = ullong1;
+			dlna_bin->head_response->byte_seek_end = ullong2;
+			dlna_bin->head_response->byte_seek_total = ullong3;
+		}
+	}
+	else
+	{
+		GST_WARNING_OBJECT(dlna_bin,
+			"No BYTES found in time seek range HEAD response field hdr %s, idx: %d, value: %s",
+			HEAD_RESPONSE_HDRS[idx], idx, field_str);
+	}
 	return TRUE;
 }
-*/
+
+/**
+ * Extract values from content features header in HEAD Response
+ *
+ * @param	dlna_bin	this element
+ * @param	idx			index into array of header strings
+ * @param	field_str	content feature header field extracted from HEAD response
+ *
+ * @return	TRUE
+ */
+static gboolean
+dlna_bin_head_response_parse_content_features(GstDlnaBin *dlna_bin, gint idx, gchar* field_str)
+{
+	GST_LOG_OBJECT(dlna_bin, "Called with field str: %s", field_str);
+
+	// Split CONTENTFEATURES.DLNA.ORG into following sub-fields using ";" as deliminator
+		//"DLNA.ORG_PN"
+		//"DLNA.ORG_OP"
+		//"DLNA.ORG_PS"
+		//"DLNA.ORG_FLAGS"
+	gchar* tmp_str2 = strstr(field_str, HEAD_RESPONSE_HDRS[idx]);
+	gchar* tmp_str1 = strstr(tmp_str2, ":");
+	if (tmp_str1 != NULL)
+	{
+		// Increment ptr to get pass ":"
+		tmp_str1++;
+
+		// Split into four parts
+		char* fields = strtok(tmp_str1, ";");
+		while (fields != NULL)
+		{
+			// "DLNA.ORG_PN", // 11
+			if ((tmp_str2 = strstr(fields, HEAD_RESPONSE_HDRS[11])) != NULL)
+			{
+				if (!dlna_bin_head_response_parse_profile(dlna_bin, idx, tmp_str2))
+				{
+					GST_WARNING_OBJECT(dlna_bin, "Problems parsing profile sub field: %s", tmp_str2);
+				}
+			}
+			// "DLNA.ORG_OP", // 12
+			else if ((tmp_str2 = strstr(fields, HEAD_RESPONSE_HDRS[12])) != NULL)
+			{
+				if (!dlna_bin_head_response_parse_operations(dlna_bin, idx, tmp_str2))
+				{
+					GST_WARNING_OBJECT(dlna_bin, "Problems parsing operations sub field: %s", tmp_str2);
+				}
+			}
+			// "DLNA.ORG_PS", // 13
+			else if ((tmp_str2 = strstr(fields, HEAD_RESPONSE_HDRS[13])) != NULL)
+			{
+				if (!dlna_bin_head_response_parse_playspeeds(dlna_bin, idx, tmp_str2))
+				{
+					GST_WARNING_OBJECT(dlna_bin, "Problems parsing playspeeds sub field: %s", tmp_str2);
+				}
+			}
+			// "DLNA.ORG_FLAGS", // 14
+			else if ((tmp_str2 = strstr(fields, HEAD_RESPONSE_HDRS[14])) != NULL)
+			{
+				if (!dlna_bin_head_response_parse_flags(dlna_bin, idx, tmp_str2))
+				{
+					GST_WARNING_OBJECT(dlna_bin, "Problems parsing flags sub field: %s", tmp_str2);
+				}
+			}
+			else
+			{
+				GST_WARNING_OBJECT(dlna_bin, "Unrecognized sub field:%s", fields);
+			}
+
+			// Go on to next field
+			fields = strtok(NULL, ";");
+		}
+	}
+
+	return TRUE;
+}
+
+/**
+ * Parse DLNA profile identified by DLNA.ORG_PN header.
+ *
+ * @param	dlna_bin	this element
+ * @param	idx			index into array of header strings
+ * @param	field_str	sub field string containing DLNA.ORG_PN field
+ *
+ * @return	TRUE
+ */
+static gboolean dlna_bin_head_response_parse_profile(GstDlnaBin *dlna_bin, gint idx, gchar* field_str)
+{
+	GST_LOG_OBJECT(dlna_bin, "Found PN Field: %s", field_str);
+	gint ret_code = 0;
+
+	// *TODO* - are these big enough?
+	gchar tmp1[256];
+	gchar tmp2[256];
+
+	if ((ret_code = sscanf(field_str, "%[^=]=%s", tmp1, tmp2)) != 2)
+	{
+		GST_WARNING_OBJECT(dlna_bin,
+		"Problems parsing DLNA.ORG_PN from HEAD response field hdr %s, value: %s, retcode: %d, tmp: %s, %s",
+				HEAD_RESPONSE_HDRS[idx], field_str, ret_code, tmp1, tmp2);
+	}
+	else
+	{
+		dlna_bin->head_response->content_features->profile = g_strdup(tmp2);
+	}
+	return TRUE;
+}
+
+/**
+ * Parse DLNA supported operations sub field identified by DLNA.ORG_OP header.
+ *
+ * @param	dlna_bin	this element
+ * @param	idx			index into array of header strings
+ * @param	field_str	sub field string containing DLNA.ORG_OP field
+ *
+ * @return	TRUE
+ */
+static gboolean dlna_bin_head_response_parse_operations(GstDlnaBin *dlna_bin, gint idx, gchar* field_str)
+{
+	GST_LOG_OBJECT(dlna_bin, "Found OP Field: %s", field_str);
+	gint ret_code = 0;
+
+	// *TODO* - are these big enough?
+	gchar tmp1[256];
+	gchar tmp2[256];
+
+	if ((ret_code = sscanf(field_str, "%[^=]=%s", tmp1, tmp2)) != 2)
+	{
+		GST_WARNING_OBJECT(dlna_bin,
+		"Problems parsing DLNA.ORG_OP from HEAD response field hdr %s, value: %s, retcode: %d, tmp: %s, %s",
+				HEAD_RESPONSE_HDRS[idx], field_str, ret_code, tmp1, tmp2);
+	}
+	else
+	{
+		GST_LOG_OBJECT(dlna_bin, "OP Field value: %s", tmp2);
+
+		// Verify length is as expected = 2
+		if (strlen(tmp2) != 2)
+		{
+			GST_WARNING_OBJECT(dlna_bin,
+				"DLNA.ORG_OP from HEAD response sub field value: %s, is not at expected len of 2",
+				field_str, tmp2);
+		}
+		else
+		{
+			// First char represents time seek support
+			if ((tmp2[0] == '0') || (tmp2[0] == '1'))
+			{
+				if (tmp2[0] == '0')
+				{
+					dlna_bin->head_response->content_features->op_time_seek_supported = FALSE;
+				}
+				else
+				{
+					dlna_bin->head_response->content_features->op_time_seek_supported = TRUE;
+				}
+			}
+			else
+			{
+				GST_WARNING_OBJECT(dlna_bin,
+					"DLNA.ORG_OP Time Seek Flag from HEAD response sub field value: %s, is not 0 or 1",
+					field_str, tmp2);
+			}
+
+			// Second char represents range support
+			if ((tmp2[1] == '0') || (tmp2[1] == '1'))
+			{
+				if (tmp2[1] == '0')
+				{
+					dlna_bin->head_response->content_features->op_range_supported = FALSE;
+				}
+				else
+				{
+					dlna_bin->head_response->content_features->op_range_supported = TRUE;
+				}
+			}
+			else
+			{
+				GST_WARNING_OBJECT(dlna_bin,
+					"DLNA.ORG_OP Range Flag from HEAD response sub field value: %s, is not 0 or 1",
+					field_str, tmp2);
+			}
+		}
+	}
+	return TRUE;
+}
+
+/**
+ * Parse DLNA playspeeds sub field identified by DLNA.ORG_PS header.
+ *
+ * @param	dlna_bin	this element
+ * @param	idx			index into array of header strings
+ * @param	field_str	sub field string containing DLNA.ORG_PS field
+ *
+ * @return	TRUE
+ */
+static gboolean dlna_bin_head_response_parse_playspeeds(GstDlnaBin *dlna_bin, gint idx, gchar* field_str)
+{
+	GST_LOG_OBJECT(dlna_bin, "Found PS Field: %s", field_str);
+	gint ret_code = 0;
+
+	// *TODO* - are these big enough?
+	gchar tmp1[256];
+	gchar tmp2[256];
+
+	if ((ret_code = sscanf(field_str, "%[^=]=%s", tmp1, tmp2)) != 2)
+	{
+		GST_WARNING_OBJECT(dlna_bin,
+		"Problems parsing DLNA.ORG_PS from HEAD response field hdr %s, value: %s, retcode: %d, tmp: %s, %s",
+				HEAD_RESPONSE_HDRS[idx], field_str, ret_code, tmp1, tmp2);
+		return FALSE;
+	}
+	else
+	{
+		GST_LOG_OBJECT(dlna_bin, "PS Field value: %s", tmp2);
+
+		// Tokenize list of comma separated playspeeds
+		char* playspeeds = strtok(tmp2, ",");
+		while ((playspeeds != NULL) &&
+				(dlna_bin->head_response->content_features->playspeeds_cnt < PLAYSPEEDS_MAX_CNT))
+		{
+			GST_LOG_OBJECT(dlna_bin, "Found PS: %s", playspeeds);
+			dlna_bin->head_response->content_features->playspeeds[
+			     dlna_bin->head_response->content_features->playspeeds_cnt] = g_strdup(playspeeds);
+			dlna_bin->head_response->content_features->playspeeds_cnt++;
+
+			// Go on to next field
+			playspeeds = strtok(NULL, ",");
+		}
+	}
+
+	GST_LOG_OBJECT(dlna_bin, "Found PS Field: %s", field_str);
+
+	return TRUE;
+}
+
+/**
+ * Parse DLNA flags sub field identified by DLNA.ORG_FLAGS header.
+ *
+ * @param	dlna_bin	this element
+ * @param	idx			index into array of header strings
+ * @param	field_str	sub field string containing DLNA.ORG_FLAGS field
+ *
+ * @return	TRUE
+ */
+static gboolean dlna_bin_head_response_parse_flags(GstDlnaBin *dlna_bin, gint idx, gchar* field_str)
+{
+	GST_LOG_OBJECT(dlna_bin, "Found Flags Field: %s", field_str);
+	gint ret_code = 0;
+
+	// *TODO* - are these big enough?
+	gchar tmp1[256];
+	gchar tmp2[256];
+
+	if ((ret_code = sscanf(field_str, "%[^=]=%s", tmp1, tmp2)) != 2)
+	{
+		GST_WARNING_OBJECT(dlna_bin,
+		"Problems parsing DLNA.ORG_FLAGS from HEAD response field hdr %s, value: %s, retcode: %d, tmp: %s, %s",
+				HEAD_RESPONSE_HDRS[idx], field_str, ret_code, tmp1, tmp2);
+	}
+	else
+	{
+		GST_INFO_OBJECT(dlna_bin, "FLAGS Field value: %s", tmp2);
+	}
+
+	return TRUE;
+}
+
+/**
+ * Utility method which determines if a given flag is set in the flags string.
+ *
+ * @param flagsStr the fourth field of a protocolInfo string
+ *
+ * @return TRUE if flag is set, FALSE otherwise
+ */
+static gboolean dlna_bin_head_response_is_flag_set(gchar* flags_str, gint flag)
+{
+	if ((flags_str == NULL) || (strlen(flags_str) <= RESERVED_FLAGS_LENGTH))
+	{
+		return FALSE;
+	}
+
+	// Drop reserved flags off of value (prepended zeros will be ignored)
+	gint len = strlen(flags_str);
+	flags_str[len - RESERVED_FLAGS_LENGTH] = '\0';
+
+	// Convert into long using hexidecimal format
+	gint64 value = strtol(flags_str, NULL, 16);
+
+	return (value & flag) == flag;
+}
 
 /**
  * Format HEAD response structure into string representation.
@@ -1096,7 +1431,7 @@ dlna_bin_head_response_struct_to_str(GstDlnaBin *dlna_bin)
 {
 	GST_LOG_OBJECT(dlna_bin, "Formatting HEAD Response struct");
 
-    gchar structStr[MAX_HTTP_BUF_SIZE];
+    gchar structStr[2048];
     gchar tmpStr[32];
 
     strcpy(structStr, "\nHTTP Version: ");
@@ -1173,20 +1508,25 @@ dlna_bin_head_response_struct_to_str(GstDlnaBin *dlna_bin)
     strcat(structStr, tmpStr);
     strcat(structStr, "\n");
 
+    strcat(structStr, "DLNA Profile: ");
+    if (dlna_bin->head_response->content_features->profile != NULL)
+    	strcat(structStr, dlna_bin->head_response->content_features->profile);
+    strcat(structStr, "\n");
+
     strcat(structStr, "Supported Playspeed Cnt: ");
     (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
     sprintf(tmpStr, "%d", dlna_bin->head_response->content_features->playspeeds_cnt);
     strcat(structStr, tmpStr);
     strcat(structStr, "\n");
 
+    strcat(structStr, "Playspeeds: ");
     gint i = 0;
     for (i = 0; i < dlna_bin->head_response->content_features->playspeeds_cnt; i++)
     {
-        strcat(structStr, "Playspeed");
-        (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-        sprintf(tmpStr, "[%d] = %f\n", i, dlna_bin->head_response->content_features->playspeeds[i]);
-        strcat(structStr, tmpStr);
+        strcat(structStr, dlna_bin->head_response->content_features->playspeeds[i]);
+        strcat(structStr, ", ");
     }
+    strcat(structStr, "\n");
 
     strcat(structStr, "Time Seek Supported?: ");
     strcat(structStr, (dlna_bin->head_response->content_features->op_time_seek_supported) ? "TRUE\n" : "FALSE\n");

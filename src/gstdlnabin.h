@@ -18,7 +18,7 @@ G_BEGIN_DECLS
 		(G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_DLNA_BIN))
 
 #define VOLUME_MAX_DOUBLE 10.0
-#define PLAYSPEEDS_MAX 64
+#define PLAYSPEEDS_MAX_CNT 64
 
 typedef struct _GstDlnaBin GstDlnaBin;
 typedef struct _GstDlnaBinClass GstDlnaBinClass;
@@ -112,7 +112,7 @@ struct _GstDlnaBinHeadResponseContentFeatures
 
 	gint playspeeds_idx;
 	guint playspeeds_cnt;
-	gfloat playspeeds[PLAYSPEEDS_MAX];
+	gchar* playspeeds[PLAYSPEEDS_MAX_CNT];
 
 	gint  flags_idx;
 	gboolean flag_sender_paced_set;
