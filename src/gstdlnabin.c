@@ -111,7 +111,7 @@ static const int RESERVED_FLAGS_LENGTH = 24;
 // Structure describing details of this element, used when initializing element
 //
 const GstElementDetails gst_dlna_bin_details
-= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/13/12 5:25 PM",
+= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/13/12 7:25 PM",
 		"Source/Network",
 		"Receive data as a client via HTTP with DLNA extensions",
 		"Eric Winkelman <e.winkelman@cablelabs.com>");
@@ -178,7 +178,7 @@ static gboolean dlna_bin_head_response_parse_playspeeds(GstDlnaBin *dlna_bin, gi
 
 static gboolean dlna_bin_head_response_parse_flags(GstDlnaBin *dlna_bin, gint idx, gchar* field_str);
 
-static gboolean dlna_bin_head_response_is_flag_set(char* flags_str, int flag);
+static gboolean dlna_bin_head_response_is_flag_set(GstDlnaBin *dlna_bin, gchar* flags_str, gint flag);
 
 static gboolean dlna_bin_head_response_init_struct(GstDlnaBin *dlna_bin);
 
@@ -867,6 +867,7 @@ dlna_bin_head_response_init_struct(GstDlnaBin *dlna_bin)
 
 	// {"TRANSFER-ENCODING", STRING_TYPE}, // 9
 	dlna_bin->head_response->transfer_encoding_idx = 9;
+
 	dlna_bin->head_response->transfer_encoding = NULL;
 
 	// {"DATE", STRING_TYPE}, // 6
@@ -957,7 +958,8 @@ dlna_bin_head_response_get_field_idx(GstDlnaBin *dlna_bin, gchar* field_str)
 static gboolean
 dlna_bin_head_response_assign_field_value(GstDlnaBin *dlna_bin, gint idx, gchar* field_str)
 {
-	GST_LOG_OBJECT(dlna_bin, "Store value received in HEAD response field");
+	GST_LOG_OBJECT(dlna_bin, "Store value received in HEAD response field for field %d - %s",
+			idx, HEAD_RESPONSE_HDRS[idx]);
 
 	gboolean rc = TRUE;
 	// *TODO* - figure out max size
@@ -1143,6 +1145,8 @@ dlna_bin_head_response_parse_content_features(GstDlnaBin *dlna_bin, gint idx, gc
 {
 	GST_LOG_OBJECT(dlna_bin, "Called with field str: %s", field_str);
 
+	char* save_ptr;
+
 	// Split CONTENTFEATURES.DLNA.ORG into following sub-fields using ";" as deliminator
 		//"DLNA.ORG_PN"
 		//"DLNA.ORG_OP"
@@ -1156,12 +1160,14 @@ dlna_bin_head_response_parse_content_features(GstDlnaBin *dlna_bin, gint idx, gc
 		tmp_str1++;
 
 		// Split into four parts
-		char* fields = strtok(tmp_str1, ";");
+		char* fields = strtok_r(tmp_str1, ";", &save_ptr);
 		while (fields != NULL)
 		{
 			// "DLNA.ORG_PN", // 11
 			if ((tmp_str2 = strstr(fields, HEAD_RESPONSE_HDRS[11])) != NULL)
 			{
+				GST_LOG_OBJECT(dlna_bin, "Found field: %s", HEAD_RESPONSE_HDRS[11]);
+
 				if (!dlna_bin_head_response_parse_profile(dlna_bin, idx, tmp_str2))
 				{
 					GST_WARNING_OBJECT(dlna_bin, "Problems parsing profile sub field: %s", tmp_str2);
@@ -1170,6 +1176,8 @@ dlna_bin_head_response_parse_content_features(GstDlnaBin *dlna_bin, gint idx, gc
 			// "DLNA.ORG_OP", // 12
 			else if ((tmp_str2 = strstr(fields, HEAD_RESPONSE_HDRS[12])) != NULL)
 			{
+				GST_LOG_OBJECT(dlna_bin, "Found field: %s", HEAD_RESPONSE_HDRS[12]);
+
 				if (!dlna_bin_head_response_parse_operations(dlna_bin, idx, tmp_str2))
 				{
 					GST_WARNING_OBJECT(dlna_bin, "Problems parsing operations sub field: %s", tmp_str2);
@@ -1178,6 +1186,8 @@ dlna_bin_head_response_parse_content_features(GstDlnaBin *dlna_bin, gint idx, gc
 			// "DLNA.ORG_PS", // 13
 			else if ((tmp_str2 = strstr(fields, HEAD_RESPONSE_HDRS[13])) != NULL)
 			{
+				GST_LOG_OBJECT(dlna_bin, "Found field: %s", HEAD_RESPONSE_HDRS[13]);
+
 				if (!dlna_bin_head_response_parse_playspeeds(dlna_bin, idx, tmp_str2))
 				{
 					GST_WARNING_OBJECT(dlna_bin, "Problems parsing playspeeds sub field: %s", tmp_str2);
@@ -1186,6 +1196,8 @@ dlna_bin_head_response_parse_content_features(GstDlnaBin *dlna_bin, gint idx, gc
 			// "DLNA.ORG_FLAGS", // 14
 			else if ((tmp_str2 = strstr(fields, HEAD_RESPONSE_HDRS[14])) != NULL)
 			{
+				GST_LOG_OBJECT(dlna_bin, "Found field: %s", HEAD_RESPONSE_HDRS[14]);
+
 				if (!dlna_bin_head_response_parse_flags(dlna_bin, idx, tmp_str2))
 				{
 					GST_WARNING_OBJECT(dlna_bin, "Problems parsing flags sub field: %s", tmp_str2);
@@ -1197,7 +1209,7 @@ dlna_bin_head_response_parse_content_features(GstDlnaBin *dlna_bin, gint idx, gc
 			}
 
 			// Go on to next field
-			fields = strtok(NULL, ";");
+			fields = strtok_r(NULL, ";", &save_ptr);
 		}
 	}
 
@@ -1327,6 +1339,7 @@ static gboolean dlna_bin_head_response_parse_playspeeds(GstDlnaBin *dlna_bin, gi
 {
 	GST_LOG_OBJECT(dlna_bin, "Found PS Field: %s", field_str);
 	gint ret_code = 0;
+	char* save_ptr;
 
 	// *TODO* - are these big enough?
 	gchar tmp1[256];
@@ -1344,7 +1357,7 @@ static gboolean dlna_bin_head_response_parse_playspeeds(GstDlnaBin *dlna_bin, gi
 		GST_LOG_OBJECT(dlna_bin, "PS Field value: %s", tmp2);
 
 		// Tokenize list of comma separated playspeeds
-		char* playspeeds = strtok(tmp2, ",");
+		char* playspeeds = strtok_r(tmp2, ",", &save_ptr);
 		while ((playspeeds != NULL) &&
 				(dlna_bin->head_response->content_features->playspeeds_cnt < PLAYSPEEDS_MAX_CNT))
 		{
@@ -1354,7 +1367,7 @@ static gboolean dlna_bin_head_response_parse_playspeeds(GstDlnaBin *dlna_bin, gi
 			dlna_bin->head_response->content_features->playspeeds_cnt++;
 
 			// Go on to next field
-			playspeeds = strtok(NULL, ",");
+			playspeeds = strtok_r(NULL, ",", &save_ptr);
 		}
 	}
 
@@ -1389,7 +1402,39 @@ static gboolean dlna_bin_head_response_parse_flags(GstDlnaBin *dlna_bin, gint id
 	}
 	else
 	{
-		GST_INFO_OBJECT(dlna_bin, "FLAGS Field value: %s", tmp2);
+		GST_LOG_OBJECT(dlna_bin, "FLAGS Field value: %s", tmp2);
+
+		// Get value of each of the defined flags
+		dlna_bin->head_response->content_features->flag_sender_paced_set =
+				dlna_bin_head_response_is_flag_set(dlna_bin, tmp2, SP_FLAG);
+		dlna_bin->head_response->content_features->flag_limited_time_seek_set =
+				dlna_bin_head_response_is_flag_set(dlna_bin, tmp2, LOP_NPT);
+		dlna_bin->head_response->content_features->flag_limited_byte_seek_set =
+				dlna_bin_head_response_is_flag_set(dlna_bin, tmp2, LOP_BYTES);
+		dlna_bin->head_response->content_features->flag_play_container_set =
+				dlna_bin_head_response_is_flag_set(dlna_bin, tmp2, PLAYCONTAINER_PARAM);
+		dlna_bin->head_response->content_features->flag_so_increasing_set =
+				dlna_bin_head_response_is_flag_set(dlna_bin, tmp2, S0_INCREASING);
+		dlna_bin->head_response->content_features->flag_sn_increasing_set =
+				dlna_bin_head_response_is_flag_set(dlna_bin, tmp2, SN_INCREASING);
+		dlna_bin->head_response->content_features->flag_rtsp_pause_set =
+				dlna_bin_head_response_is_flag_set(dlna_bin, tmp2, RTSP_PAUSE);
+		dlna_bin->head_response->content_features->flag_streaming_mode_set =
+				dlna_bin_head_response_is_flag_set(dlna_bin, tmp2, TM_S);
+		dlna_bin->head_response->content_features->flag_interactive_mode_set =
+				dlna_bin_head_response_is_flag_set(dlna_bin, tmp2, TM_I);
+		dlna_bin->head_response->content_features->flag_background_mode_set =
+				dlna_bin_head_response_is_flag_set(dlna_bin, tmp2, TM_B);
+		dlna_bin->head_response->content_features->flag_stalling_set =
+				dlna_bin_head_response_is_flag_set(dlna_bin, tmp2, HTTP_STALLING);
+		dlna_bin->head_response->content_features->flag_dlna_v15_set =
+				dlna_bin_head_response_is_flag_set(dlna_bin, tmp2, DLNA_V15_FLAG);
+		dlna_bin->head_response->content_features->flag_link_protected_set =
+				dlna_bin_head_response_is_flag_set(dlna_bin, tmp2, LP_FLAG);
+		dlna_bin->head_response->content_features->flag_full_clear_text_set =
+				dlna_bin_head_response_is_flag_set(dlna_bin, tmp2, CLEARTEXTBYTESEEK_FULL_FLAG);
+		dlna_bin->head_response->content_features->flag_limited_clear_text_set =
+				dlna_bin_head_response_is_flag_set(dlna_bin, tmp2, LOP_CLEARTEXTBYTES);
 	}
 
 	return TRUE;
@@ -1402,19 +1447,23 @@ static gboolean dlna_bin_head_response_parse_flags(GstDlnaBin *dlna_bin, gint id
  *
  * @return TRUE if flag is set, FALSE otherwise
  */
-static gboolean dlna_bin_head_response_is_flag_set(gchar* flags_str, gint flag)
+static gboolean dlna_bin_head_response_is_flag_set(GstDlnaBin *dlna_bin, gchar* flags_str, gint flag)
 {
 	if ((flags_str == NULL) || (strlen(flags_str) <= RESERVED_FLAGS_LENGTH))
 	{
+		GST_WARNING_OBJECT(dlna_bin, "FLAGS Field value null or too short : %s", flags_str);
 		return FALSE;
 	}
 
 	// Drop reserved flags off of value (prepended zeros will be ignored)
-	gint len = strlen(flags_str);
-	flags_str[len - RESERVED_FLAGS_LENGTH] = '\0';
+	gchar* tmp_str = g_strdup(flags_str);
+	gint len = strlen(tmp_str);
+	tmp_str[len - RESERVED_FLAGS_LENGTH] = '\0';
 
 	// Convert into long using hexidecimal format
-	gint64 value = strtol(flags_str, NULL, 16);
+	gint64 value = strtol(tmp_str, NULL, 16);
+
+	g_free(tmp_str);
 
 	return (value & flag) == flag;
 }
