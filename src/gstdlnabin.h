@@ -82,6 +82,11 @@ struct _GstDlnaBinHeadResponse
 	guint64 byte_seek_total;
 	gint byte_seek_idx;
 
+	guint64 dtcp_range_start;
+	guint64 dtcp_range_end;
+	guint64 dtcp_range_total;
+	gint dtcp_range_idx;
+
 	gchar* transfer_mode;
 	gint transfer_mode_idx;
 
