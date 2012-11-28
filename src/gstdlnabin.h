@@ -35,6 +35,10 @@ struct _GstDlnaBin
 {
 	GstBin bin;
 	GstElement* http_src;
+	GstElement* dtcp_decrypter;
+
+	// DTCP Key Storage
+	gchar* dtcp_key_storage;
 
 	// Stream info
 	gchar *uri;
@@ -47,9 +51,6 @@ struct _GstDlnaBin
 	gchar *head_request_str;
 	gchar *head_response_str;
 	GstDlnaBinHeadResponse* head_response;
-
-	// Requested URI content info
-	gboolean is_dtcp_encrypted;
 
 	// indication if the pipeline is live
 	//gboolean is_live;
@@ -101,6 +102,12 @@ struct _GstDlnaBinHeadResponse
 
 	gchar* content_type;
 	gint content_type_idx;
+
+	gchar* dtcp_host;
+	gint dtcp_host_idx;
+	guint dtcp_port;
+	gint dtcp_port_idx;
+	gint content_format_idx;
 
 	GstDlnaBinHeadResponseContentFeatures* content_features;
 	gint  content_features_idx;

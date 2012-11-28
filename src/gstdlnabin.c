@@ -49,15 +49,16 @@ GST_BOILERPLATE (GstDlnaBin, gst_dlna_bin, GstElement, GST_TYPE_BIN);
 /* props */
 enum
 {
-	ARG_0,
-	ARG_URI,
+	PROP_0,
+	PROP_URI,
+	PROP_DTCP_KEY_STORAGE,
 	//...
 };
 
 // Constant names for elements in this bin
 #define ELEMENT_NAME_HTTP_SRC "http-source"
-#define ELEMENT_NAME_NON_DTCP_SINK "non-dtcp-sink"
-#define ELEMENT_NAME_DTCP_SINK "dtcp-sink"
+#define ELEMENT_NAME_FILE_SINK "file-sink"
+#define ELEMENT_NAME_DTCP_DECRYPTER "dtcp-decrypter"
 
 #define MAX_HTTP_BUF_SIZE 1024
 static const char CRLF[] = "\r\n";
@@ -117,6 +118,19 @@ static const char* CONTENT_FEATURES_HDRS[] = {
 #define HDR_IDX_PS 2
 #define HDR_IDX_FLAGS 3
 
+// Subfield headers with CONTENT-TYPE
+static const char* CONTENT_TYPE_HDRS[] = {
+		"DTCP1HOST",				// 0
+		"DTCP1PORT", 				// 1
+		"CONTENTFORMAT",			// 2
+		"APPLICATION/X-DTCP1" 		// 3
+};
+#define HDR_IDX_DTCP_HOST 0
+#define HDR_IDX_DTCP_PORT 1
+#define HDR_IDX_CONTENT_FORMAT 2
+#define HDR_IDX_APP_DTCP 3
+
+
 /**
  * DLNA Flag parameters defined in DLNA spec
  * primary flags - 8 hexadecimal digits representing 32 binary flags
@@ -145,7 +159,7 @@ static const int RESERVED_FLAGS_LENGTH = 24;
 // Structure describing details of this element, used when initializing element
 //
 const GstElementDetails gst_dlna_bin_details
-= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/19/12 4:25 PM",
+= GST_ELEMENT_DETAILS("HTTP/DLNA client source 11/19/12 7:26 PM",
 		"Source/Network",
 		"Receive data as a client via HTTP with DLNA extensions",
 		"Eric Winkelman <e.winkelman@cablelabs.com>");
@@ -214,6 +228,8 @@ static gboolean dlna_bin_head_response_parse_flags(GstDlnaBin *dlna_bin, gint id
 
 static gboolean dlna_bin_head_response_parse_dtcp_range(GstDlnaBin *dlna_bin, gint idx, gchar* field_str);
 
+static gboolean dlna_bin_head_response_parse_content_type(GstDlnaBin *dlna_bin, gint idx, gchar* field_str);
+
 static gboolean dlna_bin_head_response_is_flag_set(GstDlnaBin *dlna_bin, gchar* flags_str, gint flag);
 
 static gboolean dlna_bin_head_response_init_struct(GstDlnaBin *dlna_bin);
@@ -281,10 +297,16 @@ gst_dlna_bin_class_init (GstDlnaBinClass * klass)
 	gobject_klass->set_property = gst_dlna_bin_set_property;
 	gobject_klass->get_property = gst_dlna_bin_get_property;
 
-	g_object_class_install_property (gobject_klass, ARG_URI,
+	g_object_class_install_property (gobject_klass, PROP_URI,
 			g_param_spec_string ("uri", "Stream URI",
 					"Sets URI A/V stream",
 					NULL, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
+
+	g_object_class_install_property (gobject_klass, PROP_DTCP_KEY_STORAGE,
+			g_param_spec_string ("dtcp_key_storage", "dtcp_key_storage",
+					"Directory that contains client's keys",
+					"/media/truecrypt1/dll/test_keys", G_PARAM_READWRITE));
+
 
 	gobject_klass->dispose = GST_DEBUG_FUNCPTR (gst_dlna_bin_dispose);
 
@@ -343,7 +365,7 @@ gst_dlna_bin_set_property (GObject * object, guint prop_id,
 
     switch (prop_id) {
 
-	case ARG_URI:
+	case PROP_URI:
 	{
 		if (!dlna_bin_setup_uri(dlna_bin, value))
 		{
@@ -351,7 +373,15 @@ gst_dlna_bin_set_property (GObject * object, guint prop_id,
 		}
 		break;
 	}
-
+	case PROP_DTCP_KEY_STORAGE:
+	{
+		if (dlna_bin->dtcp_key_storage)
+		{
+			g_free(dlna_bin->dtcp_key_storage);
+		}
+		dlna_bin->dtcp_key_storage = g_value_dup_string (value);
+		break;
+	}
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 		break;
@@ -375,9 +405,12 @@ gst_dlna_bin_get_property (GObject * object, guint prop_id, GValue * value,
 
 	switch (prop_id) {
 
-	case ARG_URI:
+	case PROP_URI:
 		g_value_set_pointer(value, dlna_bin->uri);
 		break;
+    case PROP_DTCP_KEY_STORAGE:
+      g_value_set_string (value, dlna_bin->dtcp_key_storage);
+      break;
 
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -689,7 +722,7 @@ dlna_bin_open_socket(GstDlnaBin *dlna_bin)
         }
 
         // Successfully connected
-        GST_DEBUG_OBJECT(dlna_bin, "Successful connect to sock: %d\n", dlna_bin->sock);
+        GST_INFO_OBJECT(dlna_bin, "Successful connect to sock: %d\n", dlna_bin->sock);
         break;
     }
 
@@ -978,6 +1011,13 @@ dlna_bin_head_response_init_struct(GstDlnaBin *dlna_bin)
 	dlna_bin->head_response->content_type_idx = HDR_IDX_CONTENT_TYPE;
 	dlna_bin->head_response->content_type = NULL;
 
+	// Addition subfields in CONTENT TYPE if dtcp encrypted
+	dlna_bin->head_response->dtcp_host_idx = HDR_IDX_DTCP_HOST;
+	dlna_bin->head_response->dtcp_host = NULL;
+	dlna_bin->head_response->dtcp_port_idx = HDR_IDX_DTCP_PORT;
+	dlna_bin->head_response->dtcp_port = -1;
+	dlna_bin->head_response->content_format_idx = HDR_IDX_CONTENT_FORMAT;
+
 	// {"CONTENTFEATURES.DLNA.ORG", STRING_TYPE},
 	dlna_bin->head_response->content_features_idx = HDR_IDX_CONTENTFEATURES;
 
@@ -1068,23 +1108,28 @@ dlna_bin_head_response_assign_field_value(GstDlnaBin *dlna_bin, gint idx, gchar*
 	switch (idx)
 	{
 	case HDR_IDX_TRANSFERMODE:
-		dlna_bin->head_response->transfer_mode = g_strdup(strstr(field_str, ":"));
+		dlna_bin->head_response->transfer_mode = g_strdup((strstr(field_str, ":")+1));
 		break;
 
 	case HDR_IDX_DATE:
-		dlna_bin->head_response->date = g_strdup(strstr(field_str, ":"));
+		dlna_bin->head_response->date = g_strdup((strstr(field_str, ":")+1));
 		break;
 
 	case HDR_IDX_CONTENT_TYPE:
-		dlna_bin->head_response->content_type = g_strdup(strstr(field_str, ":"));
+		if (!dlna_bin_head_response_parse_content_type(dlna_bin, idx, field_str))
+		{
+			GST_WARNING_OBJECT(dlna_bin,
+					"Problems with HEAD response field hdr %s, value: %s",
+					HEAD_RESPONSE_HDRS[idx], field_str);
+		}
 		break;
 
 	case HDR_IDX_SERVER:
-		dlna_bin->head_response->server = g_strdup(strstr(field_str, ":"));
+		dlna_bin->head_response->server = g_strdup((strstr(field_str, ":")+1));
 		break;
 
 	case HDR_IDX_TRANSFER_ENCODING:
-		dlna_bin->head_response->transfer_encoding = g_strdup(strstr(field_str, ":"));
+		dlna_bin->head_response->transfer_encoding = g_strdup((strstr(field_str, ":")+1));
 		break;
 
 	case HDR_IDX_HTTP:
@@ -1619,6 +1664,102 @@ static gboolean dlna_bin_head_response_parse_flags(GstDlnaBin *dlna_bin, gint id
 }
 
 /**
+ * Parse content type identified by CONTENT-TYPE header.  Includes additional
+ * subfields when content is DTCP encrypted.
+ *
+ * @param	dlna_bin	this element
+ * @param	idx			index into array of header strings
+ * @param	field_str	sub field string containing DLNA.ORG_PN field
+ *
+ * @return	TRUE
+ */
+static gboolean dlna_bin_head_response_parse_content_type(GstDlnaBin *dlna_bin, gint idx, gchar* field_str)
+{
+	GST_LOG_OBJECT(dlna_bin, "Found Content Type Field: %s", field_str);
+	gint ret_code = 0;
+	gchar tmp1[32];
+	gchar tmp2[32];
+	gchar tmp3[32];
+
+	// If not DTCP content, this field is mime-type
+	if (strstr(field_str, "DTCP") == NULL)
+	{
+		dlna_bin->head_response->content_type = g_strdup((strstr(field_str, ":")+1));
+	}
+	else
+	{
+		// DTCP related info in subfields
+		// Split CONTENT-TYPE into following sub-fields using ";" as deliminator
+			//
+			// DTCP1HOST
+			// DTCP1PORT
+			// CONTENTFORMAT
+		gchar* tmp_str2 = strstr(field_str, HEAD_RESPONSE_HDRS[idx]);
+		gchar* tmp_str1 = strstr(tmp_str2, ":");
+		if (tmp_str1 != NULL)
+		{
+			// Increment ptr to get pass ":"
+			tmp_str1++;
+
+			// Split into parts using ";" as delmin
+			char* tokens = strtok(tmp_str1, ";");
+			while (tokens != NULL)
+			{
+				// DTCP1HOST
+				if ((tmp_str2 = strstr(tokens, CONTENT_TYPE_HDRS[HDR_IDX_DTCP_HOST])) != NULL)
+				{
+					GST_LOG_OBJECT(dlna_bin, "Found field: %s", CONTENT_TYPE_HDRS[HDR_IDX_DTCP_HOST]);
+					dlna_bin->head_response->dtcp_host = g_strdup((strstr(tmp_str2, "=")+1));
+				}
+				// DTCP1PORT
+				else if ((tmp_str2 = strstr(tokens, CONTENT_TYPE_HDRS[HDR_IDX_DTCP_PORT])) != NULL)
+				{
+					if ((ret_code = sscanf(tmp_str2, "%[^=]=%d", tmp1,
+										   &dlna_bin->head_response->dtcp_port)) != 2)
+					{
+						GST_WARNING_OBJECT(dlna_bin,
+						"Problems parsing DTCP PORT from HEAD response field hdr %s, value: %s, retcode: %d, tmp: %s",
+								HEAD_RESPONSE_HDRS[idx], tmp_str2, ret_code, tmp1);
+					}
+					else
+					{
+						GST_LOG_OBJECT(dlna_bin, "Found field: %s", CONTENT_TYPE_HDRS[HDR_IDX_DTCP_PORT]);
+					}
+				}
+				// CONTENTFORMAT
+				else if ((tmp_str2 = strstr(tokens, CONTENT_TYPE_HDRS[HDR_IDX_CONTENT_FORMAT])) != NULL)
+				{
+					if ((ret_code = sscanf(tmp_str2, "%[^=]=\"%[^\"]%s", tmp1, tmp2, tmp3)) != 3)
+					{
+						GST_WARNING_OBJECT(dlna_bin,
+						"Problems parsing DTCP CONTENT FORMAT from HEAD response field hdr %s, value: %s, retcode: %d, tmp: %s, %s, %s",
+								HEAD_RESPONSE_HDRS[idx], tmp_str2, ret_code, tmp1, tmp2, tmp3);
+					}
+					else
+					{
+						GST_LOG_OBJECT(dlna_bin, "Found field: %s", CONTENT_TYPE_HDRS[HDR_IDX_DTCP_PORT]);
+						dlna_bin->head_response->content_type = g_strdup(tmp2);
+					}
+				}
+				//  APPLICATION/X-DTCP1
+				else if ((tmp_str2 = strstr(tokens, CONTENT_TYPE_HDRS[HDR_IDX_APP_DTCP])) != NULL)
+				{
+					// Ignore this field
+				}
+				else
+				{
+					GST_WARNING_OBJECT(dlna_bin, "Unrecognized sub field:%s", tokens);
+				}
+
+				// Go on to next field
+				tokens = strtok(NULL, ";");
+			}
+		}
+	}
+	return TRUE;
+}
+
+/**
  * Utility method which determines if a given flag is set in the flags string.
  *
  * @param flagsStr the fourth field of a protocolInfo string
@@ -1656,7 +1797,7 @@ static gboolean dlna_bin_head_response_is_flag_set(GstDlnaBin *dlna_bin, gchar* 
 static gboolean
 dlna_bin_head_response_struct_to_str(GstDlnaBin *dlna_bin)
 {
-	GST_LOG_OBJECT(dlna_bin, "Formatting HEAD Response struct");
+	GST_INFO_OBJECT(dlna_bin, "Formatting HEAD Response struct");
 
     gchar structStr[2048];
     gchar tmpStr[32];
@@ -1691,6 +1832,19 @@ dlna_bin_head_response_struct_to_str(GstDlnaBin *dlna_bin)
     if (dlna_bin->head_response->content_type != NULL)
     	strcat(structStr, dlna_bin->head_response->content_type);
     strcat(structStr, "\n");
+
+    if (dlna_bin->head_response->dtcp_host != NULL)
+    {
+        strcat(structStr, "DTCP Host: ");
+        strcat(structStr, dlna_bin->head_response->dtcp_host);
+        strcat(structStr, "\n");
+
+        strcat(structStr, "DTCP Port: ");
+        (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
+        sprintf(tmpStr, "%d", dlna_bin->head_response->dtcp_port);
+        strcat(structStr, tmpStr);
+        strcat(structStr, "\n");
+    }
 
     strcat(structStr, "HTTP Transfer Encoding: ");
     if (dlna_bin->head_response->transfer_encoding != NULL)
@@ -1843,24 +1997,24 @@ dlna_bin_head_response_struct_to_str(GstDlnaBin *dlna_bin)
 static gboolean
 dlna_bin_non_dtcp_setup(GstDlnaBin *dlna_bin)
 {
-	GST_INFO_OBJECT(dlna_bin, "Creating non-dtcp sink");
+	GST_INFO_OBJECT(dlna_bin, "Setup for non-dtcp content");
 
 	// Create non-encrypt sink element
-	GstElement *non_dtcp_sink = gst_element_factory_make ("filesink", ELEMENT_NAME_NON_DTCP_SINK);
-	if (!non_dtcp_sink) {
+	GstElement *file_sink = gst_element_factory_make ("filesink", ELEMENT_NAME_FILE_SINK);
+	if (!file_sink) {
 		GST_ERROR_OBJECT(dlna_bin, "The sink element could not be created. Exiting.\n");
 		return FALSE;
 	}
 
 	// *TODO* - this should be property of this element???
 	// Hardcode the file sink location to be tmp.txt
-	g_object_set (G_OBJECT(non_dtcp_sink), "location", "non_dtcp.txt", NULL);
+	g_object_set (G_OBJECT(file_sink), "location", "non_dtcp.txt", NULL);
 
 	// Add this element to the bin
-	gst_bin_add(GST_BIN(&dlna_bin->bin), non_dtcp_sink);
+	gst_bin_add(GST_BIN(&dlna_bin->bin), file_sink);
 
 	// Link elements together
-	if (!gst_element_link_many(dlna_bin->http_src, non_dtcp_sink, NULL))
+	if (!gst_element_link_many(dlna_bin->http_src, file_sink, NULL))
 	{
 		GST_ERROR_OBJECT(dlna_bin, "Problems linking elements in bin. Exiting.\n");
 		return FALSE;
@@ -1869,31 +2023,56 @@ dlna_bin_non_dtcp_setup(GstDlnaBin *dlna_bin)
 }
 
 /**
- * Setup this bin in order to handle DTCP encrypted content
+ * Setup dtcp decoder element and add to bin in order to handle DTCP encrypted
+ * content
  *
  * @param dlna_bin	this element
  */
 static gboolean
 dlna_bin_dtcp_setup(GstDlnaBin *dlna_bin)
 {
-	GST_INFO_OBJECT(dlna_bin, "Creating dtcp sink");
+	GST_INFO_OBJECT(dlna_bin, "Setup for dtcp content");
 
 	// Create non-encrypt sink element
-	GstElement *dtcp_sink = gst_element_factory_make ("filesink", ELEMENT_NAME_DTCP_SINK);
-	if (!dtcp_sink) {
+	GST_INFO_OBJECT(dlna_bin, "Creating dtcp decrypter");
+	dlna_bin->dtcp_decrypter = gst_element_factory_make ("dtcpip",
+														ELEMENT_NAME_DTCP_DECRYPTER);
+	if (!dlna_bin->dtcp_decrypter) {
+		GST_ERROR_OBJECT(dlna_bin, "The dtcp decrypter element could not be created. Exiting.\n");
+		return FALSE;
+	}
+
+	// Set DTCP host property
+	g_object_set(G_OBJECT(dlna_bin->dtcp_decrypter), "dtcp1host",
+			dlna_bin->head_response->dtcp_host, NULL);
+
+	// Set DTCP port property
+	g_object_set(G_OBJECT(dlna_bin->dtcp_decrypter), "dtcp1port",
+			dlna_bin->head_response->dtcp_port, NULL);
+
+	// Set DTCP key storage property
+	g_object_set(G_OBJECT(dlna_bin->dtcp_decrypter), "dtcpip_storage",
+			dlna_bin->dtcp_key_storage, NULL);
+
+	// Add this element to the bin
+	gst_bin_add(GST_BIN(&dlna_bin->bin), dlna_bin->dtcp_decrypter);
+
+	// Create file sink element
+	GstElement *file_sink = gst_element_factory_make ("filesink", ELEMENT_NAME_FILE_SINK);
+	if (!file_sink) {
 		GST_ERROR_OBJECT(dlna_bin, "The sink element could not be created. Exiting.\n");
 		return FALSE;
 	}
 
 	// *TODO* - this should be property of this element???
 	// Hardcode the file sink location to be tmp.txt
-	g_object_set (G_OBJECT(dtcp_sink), "location", "dtcp.txt", NULL);
+	g_object_set (G_OBJECT(file_sink), "location", "dtcp.txt", NULL);
 
 	// Add this element to the bin
-	gst_bin_add(GST_BIN(&dlna_bin->bin), dtcp_sink);
+	gst_bin_add(GST_BIN(&dlna_bin->bin), file_sink);
 
 	// Link elements together
-	if (!gst_element_link_many(dlna_bin->http_src, dtcp_sink, NULL))
+	if (!gst_element_link_many(dlna_bin->http_src, dlna_bin->dtcp_decrypter, file_sink, NULL))
 	{
 		GST_ERROR_OBJECT(dlna_bin, "Problems linking elements in bin. Exiting.\n");
 		return FALSE;
