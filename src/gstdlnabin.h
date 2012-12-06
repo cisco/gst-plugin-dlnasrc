@@ -21,7 +21,7 @@ G_BEGIN_DECLS
 #define PLAYSPEEDS_MAX_CNT 64
 
 // *TODO* - should be http?
-#define DEFAULT_RX_URI  "udp://0.0.0.0:4140"
+#define DEFAULT_RX_URI  "http://0.0.0.0:4140"
 #define DEFAULT_RX_ADDR "0.0.0.0"
 #define DEFAULT_RX_PORT 4140
 

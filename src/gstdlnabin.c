@@ -339,7 +339,7 @@ gst_dlna_bin_init (GstDlnaBin * dlna_bin,
     // *TODO* - get rid of this fcn, move here
     gst_dlna_build_bin(dlna_bin);
 
-    dlna_bin_set_uri(dlna_bin, DEFAULT_RX_URI);   // sets uri and addr
+    //dlna_bin_set_uri(dlna_bin, DEFAULT_RX_URI);   // sets uri and addr
 
     GST_LOG_OBJECT(dlna_bin, "Initialization complete");
 }
@@ -457,7 +457,7 @@ static gchar **
 gst_dlna_bin_uri_get_protocols(void)
 {
 	// *TODO* - is this right???
-	static gchar *protocols[] = { "udp", NULL };
+	static gchar *protocols[] = { "http", "https", NULL };
 	return protocols;
 }
 
@@ -557,7 +557,7 @@ static void gst_dlna_bin_typefind_function (GstTypeFind *tf, gpointer dataPtr)
 static gboolean
 dlna_bin_set_uri(GstDlnaBin *dlna_bin, const gchar* value)
 {
-	GST_LOG_OBJECT(dlna_bin, "Setting up URI");
+	GST_INFO_OBJECT(dlna_bin, "Setting up URI");
 
 	GstElement *elem;
 
@@ -678,7 +678,7 @@ dlna_bin_set_uri(GstDlnaBin *dlna_bin, const gchar* value)
 static gboolean
 dlna_bin_parse_uri(GstDlnaBin *dlna_bin)
 {
-	GST_LOG_OBJECT(dlna_bin, "Parsing URI: %s", dlna_bin->uri);
+	GST_INFO_OBJECT(dlna_bin, "Parsing URI: %s", dlna_bin->uri);
 
 	// URI format is:
 	// <scheme>:<hierarchical_part>[?query][#fragment]
@@ -2145,8 +2145,9 @@ dlna_bin_init (GstPlugin * dlna_bin)
         GST_ERROR_OBJECT(dlna_bin, "Problems registering type find function");
     }
 
+    // *TODO* - setting rank + 1 forces this element to get selected as src by playbin2
 	return gst_element_register ((GstPlugin *)dlna_bin, "dlnabin",
-			GST_RANK_NONE, GST_TYPE_DLNA_BIN);
+			GST_RANK_PRIMARY+1, GST_TYPE_DLNA_BIN);
 }
 
 
