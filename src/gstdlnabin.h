@@ -20,6 +20,11 @@ G_BEGIN_DECLS
 #define VOLUME_MAX_DOUBLE 10.0
 #define PLAYSPEEDS_MAX_CNT 64
 
+// *TODO* - should be http?
+#define DEFAULT_RX_URI  "udp://0.0.0.0:4140"
+#define DEFAULT_RX_ADDR "0.0.0.0"
+#define DEFAULT_RX_PORT 4140
+
 typedef struct _GstDlnaBin GstDlnaBin;
 typedef struct _GstDlnaBinClass GstDlnaBinClass;
 

@@ -44,7 +44,10 @@ GST_DEBUG_CATEGORY_STATIC (gst_dlna_bin_debug);
 // Defines the get_type method and the parent_class static variable.
 // Args are: type,type_as_function,parent_type,parent_type_macro
 //
-GST_BOILERPLATE (GstDlnaBin, gst_dlna_bin, GstElement, GST_TYPE_BIN);
+//GST_BOILERPLATE (GstDlnaBin, gst_dlna_bin, GstElement, GST_TYPE_BIN);
+static void _do_Init(GType type);
+GST_BOILERPLATE_FULL(GstDlnaBin, gst_dlna_bin, GstElement, GST_TYPE_BIN, _do_Init);
+// GstPushSrc, GST_TYPE_PUSH_SRC, _do_init)
 
 /* props */
 enum
@@ -176,7 +179,7 @@ static GstStaticPadTemplate gst_dlna_bin_src_pad_template =
 		);
 
 // **********************
-// Local method declarations associated with gstreamer framework function pointers
+// Method declarations associated with gstreamer framework function pointers
 //
 static void gst_dlna_bin_dispose (GObject * object);
 
@@ -188,13 +191,19 @@ static void gst_dlna_bin_get_property (GObject * object, guint prop_id,
 
 
 // **********************
+// Method declarations associated with autoplugging, type finding, & ranking
+//
+static void gst_dlna_bin_uri_handler_init(gpointer, gpointer);
+
+static void gst_dlna_bin_typefind_function (GstTypeFind *tf, gpointer data);
+
+
+// **********************
 // Local method declarations
 //
 static GstDlnaBin* gst_dlna_build_bin (GstDlnaBin *dlna_bin);
 
-static gboolean dlna_bin_setup_uri(GstDlnaBin *dlna_bin, const GValue * value);
-
-static gboolean dlna_bin_non_dtcp_setup(GstDlnaBin *dlna_bin);
+static gboolean dlna_bin_set_uri(GstDlnaBin *dlna_bin, const gchar* value);
 
 static gboolean dlna_bin_dtcp_setup(GstDlnaBin *dlna_bin);
 
@@ -327,7 +336,10 @@ gst_dlna_bin_init (GstDlnaBin * dlna_bin,
 {
     GST_LOG_OBJECT(dlna_bin, "Initializing");
 
+    // *TODO* - get rid of this fcn, move here
     gst_dlna_build_bin(dlna_bin);
+
+    dlna_bin_set_uri(dlna_bin, DEFAULT_RX_URI);   // sets uri and addr
 
     GST_LOG_OBJECT(dlna_bin, "Initialization complete");
 }
@@ -367,7 +379,7 @@ gst_dlna_bin_set_property (GObject * object, guint prop_id,
 
 	case PROP_URI:
 	{
-		if (!dlna_bin_setup_uri(dlna_bin, value))
+		if (!dlna_bin_set_uri(dlna_bin, g_value_get_string(value)))
 		{
 		    GST_ERROR_OBJECT(dlna_bin, "Failed to set URI property");
 		}
@@ -417,6 +429,63 @@ gst_dlna_bin_get_property (GObject * object, guint prop_id, GValue * value,
 	}
 }
 
+/*********************************************/
+/**********                         **********/
+/********** GstUriHandler INTERFACE **********/
+/**********                         **********/
+/*********************************************/
+static void
+_do_Init(GType type)
+{
+    static const GInterfaceInfo urihandler_info =
+    {
+        gst_dlna_bin_uri_handler_init,
+        NULL,
+        NULL
+    };
+
+    g_type_add_interface_static(type, GST_TYPE_URI_HANDLER, &urihandler_info);
+}
+
+static GstURIType
+gst_dlna_bin_uri_get_type(void)
+{
+	return GST_URI_SRC;
+}
+
+static gchar **
+gst_dlna_bin_uri_get_protocols(void)
+{
+	// *TODO* - is this right???
+	static gchar *protocols[] = { "udp", NULL };
+	return protocols;
+}
+
+static const gchar *
+gst_dlna_bin_uri_get_uri(GstURIHandler* handler)
+{
+	GstDlnaBin *dlna_bin = GST_DLNA_BIN(handler);
+	return dlna_bin->uri;
+}
+
+static gboolean
+gst_dlna_bin_uri_set_uri(GstURIHandler* handler, const gchar* uri)
+{
+	GstDlnaBin *dlna_bin = GST_DLNA_BIN(handler);
+	return dlna_bin_set_uri(dlna_bin, uri);
+}
+
+static void
+gst_dlna_bin_uri_handler_init(gpointer g_iface, gpointer iface_data)
+{
+	GstURIHandlerInterface *iface = (GstURIHandlerInterface *)g_iface;
+
+	iface->get_type = gst_dlna_bin_uri_get_type;
+	iface->get_protocols = gst_dlna_bin_uri_get_protocols;
+	iface->get_uri = gst_dlna_bin_uri_get_uri;
+	iface->set_uri = gst_dlna_bin_uri_set_uri;
+}
+
 /**
  * Constructs elements in this bin and links them together
  *
@@ -427,41 +496,56 @@ gst_dlna_build_bin (GstDlnaBin *dlna_bin)
 {
 	GST_LOG_OBJECT(dlna_bin, "Building bin");
 
-	//gst_dlna_build_bin(dlna_bin);
-	//GstElement *http_src;
-	//GstPad *pad, *gpad;
+	GstPad *pad, *gpad;
 
 	// Create source element
 	dlna_bin->http_src = gst_element_factory_make ("souphttpsrc", ELEMENT_NAME_HTTP_SRC);
 	if (!dlna_bin->http_src) {
 		GST_ERROR_OBJECT(dlna_bin, "The source element could not be created. Exiting.\n");
-		// *TODO* - do we really want to exit here???
 		exit(1);
 	}
 
 	// Add source element to the bin
 	gst_bin_add(GST_BIN(&dlna_bin->bin), dlna_bin->http_src);
 
-	// *TODO* - Connect a callback function to soup http src - but what???
-
-	// Create the sink ghost pad
-	/*
-	pad = gst_element_get_static_pad(http_src, "src");
-	if (!pad) {
-		g_printerr ("Could not get pad for souphttpsrc\n");
+	// Create src ghost pad of dlna bin using http src so playbin will recognize element as a src
+	pad = gst_element_get_static_pad(dlna_bin->http_src, "src");
+	if (!pad)
+	{
+		GST_ERROR_OBJECT(dlna_bin, "Could not get pad for souphttpsrc. Exiting.\n");
 		exit(1);
 	}
-	//gpad = gst_element_get_static_pad(GST_ELEMENT (&dlna_bin->bin), "src");
 	gpad = gst_ghost_pad_new("src", pad);
 	gst_pad_set_active (gpad, TRUE);
-	gst_element_add_pad (GST_ELEMENT (&dlna_bin->bin), gpad);
-
+	gst_element_add_pad(GST_ELEMENT (&dlna_bin->bin), gpad);
 	gst_object_unref (pad);
+	// Ghost pad is now owned by this element, so don't unref it
 	//gst_object_unref (gpad);
-	 */
+
+	//gpad = gst_ghost_pad_new_no_target();
 	GST_LOG_OBJECT(dlna_bin, "Done building bin");
 
 	return dlna_bin;
+}
+
+
+static void gst_dlna_bin_typefind_function (GstTypeFind *tf, gpointer dataPtr)
+{
+	//GST_LOG_OBJECT(dlna_bin, "%s - called\n", __FUNCTION__);
+	g_print("dlna bin typefind function called\n");
+
+	// Get size bytes of the stream to identify beginning at offset
+	// hard coded to offset of zero and number of bytes is 12
+	guint8 *data = gst_type_find_peek (tf, 0, 12);
+
+	// *TODO* - Look at data returned and determine type
+	if (data)
+	{
+		g_print("dlna bin typefind function suggesting video/mpegts\n");
+		gst_type_find_suggest(tf,
+				GST_TYPE_FIND_MAXIMUM,							// percent of probability
+				gst_caps_new_simple ("video/mpegts", NULL));	// suggested caps
+	}
 }
 
 /**
@@ -471,7 +555,7 @@ gst_dlna_build_bin (GstDlnaBin *dlna_bin)
  * @param value		specified URI to use
  */
 static gboolean
-dlna_bin_setup_uri(GstDlnaBin *dlna_bin, const GValue * value)
+dlna_bin_set_uri(GstDlnaBin *dlna_bin, const gchar* value)
 {
 	GST_LOG_OBJECT(dlna_bin, "Setting up URI");
 
@@ -482,7 +566,7 @@ dlna_bin_setup_uri(GstDlnaBin *dlna_bin, const GValue * value)
 	if (dlna_bin->uri) {
 		free(dlna_bin->uri);
 	}
-	dlna_bin->uri = g_value_dup_string(value);
+	dlna_bin->uri = g_strdup(value);
 
 	// Parse URI to get socket info & content info to send head request
 	if (!dlna_bin_parse_uri(dlna_bin))
@@ -578,11 +662,7 @@ dlna_bin_setup_uri(GstDlnaBin *dlna_bin, const GValue * value)
 	}
 	else
 	{
-		if (!dlna_bin_non_dtcp_setup(dlna_bin))
-		{
-			GST_ERROR_OBJECT(dlna_bin, "Problems setting up non-dtcp elements\n");
-			return FALSE;
-		}
+		GST_INFO_OBJECT(dlna_bin, "No DTCP setup required\n");
 	}
 	return TRUE;
 }
@@ -1988,41 +2068,6 @@ dlna_bin_head_response_struct_to_str(GstDlnaBin *dlna_bin)
 }
 
 /**
- * Setup this bin in order to handle non-DTCP encrypted content
- *
- * @param dlna_bin	this element
- *
- * @return	returns TRUE if no problems are encountered, false otherwise
- */
-static gboolean
-dlna_bin_non_dtcp_setup(GstDlnaBin *dlna_bin)
-{
-	GST_INFO_OBJECT(dlna_bin, "Setup for non-dtcp content");
-
-	// Create non-encrypt sink element
-	GstElement *file_sink = gst_element_factory_make ("filesink", ELEMENT_NAME_FILE_SINK);
-	if (!file_sink) {
-		GST_ERROR_OBJECT(dlna_bin, "The sink element could not be created. Exiting.\n");
-		return FALSE;
-	}
-
-	// *TODO* - this should be property of this element???
-	// Hardcode the file sink location to be tmp.txt
-	g_object_set (G_OBJECT(file_sink), "location", "non_dtcp.txt", NULL);
-
-	// Add this element to the bin
-	gst_bin_add(GST_BIN(&dlna_bin->bin), file_sink);
-
-	// Link elements together
-	if (!gst_element_link_many(dlna_bin->http_src, file_sink, NULL))
-	{
-		GST_ERROR_OBJECT(dlna_bin, "Problems linking elements in bin. Exiting.\n");
-		return FALSE;
-	}
-	return TRUE;
-}
-
-/**
  * Setup dtcp decoder element and add to bin in order to handle DTCP encrypted
  * content
  *
@@ -2057,22 +2102,8 @@ dlna_bin_dtcp_setup(GstDlnaBin *dlna_bin)
 	// Add this element to the bin
 	gst_bin_add(GST_BIN(&dlna_bin->bin), dlna_bin->dtcp_decrypter);
 
-	// Create file sink element
-	GstElement *file_sink = gst_element_factory_make ("filesink", ELEMENT_NAME_FILE_SINK);
-	if (!file_sink) {
-		GST_ERROR_OBJECT(dlna_bin, "The sink element could not be created. Exiting.\n");
-		return FALSE;
-	}
-
-	// *TODO* - this should be property of this element???
-	// Hardcode the file sink location to be tmp.txt
-	g_object_set (G_OBJECT(file_sink), "location", "dtcp.txt", NULL);
-
-	// Add this element to the bin
-	gst_bin_add(GST_BIN(&dlna_bin->bin), file_sink);
-
 	// Link elements together
-	if (!gst_element_link_many(dlna_bin->http_src, dlna_bin->dtcp_decrypter, file_sink, NULL))
+	if (!gst_element_link_many(dlna_bin->http_src, dlna_bin->dtcp_decrypter, NULL))
 	{
 		GST_ERROR_OBJECT(dlna_bin, "Problems linking elements in bin. Exiting.\n");
 		return FALSE;
@@ -2097,8 +2128,22 @@ dlna_bin_init (GstPlugin * dlna_bin)
 	 *
 	 * exchange the string 'Template ' with your description
 	 */
-	GST_DEBUG_CATEGORY_INIT (gst_dlna_bin_debug, "dlnabin",
-			0, "MPEG+DLNA Player");
+	GST_DEBUG_CATEGORY_INIT (gst_dlna_bin_debug, "dlnabin", 0, "MPEG+DLNA Player");
+
+    static gchar *exts[] = { "avi", NULL };
+
+    if (!gst_type_find_register (
+    		dlna_bin,										// plugin
+    		"", 											// name
+    		GST_RANK_PRIMARY,								// rank
+  			gst_dlna_bin_typefind_function, 				// function
+  			exts,											// extensions
+  			gst_caps_new_simple("video/x-msvideo", NULL), 	// caps
+  			NULL,											// data
+  			NULL))											// destroy data fcn
+    {
+        GST_ERROR_OBJECT(dlna_bin, "Problems registering type find function");
+    }
 
 	return gst_element_register ((GstPlugin *)dlna_bin, "dlnabin",
 			GST_RANK_NONE, GST_TYPE_DLNA_BIN);
