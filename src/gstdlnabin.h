@@ -42,6 +42,11 @@ struct _GstDlnaBin
 	GstElement* http_src;
 	GstElement* dtcp_decrypter;
 
+	GstPad* src_pad;
+
+	// Name used to identify this element as source in playbin2 logging
+	gchar* cl_name;
+
 	// DTCP Key Storage
 	gchar* dtcp_key_storage;
 
@@ -56,6 +61,9 @@ struct _GstDlnaBin
 	gchar *head_request_str;
 	gchar *head_response_str;
 	GstDlnaBinHeadResponse* head_response;
+
+	// Current playback rate
+	gdouble rate;
 
 	// indication if the pipeline is live
 	//gboolean is_live;
