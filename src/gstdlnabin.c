@@ -654,50 +654,43 @@ dlna_bin_request_new_rate(GstDlnaBin *dlna_bin, gdouble rate, gint64 start)
 {
 	GST_INFO_OBJECT(dlna_bin, "requesting new rate");
 
-	// Assign play rate to supplied rate
-	dlna_bin->rate = rate;
-
 	// Get parent which will be playbin2
 	GstElement* playbin2 = (GstElement*)gst_element_get_parent(dlna_bin);
 
-	// Send EOS since changing rate
 	/*
+	// Send EOS since changing rate
 	GstEvent* eos_event = gst_event_new_eos();
 	if (!gst_element_send_event(playbin2, eos_event))
-	{  gint64 position;
-  GstFormat format = GST_FORMAT_TIME;
-
+	{
 		GST_WARNING_OBJECT(dlna_bin, "EOS event was not handled");
 	}
 	else
 	{
-		GST_INFO_OBJECT(dlna_bin, "sent EOS");
+		GST_INFO_OBJECT(dlna_bin, "Sent EOS");
+	}
+	GstEvent* flush_start = gst_event_new_flush_start();
+	if (!gst_element_send_event(playbin2, flush_start))
+	{
+		GST_WARNING_OBJECT(dlna_bin, "Flush start event was not handled");
+	}
+
+	GstEvent* flush_stop = gst_event_new_flush_stop();
+	if (!gst_element_send_event(playbin2, flush_stop))
+	{
+		GST_WARNING_OBJECT(dlna_bin, "Flush stop event was not handled");
 	}
 	*/
-	/*  gint64 position;
-  GstFormat format = GST_FORMAT_TIME;
-	 *
-		GstEvent* flush_start = gst_event_new_flush_start();
-		if (!gst_element_send_event(playbin2, flush_start))
-		{
-			GST_WARNING_OBJECT(dlna_bin, "Flush start event was not handled");
-		}
-
-		GstEvent* fGstDlnaBin *dlna_bin, gdouble rate, gint64 starlush_stop = gst_event_new_flush_stop();
-		if (!gst_element_send_event(playbin2, flush_stop))
-		{
-			GST_WARNING_OBJECT(dlna_bin, "Flush stop event was not handled");
-		}
-	*/
-
 	GST_INFO_OBJECT(dlna_bin, "pausing playbin2");
-	gst_element_set_state(playbin2, GST_STATE_PAUSED);
-	gst_element_set_state(dlna_bin->http_src, GST_STATE_NULL);
+	gst_element_set_state(playbin2, GST_STATE_NULL);
+	//gst_element_set_state(dlna_bin->http_src, GST_STATE_PAUSED);
 	GST_INFO_OBJECT(dlna_bin, "paused playbin2");
 
-	if (!dlna_bin_http_src_set_rate(dlna_bin, rate, start))
+	if (1)
 	{
-		GST_WARNING_OBJECT(dlna_bin, "Problems setting http src rate");
+		if (!dlna_bin_http_src_set_rate(dlna_bin, rate, start))
+		{
+			GST_WARNING_OBJECT(dlna_bin, "Problems setting http src rate");
+		}
 	}
 
 	// *TODO* - remove this since it should not be necessary
@@ -717,6 +710,9 @@ dlna_bin_request_new_rate(GstDlnaBin *dlna_bin, gdouble rate, gint64 start)
 static gboolean
 dlna_bin_http_src_set_rate(GstDlnaBin *dlna_bin, gdouble rate, gint64 start)
 {
+	// Assign play rate to supplied rate
+	dlna_bin->rate = rate;
+
 	// Setup header to request playspeed
 	// *TODO* - make these constants
 	gchar* ps_field_name = "PlaySpeed.dlna.org";
@@ -729,7 +725,7 @@ dlna_bin_http_src_set_rate(GstDlnaBin *dlna_bin, gdouble rate, gint64 start)
 	gchar* range_field_name = "Range";
 	gchar* range_field_value_prefix = "bytes = ";
 	gchar range_field_value[64];
-	sprintf((gchar*)&range_field_value[0], "%s%lld", range_field_value_prefix, start);
+	sprintf((gchar*)&range_field_value[0], "%s%lld-", range_field_value_prefix, start);
 	GST_INFO_OBJECT(dlna_bin, "Setting range header value: %s", range_field_value);
 
 	// Create GstStructure & GValue which contains extra headers
@@ -785,6 +781,7 @@ dlna_bin_set_uri(GstDlnaBin *dlna_bin, const gchar* value)
 	GST_INFO_OBJECT(dlna_bin, "Successfully setup URI: %s", dlna_bin->uri);
 
 	// *TODO* - force rate to non-1x rate
+	// Don't think RI server supports non-1x rate at the get go
 	//dlna_bin_http_src_set_rate(dlna_bin, 32.0, 0);
 
 	// Set the URI
