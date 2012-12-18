@@ -10,6 +10,18 @@ int main(int argc, char *argv[])
 
 	int waitSecs = 0;
 	int rate = 0;
+
+	// Set default recording id for URI
+	int rrid = 2;
+
+	// Setup a default for host ip addr
+	char host[256];
+	strcpy(host, "192.168.2.2");
+
+	// Set uri to NULL as default
+	char uri[256];
+	uri[0] = '\0';
+
 	int i = 0;
 	for (i = 1; i < argc; i++)
 	{
@@ -35,20 +47,69 @@ int main(int argc, char *argv[])
 				printf("Set requested wait secs to %d\n", waitSecs);
 			}
 		}
+		else if (strstr(argv[i], "uri=") != NULL)
+		{
+			if (sscanf(argv[i], "uri=%s\n", &uri[0]) != 1)
+			{
+				printf("Invalid uri arg specified: %s\n", argv[i]);
+			}
+			else
+			{
+				printf("Set requested URI to %s\n", uri);
+			}
+		}
+		else if (strstr(argv[i], "rrid=") != NULL)
+		{
+			if (sscanf(argv[i], "rrid=%d", &rrid) != 1)
+			{
+				printf("Invalid rrid specified: %s\n", argv[i]);
+			}
+			else
+			{
+				printf("Set requested rrid to %d\n", rrid);
+			}
+		}
+		else if (strstr(argv[i], "host=") != NULL)
+		{
+			if (sscanf(argv[i], "host=%s\n", &host[0]) != 1)
+			{
+				printf("Invalid host arg specified: %s\n", argv[i]);
+			}
+			else
+			{
+				printf("Set requested host ip to %s\n", host);
+			}
+		}
 		else
 		{
 			printf("Invalid option: %s\n", argv[i]);
-			printf("Usage: wait=x where x is secs, rate=y where y is desired rate\n");
+			printf("Usage:\t wait=x where x is secs, rate=y where y is desired rate\n");
+			printf("\t\t rrid=i where i is cds recording id, host=ip addr of server\n");
+			printf("\t\t uri=l where l is uri of desired content\n");
 			return -1;
 		}
 	}
 
 	// Initialize GStreamer
 	gst_init (&argc, &argv);
-	printf("Starting up playbin2\n");
 
 	// Build the pipeline
-	pipeline = gst_parse_launch("playbin2 uri=http://192.168.2.2:8008/ocaphn/recording?rrid=2&profile=MPEG_TS_SD_NA_ISO&mime=video/mpeg", NULL);
+	char* line1 = "playbin2 uri=";
+	char* line2 = "http://";
+	char* line3 = ":8008/ocaphn/recording?rrid=";
+	char* line4 = "&profile=MPEG_TS_SD_NA_ISO&mime=video/mpeg";
+
+	char launchLine[256];
+	if (uri[0] == '\0')
+	{
+		sprintf(launchLine, "%s%s%s%s%d%s", line1, line2, host, line3, rrid, line4);
+	}
+	else
+	{
+		sprintf(launchLine, "%s%s", line1, uri);
+	}
+	printf("Starting up playbin2 using line: %s\n", launchLine);
+	pipeline = gst_parse_launch(launchLine, NULL);
 
 	// Start playing
 	gst_element_set_state (pipeline, GST_STATE_PLAYING);
