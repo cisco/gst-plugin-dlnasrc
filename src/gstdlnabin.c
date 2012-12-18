@@ -2368,7 +2368,8 @@ dlna_bin_init (GstPlugin * dlna_bin)
 
     // *TODO* - setting rank + 1 forces this element to get selected as src by playbin2
 	return gst_element_register ((GstPlugin *)dlna_bin, "dlnabin",
-			GST_RANK_PRIMARY+1, GST_TYPE_DLNA_BIN);
+	GST_RANK_PRIMARY+1, GST_TYPE_DLNA_BIN);
+	//		GST_RANK_PRIMARY, GST_TYPE_DLNA_BIN);
 }
 
 
