@@ -172,7 +172,6 @@ const GstElementDetails gst_dlna_src_details
 
 // Description of a pad that the element will (or might) create and use
 //
-/* TODO - is this really needed??? */
 static GstStaticPadTemplate gst_dlna_src_src_pad_template =
 		GST_STATIC_PAD_TEMPLATE (
 				"src",					// name for pad
@@ -193,8 +192,6 @@ static void gst_dlna_src_get_property (GObject* object, guint prop_id,
 		GValue* value, GParamSpec* spec);
 
 static gboolean gst_dlna_src_sink_event(GstPad* pad, GstEvent* event);
-
-static GstDlnaSrc* gst_dlna_build_src (GstDlnaSrc *dlna_src);
 
 
 // **********************
@@ -352,8 +349,38 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src,
 {
     GST_LOG_OBJECT(dlna_src, "Initializing");
 
-    // *TODO* - get rid of this fcn, move here
-    gst_dlna_build_src(dlna_src);
+    GstPad *pad;
+
+	// Initialize source name
+	dlna_src->cl_name = g_strdup(DLNA_SRC_CL_NAME);
+
+	// Initialize play rate to 1.0
+	dlna_src->rate = 1.0;
+
+	// Create source element
+	dlna_src->http_src = gst_element_factory_make ("souphttpsrc", ELEMENT_NAME_HTTP_SRC);
+	if (!dlna_src->http_src) {
+		GST_ERROR_OBJECT(dlna_src, "The source element could not be created. Exiting.\n");
+		exit(1);
+	}
+
+	// Add source element to the src
+	gst_bin_add(GST_BIN(&dlna_src->bin), dlna_src->http_src);
+
+	// Create src ghost pad of dlna src using http src so playbin will recognize element as a src
+	pad = gst_element_get_static_pad(dlna_src->http_src, "src");
+	if (!pad)
+	{
+		GST_ERROR_OBJECT(dlna_src, "Could not get pad for souphttpsrc. Exiting.\n");
+		exit(1);
+	}
+	dlna_src->src_pad = gst_ghost_pad_new("src", pad);
+	gst_pad_set_active (dlna_src->src_pad, TRUE);
+	gst_element_add_pad(GST_ELEMENT (&dlna_src->bin), dlna_src->src_pad);
+	gst_object_unref (pad);
+
+	// Configure event function on sink pad before adding pad to element
+	gst_pad_set_event_function(dlna_src->src_pad, (GstPadEventFunction)gst_dlna_src_sink_event);
 
     GST_LOG_OBJECT(dlna_src, "Initialization complete");
 }
@@ -446,6 +473,14 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
 	}
 }
 
+/**
+ * Processes the supplied sink event
+ *
+ * @param pad	where event was received
+ * @param event	received event
+ *
+ * @return	true if this element handles event, false otherwise
+ */
 static gboolean
 gst_dlna_src_sink_event(GstPad    *pad,
 						GstEvent  *event)
@@ -465,7 +500,6 @@ gst_dlna_src_sink_event(GstPad    *pad,
 		ret = gst_pad_event_default (pad, event);
 		break;
 	}
-
 
 	return ret;
 }
@@ -497,7 +531,6 @@ gst_dlna_src_uri_get_type(void)
 static gchar **
 gst_dlna_src_uri_get_protocols(void)
 {
-	// *TODO* - is this right???
 	static gchar *protocols[] = { "http", "https", NULL };
 	return protocols;
 }
@@ -532,56 +565,6 @@ gst_dlna_src_uri_handler_init(gpointer g_iface, gpointer iface_data)
 }
 
 /**
- * Constructs elements in this src and links them together
- *
- * @param	dlna_src	instance of dlna src element
- */
-static GstDlnaSrc*
-gst_dlna_build_src (GstDlnaSrc *dlna_src)
-{
-	GST_LOG_OBJECT(dlna_src, "Building src");
-
-	GstPad *pad;
-
-	// Initialize source name
-	dlna_src->cl_name = g_strdup(DLNA_SRC_CL_NAME);
-
-	// Initialize play rate to 1.0
-	dlna_src->rate = 1.0;
-
-	// Create source element
-	dlna_src->http_src = gst_element_factory_make ("souphttpsrc", ELEMENT_NAME_HTTP_SRC);
-	if (!dlna_src->http_src) {
-		GST_ERROR_OBJECT(dlna_src, "The source element could not be created. Exiting.\n");
-		exit(1);
-	}
-
-	// Add source element to the src
-	gst_bin_add(GST_BIN(&dlna_src->bin), dlna_src->http_src);
-
-	// Create src ghost pad of dlna src using http src so playbin will recognize element as a src
-	pad = gst_element_get_static_pad(dlna_src->http_src, "src");
-	if (!pad)
-	{
-		GST_ERROR_OBJECT(dlna_src, "Could not get pad for souphttpsrc. Exiting.\n");
-		exit(1);
-	}
-	dlna_src->src_pad = gst_ghost_pad_new("src", pad);
-	gst_pad_set_active (dlna_src->src_pad, TRUE);
-	gst_element_add_pad(GST_ELEMENT (&dlna_src->bin), dlna_src->src_pad);
-	gst_object_unref (pad);
-
-	// Configure event function on sink pad before adding pad to element
-	// *TODO*
-	gst_pad_set_event_function(dlna_src->src_pad, (GstPadEventFunction)gst_dlna_src_sink_event);
-
-	//gpad = gst_ghost_pad_new_no_target();n
-	GST_LOG_OBJECT(dlna_src, "Done building src");
-
-	return dlna_src;
-}
-
-/**
  * Perform action necessary when seek event is received
  *
  * @param dlna_src		this element
@@ -599,6 +582,14 @@ dlna_src_handle_seek_event(GstDlnaSrc *dlna_src, GstEvent* event)
     gint64 start;
     GstSeekType stop_type;
     gint64 stop;
+
+    // Make sure a URI has been set and HEAD response received
+    if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
+    	(dlna_src->head_response->content_features == NULL))
+    {
+		GST_INFO_OBJECT(dlna_src, "No URI and/or HEAD response info, unable to handle event");
+    	return FALSE;
+    }
 
 	// Parse event received
 	gst_event_parse_seek(event, (gdouble*)&rate, (GstFormat*)&format,
@@ -621,18 +612,24 @@ dlna_src_handle_seek_event(GstDlnaSrc *dlna_src, GstEvent* event)
 			// Verify requested rate is supported
 			if (dlna_src_is_rate_supported(dlna_src, rate))
 			{
+				GST_INFO_OBJECT(dlna_src, "New rate of %4.1f is supported by server", rate);
+
 				dlna_src_request_new_rate(dlna_src, rate, start);
 			}
 			else
 			{
-				GST_INFO_OBJECT(dlna_src, "New rate of %4.1f is not supported by server",
-					rate);
+				GST_INFO_OBJECT(dlna_src, "New rate of %4.1f is not supported by server", rate);
 			}
 		}
 		else
 		{
+			// *TODO* - is this right???
 			// Ignoring time based seeks since bytes will be more accurate
 		}
+	}
+	else
+	{
+		// *TODO* - handle new time & byte position requests
 	}
 
 	// *TODO* - should we always return true???
@@ -640,15 +637,36 @@ dlna_src_handle_seek_event(GstDlnaSrc *dlna_src, GstEvent* event)
 }
 
 /**
+ * Determines if current rate is supported by server based on current
+ * URI and HEAD response.
  *
+ * @param dlna_src		this element
+ * @param rate			requested rate
+ *
+ * @return	true if requested rate is supported by server, false otherwise
  */
 static gboolean
 dlna_src_is_rate_supported(GstDlnaSrc *dlna_src, gdouble rate)
 {
-	// *TODO* - add this logic
-	return TRUE;
+	gboolean is_supported = FALSE;
+
+	// Look through list of server supported playspeeds to see if rate is supported
+	int i = 0;
+	for (i = 0; i < dlna_src->head_response->content_features->playspeeds_cnt; i++)
+	{
+		if (dlna_src->head_response->content_features->playspeeds[i] == rate)
+		{
+			is_supported = TRUE;
+			break;
+		}
+	}
+
+	return is_supported;
 }
 
+/**
+ *
+ */
 static gboolean
 dlna_src_request_new_rate(GstDlnaSrc *dlna_src, gdouble rate, gint64 start)
 {
@@ -1880,9 +1898,9 @@ static gboolean dlna_src_head_response_parse_playspeeds(GstDlnaSrc *dlna_src, gi
 	gint ret_code = 0;
 	char* save_ptr;
 
-	// *TODO* - are these big enough?
 	gchar tmp1[256];
 	gchar tmp2[256];
+	gdouble rate = 0;
 
 	if ((ret_code = sscanf(field_str, "%[^=]=%s", tmp1, tmp2)) != 2)
 	{
@@ -1901,16 +1919,37 @@ static gboolean dlna_src_head_response_parse_playspeeds(GstDlnaSrc *dlna_src, gi
 				(dlna_src->head_response->content_features->playspeeds_cnt < PLAYSPEEDS_MAX_CNT))
 		{
 			GST_LOG_OBJECT(dlna_src, "Found PS: %s", playspeeds);
-			dlna_src->head_response->content_features->playspeeds[
+
+			// Store string representation
+			dlna_src->head_response->content_features->playspeed_strs[
 			     dlna_src->head_response->content_features->playspeeds_cnt] = g_strdup(playspeeds);
+
+			// Check if this is a non-fractional value
+			if (strstr(playspeeds,"/") == NULL)
+			{
+				// Convert str to numeric value
+				if ((ret_code = sscanf(playspeeds, "%lf", &rate)) != 1)
+				{
+					GST_WARNING_OBJECT(dlna_src,
+					"Problems converting playspeed %s into numeric value", playspeeds);
+					return FALSE;
+				}
+				else
+				{
+					dlna_src->head_response->content_features->playspeeds[
+					    dlna_src->head_response->content_features->playspeeds_cnt] = rate;
+				}
+			}
+			else
+			{
+				// *TODO* - need logic to handle fractional values
+			}
 			dlna_src->head_response->content_features->playspeeds_cnt++;
 
 			// Go on to next field
 			playspeeds = strtok_r(NULL, ",", &save_ptr);
 		}
 	}
-
-	GST_LOG_OBJECT(dlna_src, "Found PS Field: %s", field_str);
 
 	return TRUE;
 }
@@ -2241,7 +2280,7 @@ dlna_src_head_response_struct_to_str(GstDlnaSrc *dlna_src)
     gint i = 0;
     for (i = 0; i < dlna_src->head_response->content_features->playspeeds_cnt; i++)
     {
-        strcat(structStr, dlna_src->head_response->content_features->playspeeds[i]);
+        strcat(structStr, dlna_src->head_response->content_features->playspeed_strs[i]);
         strcat(structStr, ", ");
     }
     strcat(structStr, "\n");
@@ -2291,7 +2330,7 @@ dlna_src_head_response_struct_to_str(GstDlnaSrc *dlna_src)
     strcat(structStr, "Link Protected?: ");
     strcat(structStr, (dlna_src->head_response->content_features->flag_link_protected_set) ? "TRUE\n" : "FALSE\n");
 
-    strcat(structStr, "Full Clear Text?: ");
+    strcat(structStr, "Full Clear Text?: "); *
     strcat(structStr, (dlna_src->head_response->content_features->flag_full_clear_text_set) ? "TRUE\n" : "FALSE\n");
 
     strcat(structStr, "Limited Clear Text?: ");

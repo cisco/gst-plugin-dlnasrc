@@ -137,7 +137,8 @@ struct _GstDlnaSrcHeadResponseContentFeatures
 
 	gint playspeeds_idx;
 	guint playspeeds_cnt;
-	gchar* playspeeds[PLAYSPEEDS_MAX_CNT];
+	gchar* playspeed_strs[PLAYSPEEDS_MAX_CNT];
+	gdouble playspeeds[PLAYSPEEDS_MAX_CNT];
 
 	gint  flags_idx;
 	gboolean flag_sender_paced_set;
