@@ -253,8 +253,6 @@ static gboolean dlna_src_is_rate_supported(GstDlnaSrc *dlna_src, gdouble rate);
 
 static gboolean dlna_src_request_new_rate(GstDlnaSrc *dlna_src, gdouble rate, gint64 start);
 
-static gboolean dlna_src_http_src_set_rate(GstDlnaSrc *dlna_src, gdouble rate, gint64 start);
-
 // *TODO* - is this really needed???
 void
 gst_play_marshal_VOID__OBJECT_BOOLEAN (GClosure *closure,
@@ -603,8 +601,8 @@ dlna_src_handle_seek_event(GstDlnaSrc *dlna_src, GstEvent* event)
 	// Check if rate change has been requested
 	if (rate != dlna_src->rate)
 	{
-		// If this event is a byte type, request new rate
-		if (format == GST_FORMAT_BYTES)
+		// If this event is a time type, request new rate
+		if (format == GST_FORMAT_TIME)
 		{
 			GST_INFO_OBJECT(dlna_src, "New rate of %4.1f has been requested, current: %4.1f",
 				rate, dlna_src->rate);
@@ -623,8 +621,7 @@ dlna_src_handle_seek_event(GstDlnaSrc *dlna_src, GstEvent* event)
 		}
 		else
 		{
-			// *TODO* - is this right???
-			// Ignoring time based seeks since bytes will be more accurate
+			// Ignoring byte based seeks since need to use time seek header with rate changes
 		}
 	}
 	else
@@ -650,6 +647,15 @@ dlna_src_is_rate_supported(GstDlnaSrc *dlna_src, gdouble rate)
 {
 	gboolean is_supported = FALSE;
 
+	// Make sure server supports time seeks since that will be required when
+	// requesting rate change
+	if (!dlna_src->head_response->content_features->op_time_seek_supported)
+	{
+		GST_WARNING_OBJECT(dlna_src,
+				"Unable to change rate due to time seek not supported by server");
+		return FALSE;
+	}
+
 	// Look through list of server supported playspeeds to see if rate is supported
 	int i = 0;
 	for (i = 0; i < dlna_src->head_response->content_features->playspeeds_cnt; i++)
@@ -665,18 +671,24 @@ dlna_src_is_rate_supported(GstDlnaSrc *dlna_src, gdouble rate)
 }
 
 /**
+ * Initiate a new GET request with new rate, resetting pipeline as necessary.
  *
+ *  @param	dlna_src	this element
+ *  @param	rate		new requested rate
+ *  @param  startNS		normal play time in nanosecs to start new rate
+ *
+ *  @return	TRUE if new rate is successfully requested, false otherwise
  */
 static gboolean
-dlna_src_request_new_rate(GstDlnaSrc *dlna_src, gdouble rate, gint64 start)
+dlna_src_request_new_rate(GstDlnaSrc *dlna_src, gdouble rate, gint64 startNS)
 {
-	GST_INFO_OBJECT(dlna_src, "requesting new rate");
+	GST_INFO_OBJECT(dlna_src, "requesting new rate: %lf", rate);
 
 	// Get parent which will be playbin2
 	GstElement* playbin2 = (GstElement*)gst_element_get_parent(dlna_src);
 
-	/*
-	// Send EOS since changing rate
+	// *TODO* - is this ok to do here while handling a seek event???
+	// Send EOS, flush start & flush stop since changing rate
 	GstEvent* eos_event = gst_event_new_eos();
 	if (!gst_element_send_event(playbin2, eos_event))
 	{
@@ -686,10 +698,15 @@ dlna_src_request_new_rate(GstDlnaSrc *dlna_src, gdouble rate, gint64 start)
 	{
 		GST_INFO_OBJECT(dlna_src, "Sent EOS");
 	}
+
 	GstEvent* flush_start = gst_event_new_flush_start();
 	if (!gst_element_send_event(playbin2, flush_start))
 	{
 		GST_WARNING_OBJECT(dlna_src, "Flush start event was not handled");
+	}
+	else
+	{
+		GST_INFO_OBJECT(dlna_src, "Sent Flush Start");
 	}
 
 	GstEvent* flush_stop = gst_event_new_flush_stop();
@@ -697,76 +714,89 @@ dlna_src_request_new_rate(GstDlnaSrc *dlna_src, gdouble rate, gint64 start)
 	{
 		GST_WARNING_OBJECT(dlna_src, "Flush stop event was not handled");
 	}
-	*/
-	GST_INFO_OBJECT(dlna_src, "pausing playbin2");
-	gst_element_set_state(playbin2, GST_STATE_NULL);
-	//gst_element_set_state(dlna_src->http_src, GST_STATE_PAUSED);
-	GST_INFO_OBJECT(dlna_src, "paused playbin2");
-
-	if (1)
+	else
 	{
-		if (!dlna_src_http_src_set_rate(dlna_src, rate, start))
+		GST_INFO_OBJECT(dlna_src, "Sent Flush stop");
+	}
+
+	GST_INFO_OBJECT(dlna_src, "pausing playbin2 to change rate");
+	gst_element_set_state(playbin2, GST_STATE_PAUSED);
+
+	// Assign play rate to supplied rate
+	dlna_src->rate = rate;
+
+	// Get string representation of rate
+	int i = 0;
+	char* rateStr = NULL;
+	for (i = 0; i < dlna_src->head_response->content_features->playspeeds_cnt; i++)
+	{
+		if (dlna_src->head_response->content_features->playspeeds[i] == rate)
 		{
-			GST_WARNING_OBJECT(dlna_src, "Problems setting http src rate");
+			rateStr = dlna_src->head_response->content_features->playspeed_strs[i];
+			break;
 		}
 	}
 
-	// *TODO* - remove this since it should not be necessary
-    g_object_set(G_OBJECT(dlna_src->http_src), "location", dlna_src->uri, NULL);
-
-	// Set playbin state back to playing
-	GST_INFO_OBJECT(dlna_src, "Resuming playbin2");
-	gst_element_set_state(playbin2, GST_STATE_PLAYING);
-	GST_INFO_OBJECT(dlna_src, "Resumed playbin2");
-
-	return TRUE;
-}
-
-/**
- *
- */
-static gboolean
-dlna_src_http_src_set_rate(GstDlnaSrc *dlna_src, gdouble rate, gint64 start)
-{
-	// Assign play rate to supplied rate
-	dlna_src->rate = rate;
+	if (rateStr == NULL)
+	{
+		GST_ERROR_OBJECT(dlna_src, "Unable to get string representation of rate: %lf", rate);
+		return FALSE;
+	}
 
 	// Setup header to request playspeed
 	// *TODO* - make these constants
 	gchar* ps_field_name = "PlaySpeed.dlna.org";
 	gchar* ps_field_value_prefix = "speed = ";
 	gchar ps_field_value[64];
-	sprintf((gchar*)&ps_field_value[0], "%s%d", ps_field_value_prefix, (int)rate);
+	sprintf((gchar*)&ps_field_value[0], "%s%s", ps_field_value_prefix, rateStr);
 	GST_INFO_OBJECT(dlna_src, "Setting playspeed header value: %s", ps_field_value);
 
-	// Setup range header
-	gchar* range_field_name = "Range";
-	gchar* range_field_value_prefix = "bytes = ";
-	gchar range_field_value[64];
-	sprintf((gchar*)&range_field_value[0], "%s%lld-", range_field_value_prefix, start);
-	GST_INFO_OBJECT(dlna_src, "Setting range header value: %s", range_field_value);
+	// Setup time seek header
+	gchar* ts_field_name = "TimeSeekRange.dlna.org";
+	gchar* ts_field_value_prefix = "npt = ";
+	gchar ts_field_value[64];
+
+	// Convert supplied start time in nanosecs into seconds to use as npt value
+	gint startSecs = startNS / 1000000000L;
+
+	sprintf((gchar*)&ts_field_value[0], "%s%d-", ts_field_value_prefix, startSecs);
+	GST_INFO_OBJECT(dlna_src, "Setting time seek header value: %s", ts_field_value);
 
 	// Create GstStructure & GValue which contains extra headers
 	GstStructure* extraHdrsStruct = gst_structure_new("extraHdrsStruct",
 									ps_field_name,
 									G_TYPE_STRING,
 									&ps_field_value,
-									range_field_name,
+									ts_field_name,
 									G_TYPE_STRING,
-									&range_field_value,
+									&ts_field_value,
 									NULL);
 
 	GValue structValue = { 0 };
 	g_value_init(&structValue, GST_TYPE_STRUCTURE);
 	gst_value_set_structure(&structValue, extraHdrsStruct);
 
+	// *TODO* - need to figure out what to do so that http src issues new request
+	// with new headers
+
+	GST_INFO_OBJECT(dlna_src, "setting state of http src to NULL");
+	gst_element_set_state(dlna_src->http_src, GST_STATE_NULL);
+
 	GST_INFO_OBJECT(dlna_src, "setting extra headers of http src property");
-
 	g_object_set_property(G_OBJECT(dlna_src->http_src), "extra-headers", &structValue);
-
+	// *TODO* - is this necessary????
+    //gst_structure_free(extraHdrsStruct);
 	GST_INFO_OBJECT(dlna_src, "set extra hdrs of http src");
 
-    //gst_structure_free(extraHdrsStruct);
+	GST_INFO_OBJECT(dlna_src, "setting URI of http src to force new request");
+	g_object_set(G_OBJECT(dlna_src->http_src), "location", dlna_src->uri, NULL);
+
+	GST_INFO_OBJECT(dlna_src, "Resuming http soup src");
+	gst_element_set_state(dlna_src->http_src, GST_STATE_PLAYING);
+
+	// Set playbin state back to playing
+	GST_INFO_OBJECT(dlna_src, "Resuming playbin2");
+	gst_element_set_state(playbin2, GST_STATE_PLAYING);
 
 	return TRUE;
 }
@@ -797,10 +827,6 @@ dlna_src_set_uri(GstDlnaSrc *dlna_src, const gchar* value)
 		}
 	}
 	GST_INFO_OBJECT(dlna_src, "Successfully setup URI: %s", dlna_src->uri);
-
-	// *TODO* - force rate to non-1x rate
-	// Don't think RI server supports non-1x rate at the get go
-	//dlna_src_http_src_set_rate(dlna_src, 32.0, 0);
 
 	// Set the URI
 	g_object_set(G_OBJECT(dlna_src->http_src), "location", dlna_src->uri, NULL);
@@ -1901,6 +1927,8 @@ static gboolean dlna_src_head_response_parse_playspeeds(GstDlnaSrc *dlna_src, gi
 	gchar tmp1[256];
 	gchar tmp2[256];
 	gdouble rate = 0;
+	int d;
+	int n;
 
 	if ((ret_code = sscanf(field_str, "%[^=]=%s", tmp1, tmp2)) != 2)
 	{
@@ -1942,7 +1970,21 @@ static gboolean dlna_src_head_response_parse_playspeeds(GstDlnaSrc *dlna_src, gi
 			}
 			else
 			{
-				// *TODO* - need logic to handle fractional values
+				// Handle conversion of fractional values
+				if ((ret_code = sscanf(playspeeds, "%d/%d", &n, &d)) != 2)
+				{
+					GST_WARNING_OBJECT(dlna_src,
+					"Problems converting fractional playspeed %s into numeric value", playspeeds);
+					return FALSE;
+				}
+				else
+				{
+					rate = (gdouble)n/(gdouble)d;
+
+					dlna_src->head_response->content_features->playspeeds[
+					    dlna_src->head_response->content_features->playspeeds_cnt] = rate;
+				}
+
 			}
 			dlna_src->head_response->content_features->playspeeds_cnt++;
 
@@ -2330,7 +2372,7 @@ dlna_src_head_response_struct_to_str(GstDlnaSrc *dlna_src)
     strcat(structStr, "Link Protected?: ");
     strcat(structStr, (dlna_src->head_response->content_features->flag_link_protected_set) ? "TRUE\n" : "FALSE\n");
 
-    strcat(structStr, "Full Clear Text?: "); *
+    strcat(structStr, "Full Clear Text?: ");
     strcat(structStr, (dlna_src->head_response->content_features->flag_full_clear_text_set) ? "TRUE\n" : "FALSE\n");
 
     strcat(structStr, "Limited Clear Text?: ");

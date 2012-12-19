@@ -9,7 +9,7 @@ int main(int argc, char *argv[])
 	GstEvent* event;
 
 	int waitSecs = 0;
-	int rate = 0;
+	gdouble rate = 0;
 
 	// Set default recording id for URI
 	int rrid = 2;
@@ -27,13 +27,13 @@ int main(int argc, char *argv[])
 	{
 		if (strstr(argv[i], "rate=") != NULL)
 		{
-			if (sscanf(argv[i], "rate=%d", &rate) != 1)
+			if (sscanf(argv[i], "rate=%lg", &rate) != 1)
 			{
 				printf("Invalid rate arg specified: %s\n", argv[i]);
 			}
 			else
 			{
-				printf("Set requested rate change to %d\n", rate);
+				printf("Set requested rate change to %4.1f\n", rate);
 			}
 		}
 		else if (strstr(argv[i], "wait=") != NULL)
@@ -122,7 +122,7 @@ int main(int argc, char *argv[])
 	// If requested, send rate change
 	if (rate != 0)
 	{
-		printf("Requesting rate change to %d\n", rate);
+		printf("Requesting rate change to %4.1f\n", rate);
 
 		gint64 position;
 		GstFormat format = GST_FORMAT_TIME;
@@ -134,8 +134,7 @@ int main(int argc, char *argv[])
 		}
 
 		// Create the seek event
-		gdouble requested_rate = rate;
-		event = gst_event_new_seek(requested_rate, GST_FORMAT_TIME,
+		event = gst_event_new_seek(rate, GST_FORMAT_TIME,
 				GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE,
 				GST_SEEK_TYPE_SET, position, GST_SEEK_TYPE_NONE, 0);
 
