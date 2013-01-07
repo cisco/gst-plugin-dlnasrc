@@ -54,6 +54,12 @@ int main(int argc, char *argv[])
 		pipeline = create_pipeline();
 	}
 
+	// Check that pipeline was properly created
+	if (pipeline == NULL)
+	{
+		printf("Problems creating pipeline\n");
+		return -1;
+	}
 	// Start playing
 	gst_element_set_state (pipeline, GST_STATE_PLAYING);
 
@@ -258,6 +264,19 @@ static GstElement* create_pipeline()
 
 	// Set properties as necessary on elements
 	g_object_set(G_OBJECT(dlnasrc), "uri", uri, NULL);
+
+	// Verify URI was properly set
+	gchar* tmpUri = NULL;
+	g_object_get(G_OBJECT(dlnasrc), "uri", &tmpUri, NULL);
+	if ((tmpUri == NULL) || (strcmp(uri, tmpUri) != 0))
+	{
+		g_printerr ("Problems setting URI to: %s. Exiting.\n", uri);
+		return NULL;
+	}
+	else
+	{
+		g_free(tmpUri);
+	}
 
 	g_object_set(G_OBJECT(textsink), "location", "demuxTextOutput", NULL);
 

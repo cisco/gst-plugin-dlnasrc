@@ -253,6 +253,8 @@ static gboolean dlna_src_is_rate_supported(GstDlnaSrc *dlna_src, gdouble rate);
 
 static gboolean dlna_src_request_new_rate(GstDlnaSrc *dlna_src, gdouble rate, gint64 start);
 
+static gboolean dlna_src_post_error(GstDlnaSrc *dlna_src, const gchar* errMsg);
+
 // *TODO* - is this really needed???
 void
 gst_play_marshal_VOID__OBJECT_BOOLEAN (GClosure *closure,
@@ -316,7 +318,8 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
 	g_object_class_install_property (gobject_klass, PROP_URI,
 			g_param_spec_string ("uri", "Stream URI",
 					"Sets URI A/V stream",
-					NULL, G_PARAM_WRITABLE | G_PARAM_STATIC_STRINGS));
+					NULL, G_PARAM_READWRITE));
+	//NULL, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
 	g_object_class_install_property (gobject_klass, PROP_CL_NAME,
 			g_param_spec_string ("cl_name", "CableLabs name",
@@ -420,7 +423,9 @@ gst_dlna_src_set_property (GObject * object, guint prop_id,
 	{
 		if (!dlna_src_set_uri(dlna_src, g_value_get_string(value)))
 		{
-		    GST_ERROR_OBJECT(dlna_src, "Failed to set URI property");
+		    GST_ELEMENT_ERROR(dlna_src, RESOURCE, READ,
+		    		("%s() - unable to set URI: %s",
+		    		__FUNCTION__, g_value_get_string(value)), NULL);
 		}
 		break;
 	}
@@ -457,11 +462,14 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
 	switch (prop_id) {
 
 	case PROP_URI:
-		g_value_set_pointer(value, dlna_src->uri);
+        g_value_set_string(value, dlna_src->uri);
+		GST_LOG_OBJECT(dlna_src, "Get property returning: %s",
+				g_value_get_string(value));
 		break;
     case PROP_DTCP_KEY_STORAGE:
       g_value_set_string (value, dlna_src->dtcp_key_storage);
       break;
+
 	case PROP_CL_NAME:
 		g_value_set_string(value, dlna_src->cl_name);
 		break;
@@ -2426,6 +2434,62 @@ dlna_src_dtcp_setup(GstDlnaSrc *dlna_src)
 		return FALSE;
 	}
 	return TRUE;
+}
+
+/**
+ * Report an error on bus
+ *
+ * @param	dlna_src	this element
+ * @param	errMsg		error message to post
+ *
+ * @return	result
+ */
+static gboolean
+dlna_src_post_error(GstDlnaSrc *dlna_src, const gchar* errMsg)
+{
+	gboolean rc = FALSE;
+	GST_INFO_OBJECT(dlna_src, "Posting error msg on bus");
+    GstObject* obj = (GstObject*)dlna_src;
+    GstObject* parent = obj;        // Ensure initialized to non-NULL
+
+	if (dlna_src->pipeline == NULL)
+	{
+	    // NULL parent is indicator we are done
+	    while (NULL != parent)
+	    {
+	        parent = GST_OBJECT_PARENT(obj);
+	        if (NULL == parent)
+	        {
+	            // Found pipeline
+	            dlna_src->pipeline = (GstElement*)obj;
+	            break;
+	        }
+	        else
+	        {
+	            // Move one step higher in the hierarchy
+	            obj = parent;
+	        }
+	    }
+	}
+	if (dlna_src->pipeline != NULL)
+	{
+		if (dlna_src->bus == NULL)
+		{
+			dlna_src->bus = gst_element_get_bus(dlna_src->pipeline);
+		}
+	}
+
+	if (dlna_src->bus != NULL)
+	{
+		rc = gst_bus_post(dlna_src->bus,
+				gst_message_new_error((GstObject*)dlna_src, NULL, errMsg));
+	}
+	else
+	{
+		GST_ERROR_OBJECT(dlna_src, "Unable to retrieve bus to post error");
+	}
+
+	return rc;
 }
 
 /* 

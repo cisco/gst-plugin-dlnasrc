@@ -44,6 +44,9 @@ struct _GstDlnaSrc
 
 	GstPad* src_pad;
 
+	GstElement* pipeline;
+	GstBus* bus;
+
 	// Name used to identify this element as source in playsrc2 logging
 	gchar* cl_name;
 
