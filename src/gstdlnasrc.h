@@ -66,7 +66,7 @@ struct _GstDlnaSrc
 	GstDlnaSrcHeadResponse* head_response;
 
 	// Current playback rate
-	gdouble rate;
+	gfloat rate;
 
 	// indication if the pipeline is live
 	//gboolean is_live;
@@ -141,7 +141,7 @@ struct _GstDlnaSrcHeadResponseContentFeatures
 	gint playspeeds_idx;
 	guint playspeeds_cnt;
 	gchar* playspeed_strs[PLAYSPEEDS_MAX_CNT];
-	gdouble playspeeds[PLAYSPEEDS_MAX_CNT];
+	gfloat playspeeds[PLAYSPEEDS_MAX_CNT];
 
 	gint  flags_idx;
 	gboolean flag_sender_paced_set;

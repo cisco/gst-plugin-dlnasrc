@@ -7,7 +7,7 @@ static GstElement* create_pipeline();
 
 // Global vars for cmd line args
 static int waitSecs = 0;
-static gdouble rate = 0;
+static gfloat rate = 0;
 static int rrid = 2;
 static char host[256];
 static char uri[256];

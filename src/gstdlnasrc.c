@@ -56,6 +56,7 @@ enum
 	PROP_URI,
 	PROP_DTCP_KEY_STORAGE,
 	PROP_CL_NAME,
+	PROP_SUPPORTED_RATES,
 	//...
 };
 
@@ -249,11 +250,11 @@ static gboolean dlna_src_head_response_struct_to_str(GstDlnaSrc *dlna_src);
 
 static gboolean dlna_src_handle_seek_event(GstDlnaSrc *dlna_src, GstEvent* event);
 
-static gboolean dlna_src_is_rate_supported(GstDlnaSrc *dlna_src, gdouble rate);
+static gboolean dlna_src_is_rate_supported(GstDlnaSrc *dlna_src, gfloat rate);
 
-static gboolean dlna_src_request_new_rate(GstDlnaSrc *dlna_src, gdouble rate, gint64 start);
+static gboolean dlna_src_request_new_rate(GstDlnaSrc *dlna_src, gfloat rate, gint64 start);
 
-static gboolean dlna_src_post_error(GstDlnaSrc *dlna_src, const gchar* errMsg);
+//static gboolean dlna_src_post_error(GstDlnaSrc *dlna_src, const gchar* errMsg);
 
 // *TODO* - is this really needed???
 void
@@ -331,6 +332,11 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
 					"Directory that contains client's keys",
 					"/media/truecrypt1/dll/test_keys", G_PARAM_READWRITE));
 
+	g_object_class_install_property (gobject_klass, PROP_SUPPORTED_RATES,
+				g_param_spec_value_array ("supported_rates", "Supported Playspeed rates",
+						"List of supported playspeed rates of DLNA server content",
+						g_param_spec_float("rate", "playspeed rate", "dlna playspeed supported by server",
+								-G_MAXFLOAT, G_MAXFLOAT, 1.0, G_PARAM_READABLE), G_PARAM_READABLE));
 
 	gobject_klass->dispose = GST_DEBUG_FUNCPTR (gst_dlna_src_dispose);
 
@@ -459,6 +465,9 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
 	GstDlnaSrc *dlna_src = GST_DLNA_SRC (object);
 	GST_LOG_OBJECT(dlna_src, "Getting property: %d", prop_id);
 
+	int i = 0;
+	//GArray* garray = NULL;
+
 	switch (prop_id) {
 
 	case PROP_URI:
@@ -472,6 +481,16 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
 
 	case PROP_CL_NAME:
 		g_value_set_string(value, dlna_src->cl_name);
+		break;
+
+	case PROP_SUPPORTED_RATES:
+		value = (GValue*)g_array_sized_new(FALSE, TRUE, sizeof(gfloat),
+				dlna_src->head_response->content_features->playspeeds_cnt);
+		g_array_set_clear_func((GArray*)value, (GDestroyNotify)g_value_unset);
+		for (i = 0; i < dlna_src->head_response->content_features->playspeeds_cnt; i++)
+		{
+			g_array_append_val((GArray*)value, dlna_src->head_response->content_features->playspeeds[i]);
+		}
 		break;
 
 	default:
@@ -581,7 +600,7 @@ gst_dlna_src_uri_handler_init(gpointer g_iface, gpointer iface_data)
 static gboolean
 dlna_src_handle_seek_event(GstDlnaSrc *dlna_src, GstEvent* event)
 {
-	gdouble rate;
+	gfloat rate;
 	GstFormat format;
 	GstSeekFlags flags;
     GstSeekType start_type;
@@ -651,7 +670,7 @@ dlna_src_handle_seek_event(GstDlnaSrc *dlna_src, GstEvent* event)
  * @return	true if requested rate is supported by server, false otherwise
  */
 static gboolean
-dlna_src_is_rate_supported(GstDlnaSrc *dlna_src, gdouble rate)
+dlna_src_is_rate_supported(GstDlnaSrc *dlna_src, gfloat rate)
 {
 	gboolean is_supported = FALSE;
 
@@ -688,7 +707,7 @@ dlna_src_is_rate_supported(GstDlnaSrc *dlna_src, gdouble rate)
  *  @return	TRUE if new rate is successfully requested, false otherwise
  */
 static gboolean
-dlna_src_request_new_rate(GstDlnaSrc *dlna_src, gdouble rate, gint64 startNS)
+dlna_src_request_new_rate(GstDlnaSrc *dlna_src, gfloat rate, gint64 startNS)
 {
 	GST_INFO_OBJECT(dlna_src, "requesting new rate: %lf", rate);
 
@@ -1934,7 +1953,7 @@ static gboolean dlna_src_head_response_parse_playspeeds(GstDlnaSrc *dlna_src, gi
 
 	gchar tmp1[256];
 	gchar tmp2[256];
-	gdouble rate = 0;
+	gfloat rate = 0;
 	int d;
 	int n;
 
@@ -1964,7 +1983,7 @@ static gboolean dlna_src_head_response_parse_playspeeds(GstDlnaSrc *dlna_src, gi
 			if (strstr(playspeeds,"/") == NULL)
 			{
 				// Convert str to numeric value
-				if ((ret_code = sscanf(playspeeds, "%lf", &rate)) != 1)
+				if ((ret_code = sscanf(playspeeds, "%f", &rate)) != 1)
 				{
 					GST_WARNING_OBJECT(dlna_src,
 					"Problems converting playspeed %s into numeric value", playspeeds);
@@ -1987,7 +2006,7 @@ static gboolean dlna_src_head_response_parse_playspeeds(GstDlnaSrc *dlna_src, gi
 				}
 				else
 				{
-					rate = (gdouble)n/(gdouble)d;
+					rate = (gfloat)n/(gfloat)d;
 
 					dlna_src->head_response->content_features->playspeeds[
 					    dlna_src->head_response->content_features->playspeeds_cnt] = rate;
@@ -2444,6 +2463,7 @@ dlna_src_dtcp_setup(GstDlnaSrc *dlna_src)
  *
  * @return	result
  */
+/*
 static gboolean
 dlna_src_post_error(GstDlnaSrc *dlna_src, const gchar* errMsg)
 {
@@ -2491,7 +2511,7 @@ dlna_src_post_error(GstDlnaSrc *dlna_src, const gchar* errMsg)
 
 	return rc;
 }
-
+*/
 /* 
  * The following section supports the GStreamer auto plugging infrastructure. 
  * Set to 0 if this is done on a package level using (ie gstelements.[hc])
