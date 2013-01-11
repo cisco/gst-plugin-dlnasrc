@@ -4,6 +4,7 @@
 static gboolean process_cmd_line_args(int argc, char*argv[]);
 static GstElement* create_playbin2_pipeline();
 static GstElement* create_pipeline();
+static void on_source_changed(GstElement* element, GParamSpec* param, gpointer data);
 
 // Global vars for cmd line args
 static int waitSecs = 0;
@@ -148,7 +149,7 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 	{
 		if (strstr(argv[i], "rate=") != NULL)
 		{
-			if (sscanf(argv[i], "rate=%lg", &rate) != 1)
+			if (sscanf(argv[i], "rate=%f", &rate) != 1)
 			{
 				printf("Invalid rate arg specified: %s\n", argv[i]);
 				return FALSE;
@@ -227,7 +228,6 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 static GstElement* create_playbin2_pipeline()
 {
 	GstElement* pipeline = NULL;
-
 	char launchLine[256];
 	char* line1 = "playbin2 uri=";
 
@@ -235,6 +235,10 @@ static GstElement* create_playbin2_pipeline()
 
 	printf("Starting up playbin2 using line: %s\n", launchLine);
 	pipeline = gst_parse_launch(launchLine, NULL);
+
+	// Register to receive playbin2 source signal & call get property on sourc
+	// to get supported playspeeds just like webkit would do
+    g_signal_connect(pipeline, "notify::source", G_CALLBACK(on_source_changed), pipeline);
 
 	return pipeline;
 }
@@ -292,4 +296,39 @@ static GstElement* create_pipeline()
 			videoscale, autovideosink, textsink, captionsink, NULL);
 
 	return pipeline;
+}
+
+static void on_source_changed(GstElement* element, GParamSpec* param, gpointer data)
+{
+	printf("Notified of source change, gather supported rates\n");
+
+	int i = 0;
+	float rate = 0;
+    GstElement* src = NULL;
+    g_object_get(element, "source", &src, NULL);
+    if (src != NULL)
+    {
+    	printf("Got src from callback, getting supported rates property\n");
+
+    	// Get supported rates property value which is a GArray
+    	GArray* arrayVal = NULL;
+    	g_object_get(src, "supported_rates", &arrayVal, NULL);
+        if (arrayVal != NULL)
+    	{
+        	printf("Supported rates cnt: %d\n", arrayVal->len);
+        	for (i = 0; i < arrayVal->len; i++)
+        	{
+        		printf("Retrieved rate %d: %f\n", (i+1), g_array_index(arrayVal, gfloat, i));
+        	}
+    	}
+    	else
+    	{
+    	   	printf("Got null value for supported rates property\n");
+    	}
+
+    }
+    else
+    {
+    	printf("Unable to get src from callback\n");
+    }
 }

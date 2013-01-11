@@ -320,7 +320,6 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
 			g_param_spec_string ("uri", "Stream URI",
 					"Sets URI A/V stream",
 					NULL, G_PARAM_READWRITE));
-	//NULL, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
 	g_object_class_install_property (gobject_klass, PROP_CL_NAME,
 			g_param_spec_string ("cl_name", "CableLabs name",
@@ -333,10 +332,9 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
 					"/media/truecrypt1/dll/test_keys", G_PARAM_READWRITE));
 
 	g_object_class_install_property (gobject_klass, PROP_SUPPORTED_RATES,
-				g_param_spec_value_array ("supported_rates", "Supported Playspeed rates",
+				g_param_spec_boxed ("supported_rates", "Supported PlayarrayVal->lenspeed rates",
 						"List of supported playspeed rates of DLNA server content",
-						g_param_spec_float("rate", "playspeed rate", "dlna playspeed supported by server",
-								-G_MAXFLOAT, G_MAXFLOAT, 1.0, G_PARAM_READABLE), G_PARAM_READABLE));
+						G_TYPE_ARRAY, G_PARAM_READABLE));
 
 	gobject_klass->dispose = GST_DEBUG_FUNCPTR (gst_dlna_src_dispose);
 
@@ -412,8 +410,9 @@ gst_dlna_src_dispose (GObject * object)
  *
  * @param	object	set property of this element
  * @param	prop_id	identifier of property to set
- * @param	value	set property to this value
- * @param	pspec	description of property type
+ * @param	value	set property to this value		g_value_init(value, G_TYPE_ARRAY);
+ *
+ * @param	pspec	description of property typearrayVal->len
  */
 static void 
 gst_dlna_src_set_property (GObject * object, guint prop_id,
@@ -463,10 +462,12 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
 		GParamSpec * pspec)
 {
 	GstDlnaSrc *dlna_src = GST_DLNA_SRC (object);
-	GST_LOG_OBJECT(dlna_src, "Getting property: %d", prop_id);
+	GST_INFO_OBJECT(dlna_src, "Getting property: %d", prop_id);
 
 	int i = 0;
-	//GArray* garray = NULL;
+	GArray* garray = NULL;
+	gfloat rate = 0;
+	int psCnt = 0;
 
 	switch (prop_id) {
 
@@ -484,13 +485,23 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
 		break;
 
 	case PROP_SUPPORTED_RATES:
-		value = (GValue*)g_array_sized_new(FALSE, TRUE, sizeof(gfloat),
-				dlna_src->head_response->content_features->playspeeds_cnt);
-		g_array_set_clear_func((GArray*)value, (GDestroyNotify)g_value_unset);
-		for (i = 0; i < dlna_src->head_response->content_features->playspeeds_cnt; i++)
+
+		// Put rates into GArray
+		psCnt = dlna_src->head_response->content_features->playspeeds_cnt;
+		garray = g_array_sized_new(TRUE, TRUE, sizeof(gfloat), psCnt);
+		g_array_set_clear_func(garray, (GDestroyNotify)g_value_unset);
+		for (i = 0; i < psCnt; i++)
 		{
-			g_array_append_val((GArray*)value, dlna_src->head_response->content_features->playspeeds[i]);
+			rate = dlna_src->head_response->content_features->playspeeds[i];
+			g_array_append_val(garray, rate);
+			GST_LOG_OBJECT(dlna_src, "Rate %d: %f\n", (i+1), g_array_index(garray, gfloat, i));
 		}
+
+		// Convert GArray into GValue
+		memset(value, 0, sizeof(value));
+		g_value_init(value, G_TYPE_ARRAY);
+		g_value_take_boxed(value, garray);
+
 		break;
 
 	default:
