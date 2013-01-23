@@ -192,11 +192,14 @@ static void gst_dlna_src_set_property (GObject* object, guint prop_id,
 static void gst_dlna_src_get_property (GObject* object, guint prop_id,
 		GValue* value, GParamSpec* spec);
 
-static gboolean gst_dlna_src_sink_event(GstPad* pad, GstEvent* event);
+static gboolean gst_dlna_src_src_event(GstPad* pad, GstEvent* event);
+
+static gboolean gst_dlna_src_src_query(GstPad *pad, GstQuery *query);
+
 
 
 // **********************
-// Method declarations associated with autoplugging, type finding, & ranking
+// Method declarations associated with autoplugging, type finding, & ing
 //
 static void gst_dlna_src_uri_handler_init(gpointer, gpointer);
 
@@ -248,11 +251,27 @@ static gboolean dlna_src_head_response_init_struct(GstDlnaSrc *dlna_src);
 
 static gboolean dlna_src_head_response_struct_to_str(GstDlnaSrc *dlna_src);
 
-static gboolean dlna_src_handle_seek_event(GstDlnaSrc *dlna_src, GstEvent* event);
+static gboolean dlna_src_handle_event_seek(GstDlnaSrc *dlna_src, GstEvent* event);
+
+static gboolean dlna_src_handle_query_duration(GstDlnaSrc *dlna_src, GstQuery *query);
+
+static gboolean dlna_src_handle_query_seeking(GstDlnaSrc *dlna_src, GstQuery *query);
+
+static gboolean dlna_src_handle_query_segment(GstDlnaSrc *dlna_src, GstQuery *query);
+
+static gboolean dlna_src_change_request(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start);
+
+static gboolean dlna_src_is_change_valid(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start);
 
 static gboolean dlna_src_is_rate_supported(GstDlnaSrc *dlna_src, gfloat rate);
 
-static gboolean dlna_src_request_new_rate(GstDlnaSrc *dlna_src, gfloat rate, gint64 start);
+static gboolean dlna_src_flush_pipeline(GstDlnaSrc *dlna_src);
+
+static gboolean dlna_src_formulate_extra_headers(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format,
+												 guint64 start, GstStructure* headers);
+
+static gboolean dlna_src_npt_to_nanos(GstDlnaSrc *dlna_src, gchar* string, guint64* media_time_nanos);
+
 
 //static gboolean dlna_src_post_error(GstDlnaSrc *dlna_src, const gchar* errMsg);
 
@@ -385,9 +404,12 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src,
 	gst_object_unref (pad);
 
 	// Configure event function on sink pad before adding pad to element
-	gst_pad_set_event_function(dlna_src->src_pad, (GstPadEventFunction)gst_dlna_src_sink_event);
+	gst_pad_set_event_function(dlna_src->src_pad, (GstPadEventFunction)gst_dlna_src_src_event);
 
-    GST_LOG_OBJECT(dlna_src, "Initialization complete");
+	// Configure event function on sink pad before adding pad to element
+	gst_pad_set_query_function(dlna_src->src_pad, (GstPadQueryFunction)gst_dlna_src_src_query);
+
+	GST_LOG_OBJECT(dlna_src, "Initialization complete");
 }
 
 /**
@@ -518,26 +540,719 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
  * @return	true if this element handles event, false otherwise
  */
 static gboolean
-gst_dlna_src_sink_event(GstPad    *pad,
+gst_dlna_src_src_event(GstPad    *pad,
 						GstEvent  *event)
 {
 	gboolean ret;
 	GstDlnaSrc *dlna_src = GST_DLNA_SRC(gst_pad_get_parent(pad));
 
+	//GST_INFO_OBJECT(dlna_src, "Got src event: %s", GST_EVENT_TYPE_NAME(event));
+
 	switch (GST_EVENT_TYPE (event))
 	{
 
 	case GST_EVENT_SEEK:
-		dlna_src_handle_seek_event(dlna_src, event);
+		ret = dlna_src_handle_event_seek(dlna_src, event);
+		if (!ret)
+		{
+			ret = gst_pad_event_default (pad, event);
+		}
+		break;
+
+	case GST_EVENT_NAVIGATION:
+		// Just call the default handler
+		ret = gst_pad_event_default (pad, event);
+		break;
+
+	case GST_EVENT_QOS:
+		// Just call the default handler
+		ret = gst_pad_event_default (pad, event);
+		break;
+
+	case GST_EVENT_LATENCY:
+		// Just call the default handler
+		ret = gst_pad_event_default (pad, event);
 		break;
 
 	default:
 		// Just call the default handler
+		GST_INFO_OBJECT(dlna_src, "Unsupported event: %s", GST_EVENT_TYPE_NAME(event));
 		ret = gst_pad_event_default (pad, event);
 		break;
 	}
 
 	return ret;
+}
+
+/**
+ * Handles queries on the src pad
+ *
+ * @return true if query could be performed
+ */
+static gboolean
+gst_dlna_src_src_query (GstPad    *pad,
+						GstQuery  *query)
+{
+	gboolean ret = FALSE;
+	GstDlnaSrc *dlna_src = GST_DLNA_SRC(gst_pad_get_parent(pad));
+
+	switch (GST_QUERY_TYPE (query))
+	{
+	case GST_QUERY_POSITION:
+		// Don't know current position in stream, let some other element handle this
+		ret = gst_pad_query_default (pad, query);
+		break;
+
+	case GST_QUERY_DURATION:
+		ret = dlna_src_handle_query_duration(dlna_src, query);
+		if (!ret)
+		{
+			ret = gst_pad_query_default (pad, query);
+		}
+		break;
+
+	case GST_QUERY_SEEKING:
+		ret = dlna_src_handle_query_seeking(dlna_src, query);
+		if (!ret)
+		{
+			ret = gst_pad_query_default (pad, query);
+		}
+		break;
+
+	case GST_QUERY_SEGMENT:
+		ret = dlna_src_handle_query_segment(dlna_src, query);
+		if (!ret)
+		{
+			ret = gst_pad_query_default (pad, query);
+		}
+		break;
+
+	case GST_QUERY_LATENCY:
+		ret = gst_pad_query_default (pad, query);
+		break;
+
+	default:
+		// just call the default handler
+		GST_INFO_OBJECT(dlna_src, "Got src query: %s, passing to default handler",
+				GST_QUERY_TYPE_NAME(query));
+		ret = gst_pad_query_default (pad, query);
+		break;
+	}
+	return ret;
+}
+
+/**
+ * Responds to a duration query by returning the size of content/stream
+ *
+ * @param	dlna_src	this element
+ * @param	query		received duration query to respond to
+ *
+ * @return	true if responded to query, false otherwise
+ */
+static gboolean dlna_src_handle_query_duration(GstDlnaSrc *dlna_src, GstQuery *query)
+{
+	gboolean ret = FALSE;
+	gint64 duration = 0;
+	GstFormat format;
+
+	// Make sure a URI has been set and HEAD response received
+    if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
+    	(dlna_src->head_response->content_features == NULL))
+    {
+		GST_INFO_OBJECT(dlna_src, "No URI and/or HEAD response info, unable to handle query");
+    	return FALSE;
+    }
+
+	// Parse query to see what format was requested
+	gst_query_parse_duration(query, &format, &duration);
+
+	if (format == GST_FORMAT_BYTES)
+	{
+		// Total duration of stream available?, report this if it is known
+		if (dlna_src->head_response->content_features->op_range_supported)
+		{
+			gst_query_set_duration(query, GST_FORMAT_BYTES, dlna_src->head_response->byte_seek_total);
+			ret = TRUE;
+
+			GST_LOG_OBJECT(dlna_src, "Duration in bytes for this content on the server: %lld",
+					dlna_src->head_response->byte_seek_total);
+		}
+		else
+		{
+			GST_LOG_OBJECT(dlna_src, "Duration in bytes not available for content item");
+		}
+	}
+	else if (format == GST_FORMAT_TIME)
+	{
+		if (dlna_src->head_response->content_features->op_time_seek_supported)
+		{
+			gst_query_set_duration(query, GST_FORMAT_TIME, dlna_src->head_response->time_seek_npt_duration);
+			ret = TRUE;
+
+			GST_LOG_OBJECT(dlna_src,
+					"Duration in media time for this content on the server, npt: %s, nanosecs: %llu",
+					dlna_src->head_response->time_seek_npt_duration_str,
+					dlna_src->head_response->time_seek_npt_duration);
+		}
+		else
+		{
+			GST_LOG_OBJECT(dlna_src, "Duration in media time not available for content item");
+		}
+	}
+	else
+	{
+		// Can not handle other format types, returning false
+		GST_INFO_OBJECT(dlna_src,
+				"Got duration query with non-supported format type: %s, passing to default handler",
+				GST_QUERY_TYPE_NAME(query));
+	}
+	return ret;
+}
+
+/**
+ * Responds to a seeking query by returning whether or not seeking is supported
+ *
+ * @param	dlna_src	this element
+ * @param	query		received seeking query to respond to
+ *
+ * @return	true if responded to query, false otherwise
+ */
+static gboolean dlna_src_handle_query_seeking(GstDlnaSrc *dlna_src, GstQuery *query)
+{
+	gboolean ret = FALSE;
+	GstFormat format;
+	gboolean supports_seeking = FALSE;
+	gint64 seek_start = 0;
+	gint64 seek_end = 0;
+
+    // Make sure a URI has been set and HEAD response received
+    if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
+    	(dlna_src->head_response->content_features == NULL))
+    {
+		GST_INFO_OBJECT(dlna_src, "No URI and/or HEAD response info, unable to handle query");
+    	return FALSE;
+    }
+
+	// Parse query to see what format was requested
+	gst_query_parse_seeking(query, &format, &supports_seeking, &seek_start, &seek_end);
+
+	if (format == GST_FORMAT_BYTES)
+	{
+		// Determine if this server supports byte based seeks for this content
+		if (dlna_src->head_response->content_features->op_range_supported)
+		{
+			// *TODO* - add check for DTCP since range will be different
+
+			gst_query_set_seeking(query, GST_FORMAT_BYTES, TRUE,
+					dlna_src->head_response->byte_seek_start, dlna_src->head_response->byte_seek_end);
+			ret = TRUE;
+
+			GST_INFO_OBJECT(dlna_src, "Byte seeks supported for this content by the server, start %lld, end %lld",
+					dlna_src->head_response->byte_seek_start, dlna_src->head_response->byte_seek_end);
+		}
+		else
+		{
+			GST_INFO_OBJECT(dlna_src, "Seeking in bytes not available for content item");
+		}
+	}
+	else if (format == GST_FORMAT_TIME)
+	{
+		if (dlna_src->head_response->content_features->op_time_seek_supported)
+		{
+			gst_query_set_seeking(query, GST_FORMAT_TIME, TRUE,
+					dlna_src->head_response->time_seek_npt_start, dlna_src->head_response->time_seek_npt_end);
+			ret = TRUE;
+
+			GST_INFO_OBJECT(dlna_src, "Time based seeks supported for this content by the server, start %lld, end %lld",
+					dlna_src->head_response->time_seek_npt_start, dlna_src->head_response->time_seek_npt_end);
+		}
+		else
+		{
+			GST_INFO_OBJECT(dlna_src, "Seeking in media time not available for content item");
+		}
+	}
+	else
+	{
+		// Can not handle other format types, returning false
+		GST_INFO_OBJECT(dlna_src,
+				"Got seeking query with non-supported format type: %s, passing to default handler",
+				GST_QUERY_TYPE_NAME(query));
+	}
+
+	return ret;
+}
+
+/**
+ * Responds to a segment query by returning rate along with start and stop
+ *
+ * @param	dlna_src	this element
+ * @param	query		received segment query to respond to
+ *
+ * @return	true if responded to query, false otherwise
+ */
+static gboolean dlna_src_handle_query_segment(GstDlnaSrc *dlna_src, GstQuery *query)
+{
+	gboolean ret = FALSE;
+	GstFormat format;
+	gdouble rate = 1.0;
+	gint64 start = 0;
+	gint64 end = 0;
+
+    // Make sure a URI has been set and HEAD response received
+    if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
+    	(dlna_src->head_response->content_features == NULL))
+    {
+		GST_INFO_OBJECT(dlna_src, "No URI and/or HEAD response info, unable to handle query");
+    	return FALSE;
+    }
+
+	// Parse query to see what format was requested
+	gst_query_parse_segment(query, &rate, &format, &start, &end);
+
+	if (format == GST_FORMAT_BYTES)
+	{
+		// Determine if this server supports byte based seeks for this content
+		if (dlna_src->head_response->content_features->op_range_supported)
+		{
+			// *TODO* - add check for DTCP since range will be different
+
+			gst_query_set_segment(query, dlna_src->rate,  GST_FORMAT_BYTES,
+					dlna_src->head_response->byte_seek_start, dlna_src->head_response->byte_seek_end);
+			ret = TRUE;
+
+			GST_LOG_OBJECT(dlna_src, "Segment info in bytes for this content, rate %f, start %lld, end %lld",
+					dlna_src->rate, dlna_src->head_response->byte_seek_start, dlna_src->head_response->byte_seek_end);
+		}
+		else
+		{
+			GST_LOG_OBJECT(dlna_src, "Segment info in bytes not available for content item");
+		}
+	}
+	else if (format == GST_FORMAT_TIME)
+	{
+		if (dlna_src->head_response->content_features->op_time_seek_supported)
+		{
+			gst_query_set_segment(query, dlna_src->rate, GST_FORMAT_TIME,
+					dlna_src->head_response->time_seek_npt_start, dlna_src->head_response->time_seek_npt_end);
+			ret = TRUE;
+
+			GST_LOG_OBJECT(dlna_src, "Time based segment info for this content by the server, rate %f, start %lld, end %lld",
+					dlna_src->rate, dlna_src->head_response->time_seek_npt_start, dlna_src->head_response->time_seek_npt_end);
+		}
+		else
+		{
+			GST_LOG_OBJECT(dlna_src, "Segment info in media time not available for content item");
+		}
+	}
+	else
+	{
+		// Can not handle other format types, returning false
+		GST_INFO_OBJECT(dlna_src,
+				"Got segment query with non-supported format type: %s, passing to default handler",
+				GST_QUERY_TYPE_NAME(query));
+	}
+
+	return ret;
+}
+
+/**
+ * Perform action necessary when seek event is received
+ *
+ * @param dlna_src		this element
+ * @param seek_event	seek event which has been received
+ *
+ * @return	true if this event has been handled, false otherwise
+ */
+static gboolean
+dlna_src_handle_event_seek(GstDlnaSrc *dlna_src, GstEvent* event)
+{
+	gdouble rate;
+	GstFormat format;
+	GstSeekFlags flags;
+    GstSeekType start_type;
+    gint64 start;
+    GstSeekType stop_type;
+    gint64 stop;
+
+    // Make sure a URI has been set and HEAD response received
+    if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
+    	(dlna_src->head_response->content_features == NULL))
+    {
+		GST_INFO_OBJECT(dlna_src, "No URI and/or HEAD response info, unable to handle event");
+    	return FALSE;
+    }
+
+	// Parse event received
+	gst_event_parse_seek(event, &rate, (GstFormat*)&format,
+	                     (GstSeekFlags*)&flags, (GstSeekType*)&start_type,
+	                     (gint64*)&start, (GstSeekType*)&stop_type, (gint64*)&stop);
+
+	GST_INFO_OBJECT(dlna_src,
+	"Got Seek event: rate: %3.1g, format: %s, flags: %d, start type: %d,  start: %lld, stop type: %d, stop: %lld",
+			rate, gst_format_get_name(format), flags, start_type, start, stop_type, stop);
+
+	// Seek Flags are:
+	//
+	// 0 - GST_SEEK_FLAG_NONE - no flag
+	// 1 - GST_SEEK_FLAG_FLUSH - flush pipeline
+	// 2 - GST_SEEK_FLAG_ACCURATE - accurate position is requested, this might be considerably slower for some formats.
+	// 3 - GST_SEEK_FLAG_KEY_UNIT - seek to the nearest keyframe. This might be faster but less accurate.
+	// 4 - GST_SEEK_FLAG_SEGMENT - perform a segment seek.
+	// 5 - GST_SEEK_FLAG_SKIP - when doing trick modes, allow elements to skip frames instead of generating all frames
+	//
+
+	// Seek Types are:
+	//
+	// 0 - GST_SEEK_TYPE_NONE - no change in position is required
+	// 1 - GST_SEEK_TYPE_CUR - change relative to currently configured segment.
+	// 		This can't be used to seek relative to the current playback position
+	// 		do a position query, calculate the desired position and then do an absolute position seek
+	// 		instead if that's what you want to do.
+	// 2 - GST_SEEK_TYPE_SET - absolute position is requested
+	// 3 - GST_SEEK_TYPE_END - relative position to duration is requested
+	//
+
+	// *TODO* - need check to see if any of these flags will not be satisfied
+	// since any seek event on this element will initiate a new HTTP GET request
+
+	// Determine start position
+
+	return TRUE;
+}
+
+/**
+ * Initiate a new GET request with new rate, resetting pipeline as necessary.
+ *
+ *  @param	dlna_src	this element
+ *  @param	rate		new requested rate
+ *  @param  startNS		normal play time in nanosecs to start new rate
+ *
+ *  @return	TRUE if new rate is successfully requested, false otherwise
+ */
+static gboolean
+dlna_src_change_request(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start)
+{
+	GST_INFO_OBJECT(dlna_src, "Requesting change to streaming");
+
+	GstStructure* extra_hdrs_struct = NULL;
+
+	// Verify requested change is valid
+	if (!dlna_src_is_change_valid(dlna_src, rate, format, start))
+	{
+		GST_ERROR_OBJECT(dlna_src, "Requested change is invalid");
+		return FALSE;
+	}
+
+	// Prepare pipeline for changes
+	if (!dlna_src_flush_pipeline(dlna_src))
+	{
+		GST_ERROR_OBJECT(dlna_src, "Problems flushing pipeline");
+		return FALSE;
+	}
+
+	// Get extra headers to include in new request
+	if (!dlna_src_formulate_extra_headers(dlna_src, rate, format, start, extra_hdrs_struct))
+	{
+		GST_ERROR_OBJECT(dlna_src, "Problem getting extra headers");
+		return FALSE;
+	}
+
+	GValue struct_value = { 0 };
+	g_value_init(&struct_value, GST_TYPE_STRUCTURE);
+	gst_value_set_structure(&struct_value, extra_hdrs_struct);
+	// *TODO* - is this necessary????
+    //gst_structure_free(extra_hdrs_struct);
+
+	GST_INFO_OBJECT(dlna_src, "setting state of http src to NULL");
+	gst_element_set_state(dlna_src->http_src, GST_STATE_NULL);
+
+	GST_INFO_OBJECT(dlna_src, "setting extra headers of http src property");
+	g_object_set_property(G_OBJECT(dlna_src->http_src), "extra-headers", &struct_value);
+	GST_INFO_OBJECT(dlna_src, "set extra hdrs of http src");
+
+	GST_INFO_OBJECT(dlna_src, "setting URI of http src to force new request");
+	g_object_set(G_OBJECT(dlna_src->http_src), "location", dlna_src->uri, NULL);
+
+	// *TODO* - need to figure out what to do so that http src issues new request
+	// with new headers - does this do it????
+
+	GST_INFO_OBJECT(dlna_src, "Resuming http soup src");
+	gst_element_set_state(dlna_src->http_src, GST_STATE_PLAYING);
+
+	// Get parent which will be playbin2
+	GstElement* playbin2 = (GstElement*)gst_element_get_parent(dlna_src);
+
+	// Set playbin state back to playing
+	GST_INFO_OBJECT(dlna_src, "Resuming pipeline");
+	gst_element_set_state(playbin2, GST_STATE_PLAYING);
+
+	return TRUE;
+}
+
+/**
+ *
+ */
+static gboolean
+dlna_src_is_change_valid(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start)
+{
+	// Check if supplied rate is supported
+	if (dlna_src_is_rate_supported(dlna_src, rate))
+	{
+		GST_INFO_OBJECT(dlna_src, "New rate of %4.1f is supported by server", rate);
+	}
+	else
+	{
+		GST_ERROR_OBJECT(dlna_src, "Rate of %4.1f is not supported by server", rate);
+		return FALSE;
+	}
+
+	// Check if supplied start is valid
+	if (format == GST_FORMAT_BYTES)
+	{
+		// Verify start byte is within range
+		// *TODO* - add support for DTCP
+		if ((start < dlna_src->head_response->byte_seek_start) ||
+				(start > dlna_src->head_response->byte_seek_end))
+		{
+			GST_ERROR_OBJECT(dlna_src,
+					"Specified start byte %lld is not valid, valid range: %llu to %llu",
+					start, dlna_src->head_response->byte_seek_start, dlna_src->head_response->byte_seek_end);
+			return FALSE;
+		}
+	}
+	else if (format == GST_FORMAT_TIME)
+	{
+		// Verify start time is within range
+		if ((start < dlna_src->head_response->time_seek_npt_start) ||
+				(start > dlna_src->head_response->time_seek_npt_end))
+		{
+			GST_ERROR_OBJECT(dlna_src,
+					"Specified start time %lld is not valid, valid range: %llu to %llu",
+					start, dlna_src->head_response->time_seek_npt_start, dlna_src->head_response->time_seek_npt_end);
+			return FALSE;
+		}
+	}
+	else
+	{
+		GST_ERROR_OBJECT(dlna_src, "Supplied format type is not supported: %d", format);
+		return FALSE;
+	}
+
+	// Assign play rate to supplied rate
+	dlna_src->rate = rate;
+
+	return TRUE;
+}
+
+/**
+ * Determines if current rate is supported by server based on current
+ * URI and HEAD response.
+ *
+ * @param dlna_src		this element
+ * @param rate			requested rate
+ *
+ * @return	true if requested rate is supported by server, false otherwise
+ */
+static gboolean
+dlna_src_is_rate_supported(GstDlnaSrc *dlna_src, gfloat rate)
+{
+	gboolean is_supported = FALSE;
+
+	// Make sure server supports time seeks since that will be required when
+	// requesting rate change
+	if (!dlna_src->head_response->content_features->op_time_seek_supported)
+	{
+		GST_WARNING_OBJECT(dlna_src,
+				"Unable to change rate due to time seek not supported by server");
+		return FALSE;
+	}
+
+	// Look through list of server supported playspeeds to see if rate is supported
+	int i = 0;
+	for (i = 0; i < dlna_src->head_response->content_features->playspeeds_cnt; i++)
+	{
+		if (dlna_src->head_response->content_features->playspeeds[i] == rate)
+		{
+			is_supported = TRUE;
+			break;
+		}
+	}
+
+	return is_supported;
+}
+
+/**
+ *
+ */
+static gboolean
+dlna_src_flush_pipeline(GstDlnaSrc *dlna_src)
+{
+	// Get parent which will be playbin2
+	GstElement* playbin2 = (GstElement*)gst_element_get_parent(dlna_src);
+
+	// *TODO* - is this ok to do here while handling a seek event???
+	// Send EOS, flush start & flush stop since changing rate
+	GstEvent* eos_event = gst_event_new_eos();
+	if (!gst_element_send_event(playbin2, eos_event))
+	{
+		GST_ERROR_OBJECT(dlna_src, "EOS event was not handled");
+		return FALSE;
+	}
+	else
+	{
+		GST_INFO_OBJECT(dlna_src, "Sent EOS");
+	}
+
+	GstEvent* flush_start = gst_event_new_flush_start();
+	if (!gst_element_send_event(playbin2, flush_start))
+	{
+		GST_ERROR_OBJECT(dlna_src, "Flush start event was not handled");
+		return FALSE;
+	}
+	else
+	{
+		GST_INFO_OBJECT(dlna_src, "Sent Flush Start");
+	}
+
+	GstEvent* flush_stop = gst_event_new_flush_stop();
+	if (!gst_element_send_event(playbin2, flush_stop))
+	{
+		GST_ERROR_OBJECT(dlna_src, "Flush stop event was not handled");
+		return FALSE;
+	}
+	else
+	{
+		GST_INFO_OBJECT(dlna_src, "Sent Flush stop");
+	}
+
+	GST_INFO_OBJECT(dlna_src, "pausing playbin2 to change stream");
+	gst_element_set_state(playbin2, GST_STATE_PAUSED);
+
+	return TRUE;
+}
+
+/**
+ *
+ */
+static gboolean
+dlna_src_formulate_extra_headers(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start,
+								 GstStructure* headers)
+{
+	// *TODO* - make these constants
+	gchar* ps_field_name = "PlaySpeed.dlna.org";
+	gchar* ps_field_value_prefix = "speed = ";
+	gchar ps_field_value[64];
+
+	gchar* ts_field_name = "TimeSeekRange.dlna.org";
+	gchar* ts_field_value_prefix = "npt = ";
+	gchar ts_field_value[64];
+
+	gchar* br_field_name = "Range";
+	gchar* br_field_value_prefix = "bytes = ";
+	gchar br_field_value[64];
+
+	// Get string representation of rate
+	int i = 0;
+	char* rateStr = NULL;
+	for (i = 0; i < dlna_src->head_response->content_features->playspeeds_cnt; i++)
+	{
+		if (dlna_src->head_response->content_features->playspeeds[i] == rate)
+		{
+			rateStr = dlna_src->head_response->content_features->playspeed_strs[i];
+			break;
+		}
+	}
+
+	if (rateStr == NULL)
+	{
+		GST_ERROR_OBJECT(dlna_src, "Unable to get string representation of rate: %lf", rate);
+		return FALSE;
+	}
+
+	// Setup header to request playspeed, only necessary if rate is not 1
+	if (rate != 1.0)
+	{
+		sprintf((gchar*)&ps_field_value[0], "%s%s", ps_field_value_prefix, rateStr);
+		GST_INFO_OBJECT(dlna_src, "Set playspeed header value: %s", ps_field_value);
+	}
+	else
+	{
+		GST_INFO_OBJECT(dlna_src, "Not including playspeed header since rate = 1.0");
+	}
+
+	if (GST_FORMAT_BYTES == format)
+	{
+		// Include range header if format is bytes
+		sprintf((gchar*)&br_field_value[0], "%s%llu-", br_field_value_prefix, start);
+		GST_INFO_OBJECT(dlna_src, "Set range header value: %s", br_field_value);
+
+		// *TODO* - handle DTCP
+	}
+	else if (GST_FORMAT_TIME == format)
+	{
+		// Include time seek header if format is time
+		// Setup time seek header
+
+		// Convert supplied start time in nanosecs into seconds to use as npt value
+		gint startSecs = start / 1000000000L;
+
+		sprintf((gchar*)&ts_field_value[0], "%s%d-", ts_field_value_prefix, startSecs);
+		GST_INFO_OBJECT(dlna_src, "Set time seek header value: %s", ts_field_value);
+	}
+	else
+	{
+		GST_ERROR_OBJECT(dlna_src, "Unsupported format type supplied: %d", format);
+		return FALSE;
+	}
+
+	// Create GstStructure & GValue which contains extra headers
+	if (rate != 1.0)
+	{
+		// Include playspeed header for either byte or time
+		if (GST_FORMAT_BYTES == format)
+		{
+			headers = gst_structure_new("extraHdrsStruct",
+											ps_field_name,
+											G_TYPE_STRING,
+											&ps_field_value,
+											br_field_name,
+											G_TYPE_STRING,
+											&br_field_value,
+											NULL);
+		}
+		else
+		{
+			headers = gst_structure_new("extraHdrsStruct",
+											ps_field_name,
+											G_TYPE_STRING,
+											&ps_field_value,
+											ts_field_name,
+											G_TYPE_STRING,
+											&ts_field_value,
+											NULL);
+		}
+	}
+	else
+	{
+		if (GST_FORMAT_BYTES == format)
+		{
+			headers = gst_structure_new("extraHdrsStruct",
+											br_field_name,
+											G_TYPE_STRING,
+											&br_field_value,
+											NULL);
+		}
+		else
+		{
+			headers = gst_structure_new("extraHdrsStruct",
+											ts_field_name,
+											G_TYPE_STRING,
+											&ts_field_value,
+											NULL);
+		}
+	}
+
+	return TRUE;
 }
 
 /*********************************************/
@@ -598,245 +1313,6 @@ gst_dlna_src_uri_handler_init(gpointer g_iface, gpointer iface_data)
 	iface->get_protocols = gst_dlna_src_uri_get_protocols;
 	iface->get_uri = gst_dlna_src_uri_get_uri;
 	iface->set_uri = gst_dlna_src_uri_set_uri;
-}
-
-/**
- * Perform action necessary when seek event is received
- *
- * @param dlna_src		this element
- * @param seek_event	seek event which has been received
- *
- * @return	true if this event has been handled, false otherwise
- */
-static gboolean
-dlna_src_handle_seek_event(GstDlnaSrc *dlna_src, GstEvent* event)
-{
-	gfloat rate;
-	GstFormat format;
-	GstSeekFlags flags;
-    GstSeekType start_type;
-    gint64 start;
-    GstSeekType stop_type;
-    gint64 stop;
-
-    // Make sure a URI has been set and HEAD response received
-    if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
-    	(dlna_src->head_response->content_features == NULL))
-    {
-		GST_INFO_OBJECT(dlna_src, "No URI and/or HEAD response info, unable to handle event");
-    	return FALSE;
-    }
-
-	// Parse event received
-	gst_event_parse_seek(event, (gdouble*)&rate, (GstFormat*)&format,
-	                     (GstSeekFlags*)&flags, (GstSeekType*)&start_type,
-	                     (gint64*)&start, (GstSeekType*)&stop_type, (gint64*)&stop);
-
-	GST_LOG_OBJECT(dlna_src,
-	"Sink event rate: %4.1f, format: %s, flags: %d, start type: %d,  start: %lld, stop type: %d, stop: %lld",
-			rate, gst_format_get_name(format), flags, start_type, start, stop_type, stop);
-
-	// Check if rate change has been requested
-	if (rate != dlna_src->rate)
-	{
-		// If this event is a time type, request new rate
-		if (format == GST_FORMAT_TIME)
-		{
-			GST_INFO_OBJECT(dlna_src, "New rate of %4.1f has been requested, current: %4.1f",
-				rate, dlna_src->rate);
-
-			// Verify requested rate is supported
-			if (dlna_src_is_rate_supported(dlna_src, rate))
-			{
-				GST_INFO_OBJECT(dlna_src, "New rate of %4.1f is supported by server", rate);
-
-				dlna_src_request_new_rate(dlna_src, rate, start);
-			}
-			else
-			{
-				GST_INFO_OBJECT(dlna_src, "New rate of %4.1f is not supported by server", rate);
-			}
-		}
-		else
-		{
-			// Ignoring byte based seeks since need to use time seek header with rate changes
-		}
-	}
-	else
-	{
-		// *TODO* - handle new time & byte position requests
-	}
-
-	// *TODO* - should we always return true???
-	return TRUE;
-}
-
-/**
- * Determines if current rate is supported by server based on current
- * URI and HEAD response.
- *
- * @param dlna_src		this element
- * @param rate			requested rate
- *
- * @return	true if requested rate is supported by server, false otherwise
- */
-static gboolean
-dlna_src_is_rate_supported(GstDlnaSrc *dlna_src, gfloat rate)
-{
-	gboolean is_supported = FALSE;
-
-	// Make sure server supports time seeks since that will be required when
-	// requesting rate change
-	if (!dlna_src->head_response->content_features->op_time_seek_supported)
-	{
-		GST_WARNING_OBJECT(dlna_src,
-				"Unable to change rate due to time seek not supported by server");
-		return FALSE;
-	}
-
-	// Look through list of server supported playspeeds to see if rate is supported
-	int i = 0;
-	for (i = 0; i < dlna_src->head_response->content_features->playspeeds_cnt; i++)
-	{
-		if (dlna_src->head_response->content_features->playspeeds[i] == rate)
-		{
-			is_supported = TRUE;
-			break;
-		}
-	}
-
-	return is_supported;
-}
-
-/**
- * Initiate a new GET request with new rate, resetting pipeline as necessary.
- *
- *  @param	dlna_src	this element
- *  @param	rate		new requested rate
- *  @param  startNS		normal play time in nanosecs to start new rate
- *
- *  @return	TRUE if new rate is successfully requested, false otherwise
- */
-static gboolean
-dlna_src_request_new_rate(GstDlnaSrc *dlna_src, gfloat rate, gint64 startNS)
-{
-	GST_INFO_OBJECT(dlna_src, "requesting new rate: %lf", rate);
-
-	// Get parent which will be playbin2
-	GstElement* playbin2 = (GstElement*)gst_element_get_parent(dlna_src);
-
-	// *TODO* - is this ok to do here while handling a seek event???
-	// Send EOS, flush start & flush stop since changing rate
-	GstEvent* eos_event = gst_event_new_eos();
-	if (!gst_element_send_event(playbin2, eos_event))
-	{
-		GST_WARNING_OBJECT(dlna_src, "EOS event was not handled");
-	}
-	else
-	{
-		GST_INFO_OBJECT(dlna_src, "Sent EOS");
-	}
-
-	GstEvent* flush_start = gst_event_new_flush_start();
-	if (!gst_element_send_event(playbin2, flush_start))
-	{
-		GST_WARNING_OBJECT(dlna_src, "Flush start event was not handled");
-	}
-	else
-	{
-		GST_INFO_OBJECT(dlna_src, "Sent Flush Start");
-	}
-
-	GstEvent* flush_stop = gst_event_new_flush_stop();
-	if (!gst_element_send_event(playbin2, flush_stop))
-	{
-		GST_WARNING_OBJECT(dlna_src, "Flush stop event was not handled");
-	}
-	else
-	{
-		GST_INFO_OBJECT(dlna_src, "Sent Flush stop");
-	}
-
-	GST_INFO_OBJECT(dlna_src, "pausing playbin2 to change rate");
-	gst_element_set_state(playbin2, GST_STATE_PAUSED);
-
-	// Assign play rate to supplied rate
-	dlna_src->rate = rate;
-
-	// Get string representation of rate
-	int i = 0;
-	char* rateStr = NULL;
-	for (i = 0; i < dlna_src->head_response->content_features->playspeeds_cnt; i++)
-	{
-		if (dlna_src->head_response->content_features->playspeeds[i] == rate)
-		{
-			rateStr = dlna_src->head_response->content_features->playspeed_strs[i];
-			break;
-		}
-	}
-
-	if (rateStr == NULL)
-	{
-		GST_ERROR_OBJECT(dlna_src, "Unable to get string representation of rate: %lf", rate);
-		return FALSE;
-	}
-
-	// Setup header to request playspeed
-	// *TODO* - make these constants
-	gchar* ps_field_name = "PlaySpeed.dlna.org";
-	gchar* ps_field_value_prefix = "speed = ";
-	gchar ps_field_value[64];
-	sprintf((gchar*)&ps_field_value[0], "%s%s", ps_field_value_prefix, rateStr);
-	GST_INFO_OBJECT(dlna_src, "Setting playspeed header value: %s", ps_field_value);
-
-	// Setup time seek header
-	gchar* ts_field_name = "TimeSeekRange.dlna.org";
-	gchar* ts_field_value_prefix = "npt = ";
-	gchar ts_field_value[64];
-
-	// Convert supplied start time in nanosecs into seconds to use as npt value
-	gint startSecs = startNS / 1000000000L;
-
-	sprintf((gchar*)&ts_field_value[0], "%s%d-", ts_field_value_prefix, startSecs);
-	GST_INFO_OBJECT(dlna_src, "Setting time seek header value: %s", ts_field_value);
-
-	// Create GstStructure & GValue which contains extra headers
-	GstStructure* extraHdrsStruct = gst_structure_new("extraHdrsStruct",
-									ps_field_name,
-									G_TYPE_STRING,
-									&ps_field_value,
-									ts_field_name,
-									G_TYPE_STRING,
-									&ts_field_value,
-									NULL);
-
-	GValue structValue = { 0 };
-	g_value_init(&structValue, GST_TYPE_STRUCTURE);
-	gst_value_set_structure(&structValue, extraHdrsStruct);
-
-	// *TODO* - need to figure out what to do so that http src issues new request
-	// with new headers
-
-	GST_INFO_OBJECT(dlna_src, "setting state of http src to NULL");
-	gst_element_set_state(dlna_src->http_src, GST_STATE_NULL);
-
-	GST_INFO_OBJECT(dlna_src, "setting extra headers of http src property");
-	g_object_set_property(G_OBJECT(dlna_src->http_src), "extra-headers", &structValue);
-	// *TODO* - is this necessary????
-    //gst_structure_free(extraHdrsStruct);
-	GST_INFO_OBJECT(dlna_src, "set extra hdrs of http src");
-
-	GST_INFO_OBJECT(dlna_src, "setting URI of http src to force new request");
-	g_object_set(G_OBJECT(dlna_src->http_src), "location", dlna_src->uri, NULL);
-
-	GST_INFO_OBJECT(dlna_src, "Resuming http soup src");
-	gst_element_set_state(dlna_src->http_src, GST_STATE_PLAYING);
-
-	// Set playbin state back to playing
-	GST_INFO_OBJECT(dlna_src, "Resuming playbin2");
-	gst_element_set_state(playbin2, GST_STATE_PLAYING);
-
-	return TRUE;
 }
 
 /**
@@ -1372,9 +1848,12 @@ dlna_src_head_response_init_struct(GstDlnaSrc *dlna_src)
 
 	// {"NPT", NPT_RANGE_TYPE},
 	dlna_src->head_response->npt_seek_idx = HDR_IDX_NPT;
-	dlna_src->head_response->time_seek_npt_start = NULL;
-	dlna_src->head_response->time_seek_npt_end = NULL;
-	dlna_src->head_response->time_seek_npt_duration = NULL;
+	dlna_src->head_response->time_seek_npt_start_str = NULL;
+	dlna_src->head_response->time_seek_npt_end_str = NULL;
+	dlna_src->head_response->time_seek_npt_duration_str = NULL;
+	dlna_src->head_response->time_seek_npt_start = 0;
+	dlna_src->head_response->time_seek_npt_end = 0;
+	dlna_src->head_response->time_seek_npt_duration = 0;
 
 	// {"BYTES", BYTE_RANGE_TYPE},
 	dlna_src->head_response->byte_seek_idx = HDR_IDX_BYTES;
@@ -1636,9 +2115,16 @@ dlna_src_head_response_parse_time_seek(GstDlnaSrc *dlna_src, gint idx, gchar* fi
 		}
 		else
 		{
-			dlna_src->head_response->time_seek_npt_start = g_strdup(tmp1);
-			dlna_src->head_response->time_seek_npt_end = g_strdup(tmp2);
-			dlna_src->head_response->time_seek_npt_duration = g_strdup(tmp3);
+			dlna_src->head_response->time_seek_npt_start_str = g_strdup(tmp1);
+			dlna_src->head_response->time_seek_npt_end_str = g_strdup(tmp2);
+			dlna_src->head_response->time_seek_npt_duration_str = g_strdup(tmp3);
+
+			dlna_src_npt_to_nanos(dlna_src, dlna_src->head_response->time_seek_npt_start_str,
+							&dlna_src->head_response->time_seek_npt_start);
+			dlna_src_npt_to_nanos(dlna_src, dlna_src->head_response->time_seek_npt_end_str,
+							&dlna_src->head_response->time_seek_npt_end);
+			dlna_src_npt_to_nanos(dlna_src, dlna_src->head_response->time_seek_npt_duration_str,
+							&dlna_src->head_response->time_seek_npt_duration);
 		}
 	}
 	else
@@ -2292,35 +2778,50 @@ dlna_src_head_response_struct_to_str(GstDlnaSrc *dlna_src)
     strcat(structStr, "\n");
 
     strcat(structStr, "Time Seek NPT Start: ");
-    if (dlna_src->head_response->time_seek_npt_start != NULL)
-    	strcat(structStr, dlna_src->head_response->time_seek_npt_start);
+    if (dlna_src->head_response->time_seek_npt_start_str != NULL)
+    {
+    	strcat(structStr, dlna_src->head_response->time_seek_npt_start_str);
+        (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
+        sprintf(tmpStr, " - %llu", dlna_src->head_response->time_seek_npt_start);
+        strcat(structStr, tmpStr);
+    }
     strcat(structStr, "\n");
 
     strcat(structStr, "Time Seek NPT End: ");
-    if (dlna_src->head_response->time_seek_npt_end != NULL)
-    	strcat(structStr, dlna_src->head_response->time_seek_npt_end);
+    if (dlna_src->head_response->time_seek_npt_end_str != NULL)
+    {
+    	strcat(structStr, dlna_src->head_response->time_seek_npt_end_str);
+    	(void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
+    	sprintf(tmpStr, " - %llu", dlna_src->head_response->time_seek_npt_end);
+    	strcat(structStr, tmpStr);
+    }
     strcat(structStr, "\n");
 
     strcat(structStr, "Time Seek NPT Duration: ");
-    if (dlna_src->head_response->time_seek_npt_duration != NULL)
-    	strcat(structStr, dlna_src->head_response->time_seek_npt_duration);
+    if (dlna_src->head_response->time_seek_npt_duration_str != NULL)
+    {
+    	strcat(structStr, dlna_src->head_response->time_seek_npt_duration_str);
+    	(void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
+    	sprintf(tmpStr, " - %llu", dlna_src->head_response->time_seek_npt_duration);
+    	strcat(structStr, tmpStr);
+    }
     strcat(structStr, "\n");
 
     strcat(structStr, "Byte Seek Start: ");
     (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-    sprintf(tmpStr, "%lld", dlna_src->head_response->byte_seek_start);
+    sprintf(tmpStr, "%llu", dlna_src->head_response->byte_seek_start);
     strcat(structStr, tmpStr);
     strcat(structStr, "\n");
 
     strcat(structStr, "Byte Seek End: ");
     (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-    sprintf(tmpStr, "%lld", dlna_src->head_response->byte_seek_end);
+    sprintf(tmpStr, "%llu", dlna_src->head_response->byte_seek_end);
     strcat(structStr, tmpStr);
     strcat(structStr, "\n");
 
     strcat(structStr, "Byte Seek Total: ");
     (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-    sprintf(tmpStr, "%lld", dlna_src->head_response->byte_seek_total);
+    sprintf(tmpStr, "%llu", dlna_src->head_response->byte_seek_total);
     strcat(structStr, tmpStr);
     strcat(structStr, "\n");
 
@@ -2467,6 +2968,59 @@ dlna_src_dtcp_setup(GstDlnaSrc *dlna_src)
 }
 
 /**
+ * Convert supplied string which represents normal play time (npt) into
+ * nanoseconds.  The format of NPT is as follows:
+ *
+ * npt time  = npt sec | npt hhmmss
+ *
+ * npt sec   = 1*DIGIT [ "." 1*3DIGIT ]
+ * npthhmmss = npthh":"nptmm":"nptss["."1*3DIGIT]
+ * npthh     = 1*DIGIT     ; any positive number
+ * nptmm     = 1*2DIGIT    ; 0-59
+ * nptss     = 1*2DIGIT    ; 0-59
+ *
+ * @param	dlna_src			this element, needed for logging
+ * @param	string				normal play time string to convert
+ * @param	media_time_nanos	npt string value converted into nanoseconds
+ *
+ * @return	true if no problems encountered, false otherwise
+ */
+static gboolean
+dlna_src_npt_to_nanos(GstDlnaSrc *dlna_src, gchar* string, guint64* media_time_nanos)
+{
+    gboolean ret = FALSE;
+
+    guint hours = 0;
+    guint  mins = 0;
+    float  secs = 0.;
+
+    if (sscanf(string, "%u:%u:%f", &hours, &mins, &secs) == 3)
+    {
+        // Long form
+        *media_time_nanos = ((hours * 60 * 60 * 1000) + (mins * 60 * 1000) + (secs * 1000)) * 1000000L;
+        ret = TRUE;
+
+    	GST_INFO_OBJECT(dlna_src, "Convert npt str %s hr=%d:mn=%d:s=%f into nanosecs: %llu\n",
+    			string, hours, mins, secs, *media_time_nanos);
+    }
+    else if (sscanf(string, "%f", &secs) == 1)
+    {
+        // Short form
+        *media_time_nanos = (secs * 1000) * 1000000L;
+        ret = TRUE;
+    	GST_INFO_OBJECT(dlna_src, "Convert npt str %s secs=%f into nanosecs: %llu\n",
+    			string, secs, media_time_nanos);
+    }
+    else
+    {
+		GST_ERROR_OBJECT(dlna_src, "Problems converting npt str into nanosecs: %s\n",
+				string);
+    }
+
+    return ret;
+}
+
+/**
  * Report an error on bus
  *
  * @param	dlna_src	this element
@@ -2542,10 +3096,10 @@ dlna_src_init (GstPlugin * dlna_src)
 	 */
 	GST_DEBUG_CATEGORY_INIT (gst_dlna_src_debug, "dlnasrc", 0, "MPEG+DLNA Player");
 
-    // *TODO* - setting rank + 1 forces this element to get selected as src by playsrc2
+    // *TODO* - setting  + 1 forces this element to get selected as src by playsrc2
 	return gst_element_register ((GstPlugin *)dlna_src, "dlnasrc",
-	GST_RANK_PRIMARY+1, GST_TYPE_DLNA_SRC);
-	//		GST_RANK_PRIMARY, GST_TYPE_DLNA_SRC);
+				GST_RANK_PRIMARY+1, GST_TYPE_DLNA_SRC);
+	//		GST_PRIMARY-1, GST_TYPE_DLNA_SRC);
 }
 
 
@@ -2648,7 +3202,6 @@ gst_play_marshal_BOXED__OBJECT_BOXED (GClosure *closure,
 	}
 	callback = (GMarshalFunc_BOXED__OBJECT_BOXED)
     		(marshal_data ? marshal_data : cc->callback);
-
 	v_return = callback (data1,
 			g_marshal_value_peek_object (param_values + 1),
 			g_marshal_value_peek_boxed (param_values + 2),

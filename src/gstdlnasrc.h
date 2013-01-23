@@ -89,9 +89,12 @@ struct _GstDlnaSrcHeadResponse
 	const gchar* time_seek_hdr;
 	gint time_seek_idx;
 
-	gchar* time_seek_npt_start;
-	gchar* time_seek_npt_end;
-	gchar* time_seek_npt_duration;
+	gchar* time_seek_npt_start_str;
+	gchar* time_seek_npt_end_str;
+	gchar* time_seek_npt_duration_str;
+	guint64 time_seek_npt_start;
+	guint64 time_seek_npt_end;
+	guint64 time_seek_npt_duration;
 	gint npt_seek_idx;
 
 	guint64 byte_seek_start;
