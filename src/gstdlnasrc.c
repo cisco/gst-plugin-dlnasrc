@@ -76,7 +76,7 @@ static const char* HEAD_RESPONSE_HDRS[] = {
 		"HTTP/",					// 0
 		"VARY", 					// 1
 		"TIMESEEKRANGE.DLNA.ORG", 	// 2
-		"TRANSFERMODE.DLNA.ORG",	// 3	// {"BYTES", BYTE_RANGE_TYPE},
+		"TRANSFERMODE.DLNA.ORG",	// 3
 		"DATE", 					// 4
 		"CONTENT-TYPE",				// 5
 		"SERVER", 					// 6
@@ -251,7 +251,7 @@ static gboolean dlna_src_head_response_init_struct(GstDlnaSrc *dlna_src);
 
 static gboolean dlna_src_head_response_struct_to_str(GstDlnaSrc *dlna_src);
 
-static gboolean dlna_src_handle_event_seek(GstDlnaSrc *dlna_src, GstEvent* event);
+static gboolean dlna_src_handle_event_seek(GstDlnaSrc *dlna_src, GstPad* pad, GstEvent* event);
 
 static gboolean dlna_src_handle_query_duration(GstDlnaSrc *dlna_src, GstQuery *query);
 
@@ -259,18 +259,27 @@ static gboolean dlna_src_handle_query_seeking(GstDlnaSrc *dlna_src, GstQuery *qu
 
 static gboolean dlna_src_handle_query_segment(GstDlnaSrc *dlna_src, GstQuery *query);
 
-static gboolean dlna_src_change_request(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start);
+//static gboolean dlna_src_change_request(GstDlnaSrc *dlna_src);
+static gpointer dlna_src_change_request(gpointer dlna_src);
 
 static gboolean dlna_src_is_change_valid(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start);
 
 static gboolean dlna_src_is_rate_supported(GstDlnaSrc *dlna_src, gfloat rate);
 
+static gboolean dlna_src_find_pipeline_and_bus(GstDlnaSrc *dlna_src);
+
 static gboolean dlna_src_flush_pipeline(GstDlnaSrc *dlna_src);
+
+static gboolean dlna_src_set_pipeline_state(GstDlnaSrc *dlna_src, GstState desired_state, int timeout_secs);
 
 static gboolean dlna_src_formulate_extra_headers(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format,
 												 guint64 start, GstStructure* headers);
 
 static gboolean dlna_src_npt_to_nanos(GstDlnaSrc *dlna_src, gchar* string, guint64* media_time_nanos);
+
+static void dlna_src_send_event(GstDlnaSrc *dlna_src, GstEvent* event);
+
+gboolean event_probe(GstPad *pad, GstEvent *event, gpointer u_data);
 
 
 //static gboolean dlna_src_post_error(GstDlnaSrc *dlna_src, const gchar* errMsg);
@@ -552,7 +561,7 @@ gst_dlna_src_src_event(GstPad    *pad,
 	{
 
 	case GST_EVENT_SEEK:
-		ret = dlna_src_handle_event_seek(dlna_src, event);
+		ret = dlna_src_handle_event_seek(dlna_src, pad, event);
 		if (!ret)
 		{
 			ret = gst_pad_event_default (pad, event);
@@ -570,6 +579,12 @@ gst_dlna_src_src_event(GstPad    *pad,
 		break;
 
 	case GST_EVENT_LATENCY:
+		// Just call the default handler
+		ret = gst_pad_event_default (pad, event);
+		break;
+
+	case GST_EVENT_FLUSH_START:
+		GST_INFO_OBJECT(dlna_src, "Got src event: %s", GST_EVENT_TYPE_NAME(event));
 		// Just call the default handler
 		ret = gst_pad_event_default (pad, event);
 		break;
@@ -659,7 +674,7 @@ static gboolean dlna_src_handle_query_duration(GstDlnaSrc *dlna_src, GstQuery *q
     if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
     	(dlna_src->head_response->content_features == NULL))
     {
-		GST_INFO_OBJECT(dlna_src, "No URI and/or HEAD response info, unable to handle query");
+		GST_ERROR_OBJECT(dlna_src, "No URI and/or HEAD response info, unable to handle query");
     	return FALSE;
     }
 
@@ -729,7 +744,7 @@ static gboolean dlna_src_handle_query_seeking(GstDlnaSrc *dlna_src, GstQuery *qu
     if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
     	(dlna_src->head_response->content_features == NULL))
     {
-		GST_INFO_OBJECT(dlna_src, "No URI and/or HEAD response info, unable to handle query");
+		GST_ERROR_OBJECT(dlna_src, "No URI and/or HEAD response info, unable to handle query");
     	return FALSE;
     }
 
@@ -802,7 +817,7 @@ static gboolean dlna_src_handle_query_segment(GstDlnaSrc *dlna_src, GstQuery *qu
     if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
     	(dlna_src->head_response->content_features == NULL))
     {
-		GST_INFO_OBJECT(dlna_src, "No URI and/or HEAD response info, unable to handle query");
+		GST_ERROR_OBJECT(dlna_src, "No URI and/or HEAD response info, unable to handle query");
     	return FALSE;
     }
 
@@ -864,8 +879,10 @@ static gboolean dlna_src_handle_query_segment(GstDlnaSrc *dlna_src, GstQuery *qu
  * @return	true if this event has been handled, false otherwise
  */
 static gboolean
-dlna_src_handle_event_seek(GstDlnaSrc *dlna_src, GstEvent* event)
+dlna_src_handle_event_seek(GstDlnaSrc *dlna_src, GstPad* pad, GstEvent* event)
 {
+	GST_INFO_OBJECT(dlna_src, "Handle seek event");
+
 	gdouble rate;
 	GstFormat format;
 	GstSeekFlags flags;
@@ -878,11 +895,12 @@ dlna_src_handle_event_seek(GstDlnaSrc *dlna_src, GstEvent* event)
     if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
     	(dlna_src->head_response->content_features == NULL))
     {
-		GST_INFO_OBJECT(dlna_src, "No URI and/or HEAD response info, unable to handle event");
+		GST_ERROR_OBJECT(dlna_src, "No URI and/or HEAD response info, unable to handle event");
     	return FALSE;
     }
 
 	// Parse event received
+    // *TODO* - start is a gint64 here but need a guint64????
 	gst_event_parse_seek(event, &rate, (GstFormat*)&format,
 	                     (GstSeekFlags*)&flags, (GstSeekType*)&start_type,
 	                     (gint64*)&start, (GstSeekType*)&stop_type, (gint64*)&stop);
@@ -915,8 +933,48 @@ dlna_src_handle_event_seek(GstDlnaSrc *dlna_src, GstEvent* event)
 	// *TODO* - need check to see if any of these flags will not be satisfied
 	// since any seek event on this element will initiate a new HTTP GET request
 
-	// Determine start position
+	// Verify requested change is valid
+	if (!dlna_src_is_change_valid(dlna_src, rate, format, start))
+	{
+		GST_ERROR_OBJECT(dlna_src, "Requested change is invalid");
+		return FALSE;
+	}
 
+	// Do this in a separate thread???
+	dlna_src->requested_rate = rate;
+	dlna_src->requested_format = format;
+	dlna_src->requested_start = start;
+	dlna_src->requested_pad = pad;
+	if (1)
+	{
+		(void)g_thread_new("change_request", (GThreadFunc)dlna_src_change_request, (gpointer)dlna_src);
+
+		/*
+		// Find pipeline element if NULL
+		if (dlna_src->pipeline == NULL)
+		{
+			if (!dlna_src_find_pipeline_and_bus(dlna_src))
+			{
+				GST_ERROR_OBJECT(dlna_src, "Unable to find pipeline and/or bus");
+				return FALSE;
+			}
+		}
+		// Set URI on playbin and see if things get reset
+		GST_INFO_OBJECT(dlna_src, "Setting new URI for playbin2");
+		g_object_set(G_OBJECT(dlna_src->pipeline), "uri", dlna_src->uri, NULL);
+		*/
+	}
+	else
+	{
+		// Any seek event will result in a new HTTP request
+		if (!dlna_src_change_request((gpointer)dlna_src))
+		{
+			GST_ERROR_OBJECT(dlna_src, "Problems sending new HTTP request in response to seek event");
+			return FALSE;
+		}
+	}
+
+	GST_INFO_OBJECT(dlna_src, "Returning TRUE for handle seek event");
 	return TRUE;
 }
 
@@ -929,64 +987,66 @@ dlna_src_handle_event_seek(GstDlnaSrc *dlna_src, GstEvent* event)
  *
  *  @return	TRUE if new rate is successfully requested, false otherwise
  */
-static gboolean
-dlna_src_change_request(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start)
+static gpointer
+dlna_src_change_request(gpointer data)
 {
+	GstDlnaSrc *dlna_src = data;
 	GST_INFO_OBJECT(dlna_src, "Requesting change to streaming");
 
 	GstStructure* extra_hdrs_struct = NULL;
 
-	// Verify requested change is valid
-	if (!dlna_src_is_change_valid(dlna_src, rate, format, start))
-	{
-		GST_ERROR_OBJECT(dlna_src, "Requested change is invalid");
-		return FALSE;
-	}
+	//You can also set the next URI within the "about-to-finish" signal
+	//handler, then playbin2 will pre-roll it in advance and will continue
+	//playing without the need to set it back to READY/NULL state first.
 
 	// Prepare pipeline for changes
 	if (!dlna_src_flush_pipeline(dlna_src))
 	{
 		GST_ERROR_OBJECT(dlna_src, "Problems flushing pipeline");
-		return FALSE;
+		return NULL;
 	}
 
 	// Get extra headers to include in new request
-	if (!dlna_src_formulate_extra_headers(dlna_src, rate, format, start, extra_hdrs_struct))
+	if (!dlna_src_formulate_extra_headers(dlna_src, dlna_src->requested_rate,
+			dlna_src->requested_format, dlna_src->requested_start, extra_hdrs_struct))
 	{
 		GST_ERROR_OBJECT(dlna_src, "Problem getting extra headers");
-		return FALSE;
+		return NULL;
 	}
 
 	GValue struct_value = { 0 };
 	g_value_init(&struct_value, GST_TYPE_STRUCTURE);
 	gst_value_set_structure(&struct_value, extra_hdrs_struct);
 	// *TODO* - is this necessary????
-    //gst_structure_free(extra_hdrs_struct);
 
-	GST_INFO_OBJECT(dlna_src, "setting state of http src to NULL");
-	gst_element_set_state(dlna_src->http_src, GST_STATE_NULL);
+	//gst_structure_free(extra_hdrs_struct);
+	GST_INFO_OBJECT(dlna_src, "setting URI of playbin2 to force new request");
+	g_object_set(G_OBJECT(dlna_src->pipeline), "uri", dlna_src->uri, NULL);
 
 	GST_INFO_OBJECT(dlna_src, "setting extra headers of http src property");
 	g_object_set_property(G_OBJECT(dlna_src->http_src), "extra-headers", &struct_value);
 	GST_INFO_OBJECT(dlna_src, "set extra hdrs of http src");
 
-	GST_INFO_OBJECT(dlna_src, "setting URI of http src to force new request");
-	g_object_set(G_OBJECT(dlna_src->http_src), "location", dlna_src->uri, NULL);
+	//GST_INFO_OBJECT(dlna_src, "setting URI of http src to force new request");
+	//g_object_set(G_OBJECT(dlna_src->http_src), "location", dlna_src->uri, NULL);
 
 	// *TODO* - need to figure out what to do so that http src issues new request
 	// with new headers - does this do it????
 
-	GST_INFO_OBJECT(dlna_src, "Resuming http soup src");
-	gst_element_set_state(dlna_src->http_src, GST_STATE_PLAYING);
+	//GST_INFO_OBJECT(dlna_src, "Resuming http soup src");
+	//gst_element_set_state(dlna_src->http_src, GST_STATE_PLAYING);
+	GST_INFO_OBJECT(dlna_src, "Waiting 5 secs to resume pipeline");
+    g_usleep(1000000L * 5L);
 
-	// Get parent which will be playbin2
-	GstElement* playbin2 = (GstElement*)gst_element_get_parent(dlna_src);
-
-	// Set playbin state back to playing
+    // Set pipeline state back to playing
 	GST_INFO_OBJECT(dlna_src, "Resuming pipeline");
-	gst_element_set_state(playbin2, GST_STATE_PLAYING);
+	if (!dlna_src_set_pipeline_state(dlna_src, GST_STATE_PLAYING, 10))
+	{
+		GST_ERROR_OBJECT(dlna_src, "Problems resuming pipeline to playing state");
+		return NULL;
+	}
 
-	return TRUE;
+	return NULL;
 }
 
 /**
@@ -996,7 +1056,7 @@ static gboolean
 dlna_src_is_change_valid(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start)
 {
 	// Check if supplied rate is supported
-	if (dlna_src_is_rate_supported(dlna_src, rate))
+	if ((rate == 1.0) || (dlna_src_is_rate_supported(dlna_src, rate)))
 	{
 		GST_INFO_OBJECT(dlna_src, "New rate of %4.1f is supported by server", rate);
 	}
@@ -1087,13 +1147,40 @@ dlna_src_is_rate_supported(GstDlnaSrc *dlna_src, gfloat rate)
 static gboolean
 dlna_src_flush_pipeline(GstDlnaSrc *dlna_src)
 {
-	// Get parent which will be playbin2
-	GstElement* playbin2 = (GstElement*)gst_element_get_parent(dlna_src);
+	GST_INFO_OBJECT(dlna_src, "Requesting change to streaming");
+
+	// Find pipeline element if NULL
+	if (dlna_src->pipeline == NULL)
+	{
+		if (!dlna_src_find_pipeline_and_bus(dlna_src))
+		{
+			GST_ERROR_OBJECT(dlna_src, "Unable to find pipeline and/or bus");
+			return FALSE;
+		}
+	}
+
+	GstEvent* flush_start = gst_event_new_flush_start();
+	if (flush_start != NULL)
+	{
+		dlna_src_send_event(dlna_src, flush_start);
+	}
+	else
+	{
+		GST_ERROR_OBJECT(dlna_src, "Unable to create flush start event");
+	}
+
+	// Send simple seek event to flush pipeline
+	// Appears to cause an endless loop
+	/*
+	gst_element_seek_simple (dlna_src->pipeline, GST_FORMAT_TIME,
+			GST_SEEK_FLAG_FLUSH, 0);
+	*/
 
 	// *TODO* - is this ok to do here while handling a seek event???
 	// Send EOS, flush start & flush stop since changing rate
+	/*
 	GstEvent* eos_event = gst_event_new_eos();
-	if (!gst_element_send_event(playbin2, eos_event))
+	if (!gst_element_send_event(dlna_src->pipeline, eos_event))
 	{
 		GST_ERROR_OBJECT(dlna_src, "EOS event was not handled");
 		return FALSE;
@@ -1103,8 +1190,9 @@ dlna_src_flush_pipeline(GstDlnaSrc *dlna_src)
 		GST_INFO_OBJECT(dlna_src, "Sent EOS");
 	}
 
+	// *TODO* - flushing doesn't seem to be handle in playbin2
 	GstEvent* flush_start = gst_event_new_flush_start();
-	if (!gst_element_send_event(playbin2, flush_start))
+	if (!gst_element_send_event(dlna_src->pipeline, flush_start))
 	{
 		GST_ERROR_OBJECT(dlna_src, "Flush start event was not handled");
 		return FALSE;
@@ -1115,7 +1203,7 @@ dlna_src_flush_pipeline(GstDlnaSrc *dlna_src)
 	}
 
 	GstEvent* flush_stop = gst_event_new_flush_stop();
-	if (!gst_element_send_event(playbin2, flush_stop))
+	if (!gst_element_send_event(dlna_src->pipeline, flush_stop))
 	{
 		GST_ERROR_OBJECT(dlna_src, "Flush stop event was not handled");
 		return FALSE;
@@ -1124,11 +1212,261 @@ dlna_src_flush_pipeline(GstDlnaSrc *dlna_src)
 	{
 		GST_INFO_OBJECT(dlna_src, "Sent Flush stop");
 	}
+	GST_INFO_OBJECT(dlna_src, "pausing pipeline to change stream");
+*/
+	/*
+	GST_INFO_OBJECT(dlna_src, "setting state of http src to READY");
+	GstStateChangeReturn ret = gst_element_set_state(dlna_src->http_src, GST_STATE_READY);
+    if (ret != GST_STATE_CHANGE_SUCCESS)
+    {
+		GST_INFO_OBJECT(dlna_src, "Problems setting http src to READY state");
+    	return TRUE;
+    }
+	*/
 
-	GST_INFO_OBJECT(dlna_src, "pausing playbin2 to change stream");
-	gst_element_set_state(playbin2, GST_STATE_PAUSED);
+	// Create a seek simple seek with flushing flag to see if this
+
+	// *TODO* - can't set it to READY since this causes the pipeline to be torn down
+	// But google search says set to ready, set uri, and then back to playing
+	//if (!dlna_src_set_pipeline_state(dlna_src, GST_STATE_READY, 10))
+	if (!dlna_src_set_pipeline_state(dlna_src, GST_STATE_PAUSED, 10))
+	{
+		GST_ERROR_OBJECT(dlna_src, "Unable to set pipeline state to READY");
+		return FALSE;
+	}
 
 	return TRUE;
+}
+
+static void dlna_src_send_event(GstDlnaSrc *dlna_src, GstEvent* event)
+{
+    // Save a pointer to the event name since the gst_pad_send_event takes
+    // ownership of the event, making it unavailable for later reference
+    const gchar* pEventName = GST_EVENT_TYPE_NAME(event);
+
+	if (dlna_src->pipeline == NULL)
+	{
+		if (!dlna_src_find_pipeline_and_bus(dlna_src))
+		{
+			GST_ERROR_OBJECT(dlna_src, "Unable to find pipeline and/or bus");
+			return;
+		}
+	}
+
+	// Print out all elements currently in playbin
+	GstIterator* it = gst_bin_iterate_elements(GST_BIN(dlna_src->pipeline));
+	gboolean done = FALSE;
+	gpointer item;
+	while (!done)
+	{
+		GST_INFO_OBJECT(dlna_src, "Calling iterator");
+		switch (gst_iterator_next (it, &item))
+		{
+		case GST_ITERATOR_OK:
+			GST_INFO_OBJECT(dlna_src, "Got playbin element: %s",
+					GST_ELEMENT_NAME(GST_ELEMENT(item)));
+			//g_value_reset (item);
+			break;
+		case GST_ITERATOR_RESYNC:
+			gst_iterator_resync (it);
+			break;
+		case GST_ITERATOR_ERROR:
+			GST_ERROR_OBJECT(dlna_src, "Unable to iterate through elements");
+			done = TRUE;
+			break;
+		case GST_ITERATOR_DONE:
+			done = TRUE;
+			break;
+		}
+	}
+
+	// Get the sink pad on this element
+	GstPad* start_pad = gst_element_get_static_pad(dlna_src->http_src, "src");
+    if (start_pad == NULL)
+    {
+		GST_ERROR_OBJECT(dlna_src, "Unable to send event since source pad is NULL");
+        return;
+    }
+
+    GstElement* video_sink = NULL;
+    GstPad* sink_pad = NULL;
+	g_object_get(G_OBJECT(dlna_src->pipeline), "video_sink", &video_sink, NULL);
+	if (video_sink != NULL)
+	{
+		GST_INFO_OBJECT(dlna_src, "Getting sink pad of video sink element %s",
+				GST_ELEMENT_NAME(video_sink));
+		sink_pad = gst_element_get_static_pad(video_sink, "sink");
+	}
+	else
+	{
+		GST_ERROR_OBJECT(dlna_src, "Unable to get video sink element");
+		return;
+	}
+    if (sink_pad == NULL)
+    {
+		GST_ERROR_OBJECT(dlna_src, "Unable to send event since destination pad is NULL");
+        return;
+    }
+
+    GTimeVal timeout = { 0, 0 };
+    gboolean cond_signalled = TRUE;
+    g_get_current_time(&timeout);
+    g_time_val_add(&timeout, 10 * 1000); // timeout is in msec, function expects usec
+
+    // Initialize the flag to indicate event has not yet been received
+    dlna_src->event_received = FALSE;
+
+    // Add probe on sink pad to monitor for event
+    dlna_src->event_probe = gst_pad_add_event_probe(sink_pad, G_CALLBACK(event_probe), dlna_src->pipeline);
+    GST_INFO_OBJECT(dlna_src, "Sending event %s through pipeline\n", pEventName);
+
+    (void)gst_pad_send_event(start_pad, event);
+
+    gint64 end_time = g_get_monotonic_time () + 5 * G_TIME_SPAN_SECOND;
+
+    while (FALSE == dlna_src->event_received && TRUE == cond_signalled)
+    {
+    	if (!g_cond_wait_until(&dlna_src->event_cond, &dlna_src->event_mutex, end_time))
+    	{
+    		// timeout has passed.
+    		break;
+     	}
+    }
+
+    // If out of the loop but flag is still set, report problems with event
+    if (FALSE == dlna_src->event_received)
+    {
+    	GST_ERROR_OBJECT(dlna_src, "pipeline event %s never received\n", pEventName);
+    }
+
+    // Unref the objects which were ref'd through method calls
+    gst_object_unref(sink_pad);
+    gst_object_unref(start_pad);
+}
+
+gboolean event_probe(GstPad *pad, GstEvent *event, gpointer u_data)
+{
+    gboolean retVal = TRUE;
+
+    GstDlnaSrc* dlna_src = u_data;
+	//GST_INFO_OBJECT(dlna_src, "Event probe called");
+
+    switch GST_EVENT_TYPE(event)
+    {
+        case GST_EVENT_FLUSH_START:
+        case GST_EVENT_FLUSH_STOP:
+        case GST_EVENT_EOS:
+
+        GST_INFO_OBJECT(dlna_src, "Got event %s, setting flag to true",
+        			GST_EVENT_TYPE_NAME (event));
+
+        // Clear flag to indicate event received if waiting for event
+        if (FALSE == dlna_src->event_received)
+        {
+            dlna_src->event_received = TRUE;
+            g_cond_signal(&dlna_src->event_cond);
+
+            // Remove the event pad probe
+            gst_pad_remove_event_probe(pad, dlna_src->event_probe);
+        }
+        // return true so event keeps on flowing
+        break;
+
+        default:
+        // ignore any other events
+        break;
+    }
+
+	//GST_INFO_OBJECT(dlna_src, "Event probe exit");
+    return retVal;
+}
+
+/**
+ *
+ */
+static gboolean dlna_src_set_pipeline_state(GstDlnaSrc *dlna_src, GstState desired_state, int timeout_secs)
+{
+	if (dlna_src->pipeline == NULL)
+	{
+		if (!dlna_src_find_pipeline_and_bus(dlna_src))
+		{
+			GST_ERROR_OBJECT(dlna_src, "Unable to find pipeline and/or bus");
+			return FALSE;
+		}
+	}
+
+    GstStateChangeReturn ret = gst_element_set_state(dlna_src->pipeline, desired_state);
+
+    if (ret == GST_STATE_CHANGE_SUCCESS)
+    {
+		GST_INFO_OBJECT(dlna_src, "Successfully set pipeline to desired state: %s",
+				gst_element_state_get_name(desired_state));
+    	return TRUE;
+    }
+    else if (ret == GST_STATE_CHANGE_FAILURE)
+    {
+    	GST_ERROR_OBJECT(dlna_src, "Failed to set the pipeline to desired state");
+    	return FALSE;
+    }
+    else if (ret == GST_STATE_CHANGE_ASYNC)
+    {
+    	GST_INFO_OBJECT(dlna_src, "State change is async, wait %d secs for state %s\n",
+    			timeout_secs, gst_element_state_get_name(desired_state));
+        int maxCnt = timeout_secs;
+        int curCnt = 0;
+        GstState state = GST_STATE_NULL;
+        do
+        {
+             ret = gst_element_get_state(dlna_src->pipeline,
+                    &state, // state
+                    NULL, // pending
+                    100000000LL); // timeout(1 second = 10^9 nanoseconds)
+         	if (!dlna_src_set_pipeline_state(dlna_src, GST_STATE_PAUSED, 10))
+         											{
+         												GST_ERROR_OBJECT(dlna_src, "Unable to set pipeline state to READY");
+         												return FALSE;
+         											}
+             if (ret == GST_STATE_CHANGE_SUCCESS)
+             {
+         		GST_INFO_OBJECT(dlna_src, "Pipeline transitioned into desired state: %s",
+         				gst_element_state_get_name(desired_state));
+             	return TRUE;
+             }
+             else if (ret == GST_STATE_CHANGE_FAILURE)
+             {
+            	 GST_ERROR_OBJECT(dlna_src, "Pipeline failed to transistion into desired state: %s",
+            			 gst_element_state_get_name(desired_state));
+                 return FALSE;
+             }
+             else if (ret == GST_STATE_CHANGE_ASYNC)
+             {
+            	 GST_LOG_OBJECT(dlna_src, "Time out in loop waiting for state change\n");
+             }
+             else
+             {
+               	 GST_ERROR_OBJECT(dlna_src, "Unknown async state change return value: %d\n", ret);
+                 return FALSE;
+             }
+             curCnt++;
+
+            if (state != desired_state)
+            {
+                // Sleep for a million mircoseconds = 1 second
+                g_usleep(1000000L);
+            }
+        }
+        while ((desired_state != state) && (curCnt < maxCnt));
+     }
+    else
+    {
+      	 GST_ERROR_OBJECT(dlna_src, "Unknown state change return value: %d\n", ret);
+      	 return FALSE;
+    }
+
+    // If we got here without returning, we timed out
+  	 GST_ERROR_OBJECT(dlna_src, "Did not reach desired state of %s in %d seconds",
+  			gst_element_state_get_name(desired_state), timeout_secs);
+    return FALSE;
 }
 
 /**
@@ -1149,29 +1487,33 @@ dlna_src_formulate_extra_headers(GstDlnaSrc *dlna_src, gfloat rate, GstFormat fo
 
 	gchar* br_field_name = "Range";
 	gchar* br_field_value_prefix = "bytes = ";
-	gchar br_field_value[64];
-
-	// Get string representation of rate
-	int i = 0;
-	char* rateStr = NULL;
-	for (i = 0; i < dlna_src->head_response->content_features->playspeeds_cnt; i++)
+	gchar br_field_value[64];	if (!dlna_src_set_pipeline_state(dlna_src, GST_STATE_PAUSED, 10))
 	{
-		if (dlna_src->head_response->content_features->playspeeds[i] == rate)
-		{
-			rateStr = dlna_src->head_response->content_features->playspeed_strs[i];
-			break;
-		}
-	}
-
-	if (rateStr == NULL)
-	{
-		GST_ERROR_OBJECT(dlna_src, "Unable to get string representation of rate: %lf", rate);
+		GST_ERROR_OBJECT(dlna_src, "Unable to set pipeline state to READY");
 		return FALSE;
 	}
 
 	// Setup header to request playspeed, only necessary if rate is not 1
 	if (rate != 1.0)
 	{
+		// Get string representation of rate
+		int i = 0;
+		char* rateStr = NULL;
+		for (i = 0; i < dlna_src->head_response->content_features->playspeeds_cnt; i++)
+		{
+			if (dlna_src->head_response->content_features->playspeeds[i] == rate)
+			{
+				rateStr = dlna_src->head_response->content_features->playspeed_strs[i];
+				break;
+			}
+		}
+
+		if (rateStr == NULL)
+		{
+			GST_ERROR_OBJECT(dlna_src, "Unable to get string representation of rate: %lf", rate);
+			return FALSE;
+		}
+
 		sprintf((gchar*)&ps_field_value[0], "%s%s", ps_field_value_prefix, rateStr);
 		GST_INFO_OBJECT(dlna_src, "Set playspeed header value: %s", ps_field_value);
 	}
@@ -1182,7 +1524,11 @@ dlna_src_formulate_extra_headers(GstDlnaSrc *dlna_src, gfloat rate, GstFormat fo
 
 	if (GST_FORMAT_BYTES == format)
 	{
-		// Include range header if format is bytes
+		// Include range header if format is bytes	if (!dlna_src_set_pipeline_state(dlna_src, GST_STATE_PAUSED, 10))
+		{
+			GST_ERROR_OBJECT(dlna_src, "Unable to set pipeline state to READY");
+			return FALSE;
+		}
 		sprintf((gchar*)&br_field_value[0], "%s%llu-", br_field_value_prefix, start);
 		GST_INFO_OBJECT(dlna_src, "Set range header value: %s", br_field_value);
 
@@ -3020,22 +3366,13 @@ dlna_src_npt_to_nanos(GstDlnaSrc *dlna_src, gchar* string, guint64* media_time_n
     return ret;
 }
 
-/**
- * Report an error on bus
- *
- * @param	dlna_src	this element
- * @param	errMsg		error message to post
- *
- * @return	result
- */
-/*
-static gboolean
-dlna_src_post_error(GstDlnaSrc *dlna_src, const gchar* errMsg)
+static gboolean dlna_src_find_pipeline_and_bus(GstDlnaSrc *dlna_src)
 {
-	gboolean rc = FALSE;
-	GST_INFO_OBJECT(dlna_src, "Posting error msg on bus");
-    GstObject* obj = (GstObject*)dlna_src;
+    gboolean found = FALSE;
+	GstObject* obj = (GstObject*)dlna_src;
     GstObject* parent = obj;        // Ensure initialized to non-NULL
+
+	GST_INFO_OBJECT(dlna_src, "Discover pipeline element");
 
 	if (dlna_src->pipeline == NULL)
 	{
@@ -3062,8 +3399,30 @@ dlna_src_post_error(GstDlnaSrc *dlna_src, const gchar* errMsg)
 		{
 			dlna_src->bus = gst_element_get_bus(dlna_src->pipeline);
 		}
+		found = TRUE;
+	}
+	else
+	{
+		found = FALSE;
 	}
 
+	return found;
+}
+
+/**
+ * Report an error on bus
+ *
+ * @param	dlna_src	this element
+ * @param	errMsg		error message to post
+ *
+ * @return	result
+ */
+/*landerson@landerson-Latitude-E6420:~$
+ *
+static gboolean
+dlna_src_post_error(GstDlnaSrc *dlna_src, const gchar* errMsg)
+{
+	gboolean rc = FALSE;
 	if (dlna_src->bus != NULL)
 	{
 		rc = gst_bus_post(dlna_src->bus,
@@ -3071,8 +3430,28 @@ dlna_src_post_error(GstDlnaSrc *dlna_src, const gchar* errMsg)
 	}
 	else
 	{
-		GST_ERROR_OBJECT(dlna_src, "Unable to retrieve bus to post error");
+		GST_ERROR_OBJECT(dlna_src, "Unable to retrieve bus to post error");landerson@landerson-Latitude-E6420:~$
+
+	}	if (dlna_src->pipeline == NULL)
+	{
+	    // NULL parent is indicator we are done
+	    while (NULL != parent)
+	    {
+	        parent = GST_OBJECT_PARENT(obj);
+	        if (NULL == parent)
+	        {
+	            // Found pipeline
+	            dlna_src->pipeline = (GstElement*)obj;
+	            break;
+	        }
+	        else
+	        {
+	            // Move one step higher in the hierarchy
+	            obj = parent;
+	        }
+	    }
 	}
+
 
 	return rc;
 }

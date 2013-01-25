@@ -70,6 +70,16 @@ struct _GstDlnaSrc
 
 	// indication if the pipeline is live
 	//gboolean is_live;
+
+	// Requested change info
+	gfloat requested_rate;
+	GstFormat requested_format;
+	guint requested_start;
+	GstPad* requested_pad;
+	gboolean event_received;
+    GMutex event_mutex;
+    GCond event_cond;
+    gulong event_probe;
 };
 
 struct _GstDlnaSrcHeadResponse
