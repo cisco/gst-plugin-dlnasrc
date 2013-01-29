@@ -12,6 +12,7 @@ static gboolean usePlaybin = FALSE;
 static gboolean test_positioning = FALSE;
 static gboolean test_uri_switch = FALSE;
 static gboolean test_rate_change = FALSE;
+static gboolean test_seeking = FALSE;
 
 
 /* Structure to contain all our information, so we can pass it around */
@@ -36,6 +37,11 @@ static void handle_message (CustomData *data, GstMessage *msg);
 static void perform_positioning(CustomData* data);
 static void perform_rate_change(CustomData* data);
 static void perform_uri_switch(CustomData* data);
+static void perform_seek(CustomData* data);
+
+static void log_bin_elements(GstBin* bin);
+static gboolean set_pipeline_state(CustomData* data, GstState desired_state, gint timeoutSecs);
+static gboolean set_new_uri(CustomData* data);
 
 /**
  * Test program for playspeed testing
@@ -96,8 +102,8 @@ int main(int argc, char *argv[])
 	}
 
 	// Start playing
-	ret = gst_element_set_state (data.pipeline, GST_STATE_PLAYING);
-	if (ret == GST_STATE_CHANGE_FAILURE)
+	g_print("Pipeline created, start playing\n");
+	if (!set_pipeline_state(&data, GST_STATE_PLAYING, 30))
 	{
 		g_printerr ("Unable to set the pipeline to the playing state.\n");
 		return -1;
@@ -107,7 +113,11 @@ int main(int argc, char *argv[])
 		g_print("Pipeline in playing state\n");
 	}
 
+	// Print out elements in playbin
+	log_bin_elements(GST_BIN(data.pipeline));
+
 	// Perform requested testing
+	g_print("Begin pipeline test\n");
 	if (test_positioning)
 	{
 		perform_positioning(&data);
@@ -120,18 +130,18 @@ int main(int argc, char *argv[])
 	{
 		perform_uri_switch(&data);
 	}
+	else if (test_seeking)
+	{
+		perform_seek(&data);
+	}
 	else
 	{
 		g_print("Testing 1x playback\n");
 		bus = gst_element_get_bus (data.pipeline);
 		msg = gst_bus_timed_pop_filtered (bus,
 				GST_CLOCK_TIME_NONE, GST_MESSAGE_ERROR | GST_MESSAGE_EOS);
+		gst_object_unref (bus);
 	}
-
-	// Close down
-	gst_object_unref (bus);
-	gst_element_set_state (data.pipeline, GST_STATE_NULL);
-	gst_object_unref (data.pipeline);
 	return 0;
 }
 
@@ -268,12 +278,12 @@ static void perform_rate_change(CustomData* data)
 	if ((requested_rate == 0) && (waitSecs != 0))
 	{
 		g_print("Pausing pipeline for %d secs due to rate=0 & wait!=0\n", waitSecs);
-		gst_element_set_state (data->pipeline, GST_STATE_PAUSED);
+		set_pipeline_state (data, GST_STATE_PAUSED, 10);
 
 		g_usleep(secs * 1000000L);
 
 		g_print("Resuming pipeline after %d sec pause\n", waitSecs);
-		gst_element_set_state (data->pipeline, GST_STATE_PLAYING);
+		set_pipeline_state (data, GST_STATE_PLAYING, 15);
 	}
 	gboolean done = FALSE;
 
@@ -311,30 +321,123 @@ static void perform_uri_switch(CustomData* data)
 	GstMessage *msg;
 	GstStateChangeReturn ret;
 
-	ret = gst_element_set_state (data->pipeline, GST_STATE_PAUSED);
-
 	// Wait for 10 seconds for playback to start up
 	long secs = waitSecs;
 	g_print("Waiting %ld secs for startup prior to switching uri\n", secs);
 	g_usleep(secs * 1000000L);
 
-	// Set URI on playbin and see if things get reset
-	gchar new_uri[256];
-	new_uri[0] = '\0';
-	char* line2 = "http://";
-	char* line3 = ":8008/ocaphn/recording?rrid=";
-	char* line4 = "&profile=MPEG_TS_SD_NA_ISO&mime=video/mpeg";
-	sprintf(new_uri, "%s%s%s%d%s", line2, host, line3, 7, line4);
+	if (!set_new_uri(data))
+	{
+		g_print("Problems setting new URI\n");
+		return;
+	}
 
-	g_print("Setting new uri: %s\n", new_uri);
-	g_object_set(G_OBJECT(data->pipeline), "uri", new_uri, NULL);
-
-	g_print("Done setting new uri: %s\n", new_uri);
-	ret = gst_element_set_state (data->pipeline, GST_STATE_PLAYING);
-
+	// Wait for playback to complete
+	g_print("Wait for playback to complete with new URI\n");
+	gint eosCnt = 0;
 	bus = gst_element_get_bus (data->pipeline);
+	gboolean done = FALSE;
+	while (!done)
+	{
+		msg = gst_bus_timed_pop_filtered (bus, GST_CLOCK_TIME_NONE, GST_MESSAGE_ERROR | GST_MESSAGE_EOS);
+		if (msg != NULL)
+		{
+			g_print("Received msg type: %s\n", GST_MESSAGE_TYPE_NAME(msg));
+
+			if (GST_MESSAGE_TYPE(msg) == GST_MESSAGE_ERROR)
+			{
+				GError *err = NULL;
+				gchar *dbg_info = NULL;
+				gst_message_parse_error (msg, &err, &dbg_info);
+				g_print("ERROR from element %s: %s\n",
+						GST_OBJECT_NAME (msg->src), err->message);
+				g_print("Debugging info: %s\n", (dbg_info) ? dbg_info : "none");
+				g_error_free(err);
+				g_free(dbg_info);
+				done = TRUE;
+			}
+			else if (GST_MESSAGE_TYPE(msg) == GST_MESSAGE_EOS)
+			{
+				eosCnt++;
+				if (eosCnt > 1)
+				{
+					g_print("Got EOS\n");
+					done = TRUE;
+				}
+			}
+			gst_message_unref (msg);
+		}
+	}
 	msg = gst_bus_timed_pop_filtered (bus,
 			GST_CLOCK_TIME_NONE, GST_MESSAGE_ERROR | GST_MESSAGE_EOS);
+}
+
+static void perform_seek(CustomData* data)
+{
+	GstEvent* event;
+	GstBus *bus;
+	GstMessage *msg;
+
+	// Wait for 10 seconds for playback to start up
+	long secs = waitSecs;
+	g_print("Waiting %ld secs for startup prior to sending seek event\n", secs);
+	g_usleep(secs * 1000000L);
+
+	// Create the seek event
+	g_print("Creating seek event\n");
+	event = gst_event_new_seek(1.0, GST_FORMAT_TIME,
+			GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE,
+			GST_SEEK_TYPE_SET, 0, GST_SEEK_TYPE_NONE, 0);
+
+	// Sending seek event
+	g_print("Creating seek event\n");
+
+	g_print("Setting new URI on playbin prior to sending seek event\n");
+	if (!set_new_uri(data))
+	{
+		g_print("Problems setting new URI\n");
+		return;
+	}
+	gst_element_send_event(data->pipeline, event);
+
+	// Wait until error or EOS
+	bus = gst_element_get_bus (data->pipeline);
+
+	g_print("Waiting for EOS or ERROR\n");
+	gboolean done = FALSE;
+	gint eosCnt = 0;
+	while (!done)
+	{
+		msg = gst_bus_timed_pop_filtered (bus, GST_CLOCK_TIME_NONE, GST_MESSAGE_ERROR | GST_MESSAGE_EOS);
+		if (msg != NULL)
+		{
+			g_print("Received msg type: %s\n", GST_MESSAGE_TYPE_NAME(msg));
+
+			if (GST_MESSAGE_TYPE(msg) == GST_MESSAGE_ERROR)
+			{
+				GError *err = NULL;
+				gchar *dbg_info = NULL;
+				gst_message_parse_error (msg, &err, &dbg_info);
+				g_print("ERROR from element %s: %s\n",
+						GST_OBJECT_NAME (msg->src), err->message);
+				g_print("Debugging info: %s\n", (dbg_info) ? dbg_info : "none");
+				g_error_free(err);
+				g_free(dbg_info);
+				done = TRUE;
+			}
+			else if (GST_MESSAGE_TYPE(msg) == GST_MESSAGE_EOS)
+			{
+				eosCnt++;
+				g_print("Got EOS %d\n", eosCnt);
+				if (eosCnt > 1)
+				{
+					g_print("Got final EOS\n");
+					done = TRUE;
+				}
+			}
+			gst_message_unref (msg);
+		}
+	}
 }
 
 /**
@@ -343,6 +446,8 @@ static void perform_uri_switch(CustomData* data)
 static void handle_message (CustomData *data, GstMessage *msg)
 {
 	GError *err;
+
+
 	gchar *debug_info;
 	//g_print("Got message type: %s\n", GST_MESSAGE_TYPE_NAME (msg));
 
@@ -499,6 +604,11 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 			test_positioning = TRUE;
 			g_print("Set to test positioning\n");
 		}
+		else if (strstr(argv[i], "seek") != NULL)
+		{
+			test_seeking = TRUE;
+			g_print("Set to test seeking\n");
+		}
 		else
 		{
 			g_printerr("Invalid option: %s\n", argv[i]);
@@ -529,7 +639,14 @@ static GstElement* create_playbin2_pipeline()
 	// to get supported playspeeds just like webkit would do
     g_signal_connect(pipeline, "notify::source", G_CALLBACK(on_source_changed), pipeline);
 
-	return pipeline;
+    // Uncomment this line to limit the amount of downloaded data
+    //g_object_set (pipeline, "ring-buffer-max-size", (guint64)4000000, NULL);
+    g_object_set (pipeline, "ring-buffer-max-size", (guint64)400000, NULL);
+
+    GstElement* fake_sink = gst_element_factory_make ("fakesink", "fakesink");
+    g_object_set (pipeline, "audio-sink", fake_sink, NULL);
+
+    return pipeline;
 }
 
 /**
@@ -673,4 +790,131 @@ static void on_source_changed(GstElement* element, GParamSpec* param, gpointer d
     {
     	g_printerr("Unable to get src from callback\n");
     }
+}
+
+static void log_bin_elements(GstBin* bin)
+{
+	GstIterator* it = gst_bin_iterate_elements(bin);
+	gboolean done = FALSE;
+	gpointer item;
+	while (!done)
+	{
+		switch (gst_iterator_next (it, &item))
+		{
+		case GST_ITERATOR_OK:
+			g_print("Bin %s has element: %s\n",
+				GST_ELEMENT_NAME(GST_ELEMENT(bin)),
+				GST_ELEMENT_NAME(GST_ELEMENT(item)));
+
+			// If this is a bin, log its elements
+			if (GST_IS_BIN(item))
+			{
+				log_bin_elements(GST_BIN(item));
+			}
+			break;
+		case GST_ITERATOR_RESYNC:
+			gst_iterator_resync (it);
+			break;
+		case GST_ITERATOR_ERROR:
+			g_printf("Unable to iterate through elements\n");
+			done = TRUE;
+			break;
+		case GST_ITERATOR_DONE:
+			done = TRUE;
+			break;
+		}
+	}
+}
+
+static gboolean set_pipeline_state(CustomData* data, GstState desired_state, gint timeoutSecs)
+{
+    GstStateChangeReturn ret = gst_element_set_state(GST_ELEMENT(data->pipeline), desired_state);
+    printf("Set state returned: %d\n", ret);
+
+    if (ret == GST_STATE_CHANGE_FAILURE)
+    {
+    	g_printerr ("Unable to set playbin to desired state: %s\n",
+    			gst_element_state_get_name(desired_state));
+    	return FALSE;
+    }
+    if (ret == GST_STATE_CHANGE_ASYNC)
+    {
+        printf("State change is async, calling get state to wait %d secs for state\n",
+        		timeoutSecs);
+        int maxCnt = timeoutSecs;
+        int curCnt = 0;
+        GstState state = GST_STATE_NULL;
+        do
+        {
+             ret = gst_element_get_state(GST_ELEMENT(data->pipeline), // element
+                    &state, // state
+                    NULL, // pending
+                    100000000LL); // timeout(1 second = 10^9 nanoseconds)
+
+             if (ret == GST_STATE_CHANGE_SUCCESS)
+             {
+             	printf("State change succeeded, now in desired state: %s\n",
+             			gst_element_state_get_name(desired_state));
+             	return TRUE;
+             }
+             else if (ret == GST_STATE_CHANGE_FAILURE)
+             {
+                 g_printerr ("State change failed\n");
+                 return FALSE;
+             }
+             else if (ret == GST_STATE_CHANGE_ASYNC)
+             {
+                 g_printerr ("State change time out\n");
+             }
+             else
+             {
+                 g_printerr ("Unknown state change return value: %d\n", ret);
+                 return FALSE;
+             }
+             curCnt++;
+
+             // Sleep for a short time
+             g_usleep(1000000L);
+        }
+        while ((desired_state != state) && (curCnt < maxCnt));
+     }
+ 	g_printerr("Timed out waiting %d secs for desired state: %s\n",
+ 			timeoutSecs, gst_element_state_get_name(desired_state));
+    return FALSE;
+}
+
+static gboolean set_new_uri(CustomData* data)
+{
+	// Formulate a new URI
+	gchar new_uri[256];
+	new_uri[0] = '\0';
+	char* line2 = "http://";
+	char* line3 = ":8008/ocaphn/recording?rrid=";
+	char* line4 = "&profile=MPEG_TS_SD_NA_ISO&mime=video/mpeg";
+	sprintf(new_uri, "%s%s%s%d%s", line2, host, line3, 7, line4);
+
+	// Get source of pipeline which is a playbin2
+	g_print("Getting source of playbin\n");
+	GstElement* dlna_src = NULL;
+	if (data->pipeline != NULL)
+	{
+	    g_object_get(data->pipeline, "source", &dlna_src, NULL);
+		if (dlna_src != NULL)
+		{
+			g_print("Setting new uri: %s\n", new_uri);
+			g_object_set(G_OBJECT(dlna_src), "uri", &new_uri, NULL);
+			g_print("Done setting new uri: %s\n", new_uri);
+		}
+		else
+		{
+			g_printerr("Unable to get source of pipeline to change URI\n");
+			return FALSE;
+		}
+	}
+	else
+	{
+		g_printerr("Unable to change URI due to NULL pipeline\n");
+		return FALSE;
+	}
+	return TRUE;
 }

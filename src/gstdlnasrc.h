@@ -72,6 +72,7 @@ struct _GstDlnaSrc
 	//gboolean is_live;
 
 	// Requested change info
+	gboolean requested_change;
 	gfloat requested_rate;
 	GstFormat requested_format;
 	guint requested_start;
