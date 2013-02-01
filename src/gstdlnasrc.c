@@ -47,7 +47,7 @@ GST_DEBUG_CATEGORY_STATIC (gst_dlna_src_debug);
 //GST_BOILERPLATE (GstDlnaSrc, gst_dlna_src, GstElement, GST_TYPE_BIN);
 static void _do_Init(GType type);
 GST_BOILERPLATE_FULL(GstDlnaSrc, gst_dlna_src, GstElement, GST_TYPE_BIN, _do_Init);
-// GstPushSrc, GST_TYPE_PUSH_SRC, _do_init)
+//GST_BOILERPLATE_FULL(GstDlnaSrc, gst_dlna_src, GstPushSrc, GST_TYPE_PUSH_SRC, _do_init);
 
 /* props */
 enum
@@ -948,9 +948,16 @@ dlna_src_handle_event_seek(GstDlnaSrc *dlna_src, GstPad* pad, GstEvent* event)
 	dlna_src->requested_start = start;
 	dlna_src->requested_pad = pad;
 
-	// Initiate actual change in separate thread so processing of seek event
-	// can be completed
-	(void)g_thread_new("change_request", (GThreadFunc)dlna_src_change_request, (gpointer)dlna_src);
+	if (1)
+	{
+		// Initiate actual change in separate thread so processing of seek event
+		// can be completed
+		(void)g_thread_new("change_request", (GThreadFunc)dlna_src_change_request, (gpointer)dlna_src);
+	}
+	else
+	{
+		dlna_src_change_request(dlna_src);
+	}
 
 	GST_INFO_OBJECT(dlna_src, "Returning TRUE for handle seek event");
 	return TRUE;
@@ -1020,33 +1027,74 @@ dlna_src_change_request(gpointer data)
 	g_object_set_property(G_OBJECT(dlna_src->http_src), "extra-headers", &struct_value);
 	GST_INFO_OBJECT(dlna_src, "set extra hdrs of http src");
 
-	// Set new URI on playbin 2 so it has new URI pending
-	// *TODO* - does this work when it's same URI but extra headers???
-	GST_INFO_OBJECT(dlna_src, "setting URI of playbin2 to force new request");
-	g_object_set(G_OBJECT(dlna_src->pipeline), "uri", dlna_src->uri, NULL);
-
-	// Signal EOS to uridecodebin so it will notify playbin2 that it is drained
-	GstElement* uridecodebin = dlna_src_find_bin_element(dlna_src, GST_BIN(dlna_src->pipeline), "uridecodebin0");
-	if (uridecodebin)
+	if (1)
 	{
-		GST_INFO_OBJECT(dlna_src, "Found uridecodebin element");
 
-		// Send EOS event to uridecodebin
-		GstEvent* eos_event = gst_event_new_eos();
-		if (!gst_element_send_event(uridecodebin, eos_event))
+		// Set new URI on playbin 2 so it has new URI pending
+		// *TODO* - does this work when it's same URI but extra headers???
+		gchar* new_uri = "http://192.168.0.106:8008/ocaphn/recording?rrid=7&profile=MPEG_TS_SD_NA_ISO&mime=video/mpeg";
+
+		GST_INFO_OBJECT(dlna_src, "setting URI of playbin2 to force new request");
+		g_object_set(G_OBJECT(dlna_src->pipeline), "uri", new_uri, NULL);
+
+		GST_INFO_OBJECT(dlna_src, "Creating new segment event");
+
+		// Send new segment event
+		gboolean update = FALSE; // Is this segment an update to a previous one
+		gint64 position = 0;
+		GstEvent* new_seg_event = gst_event_new_new_segment(update,
+												dlna_src->requested_rate,
+												dlna_src->requested_format,
+												dlna_src->requested_start,
+												dlna_src->requested_stop,
+		                                                    position);
+		if (!gst_element_send_event(dlna_src->pipeline, new_seg_event))
 		{
-			GST_ERROR_OBJECT(dlna_src, "EOS event was not handled");
+			GST_ERROR_OBJECT(dlna_src, "New segment event was not handled");
 			return FALSE;
 		}
 		else
 		{
-			GST_INFO_OBJECT(dlna_src, "Sent EOS to uridecodebin");
+			GST_INFO_OBJECT(dlna_src, "Sent new segment event");
+		}
+
+		// Set soup http src state to PLAYING here to start reading new data????
+		if (!dlna_src_set_element_state(dlna_src, dlna_src->http_src, GST_STATE_PLAYING, 20))
+		{
+			GST_ERROR_OBJECT(dlna_src, "Problems setting http src state to PLAYING");
+			return NULL;
 		}
 	}
 	else
 	{
-		GST_ERROR_OBJECT(dlna_src, "Unable to find uridecodebin element");
-		dlna_src_log_bin_elements(dlna_src, GST_BIN(dlna_src->pipeline));
+		// Set new URI on playbin 2 so it has new URI pending
+		// *TODO* - does this work when it's same URI but extra headers???
+		GST_INFO_OBJECT(dlna_src, "setting URI of playbin2 to force new request");
+		g_object_set(G_OBJECT(dlna_src->pipeline), "uri", dlna_src->uri, NULL);
+
+		// Signal EOS to uridecodebin so it will notify playbin2 that it is drained
+		GstElement* uridecodebin = dlna_src_find_bin_element(dlna_src, GST_BIN(dlna_src->pipeline), "uridecodebin0");
+		if (uridecodebin)
+		{
+			GST_INFO_OBJECT(dlna_src, "Found uridecodebin element, sending EOS");
+
+			// Send EOS event to uridecodebin
+			GstEvent* eos_event = gst_event_new_eos();
+			if (!gst_element_send_event(uridecodebin, eos_event))
+			{
+				GST_ERROR_OBJECT(dlna_src, "EOS event was not handled");
+				return FALSE;
+			}
+			else
+			{
+				GST_INFO_OBJECT(dlna_src, "Sent EOS to uridecodebin");
+			}
+		}
+		else
+		{
+			GST_ERROR_OBJECT(dlna_src, "Unable to find uridecodebin element");
+			dlna_src_log_bin_elements(dlna_src, GST_BIN(dlna_src->pipeline));
+		}
 	}
 
 	return NULL;
@@ -3458,7 +3506,7 @@ dlna_src_init (GstPlugin * dlna_src)
     // *TODO* - setting  + 1 forces this element to get selected as src by playsrc2
 	return gst_element_register ((GstPlugin *)dlna_src, "dlnasrc",
 				GST_RANK_PRIMARY+1, GST_TYPE_DLNA_SRC);
-	//		GST_PRIMARY-1, GST_TYPE_DLNA_SRC);
+	//		GST_RANK_PRIMARY-1, GST_TYPE_DLNA_SRC);
 }
 
 /* PACKAGE: this is usually set by autotools depending on some _INIT macro

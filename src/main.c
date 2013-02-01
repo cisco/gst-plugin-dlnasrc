@@ -13,6 +13,9 @@ static gboolean test_positioning = FALSE;
 static gboolean test_uri_switch = FALSE;
 static gboolean test_rate_change = FALSE;
 static gboolean test_seeking = FALSE;
+static gboolean use_file = FALSE;
+//static gchar* file_location = "file:///home/landerson/RUIHRI/git-dlnaplugin/gst-plugin-la/clock.mpg";
+static gchar* file_location = "file:///home/landerson/RUIHRI/git-dlnaplugin/gst-plugin-la/clock_2x.mpg";
 
 
 /* Structure to contain all our information, so we can pass it around */
@@ -385,22 +388,41 @@ static void perform_seek(CustomData* data)
 
 	// Create the seek event
 	g_print("Creating seek event\n");
-	event = gst_event_new_seek(1.0, GST_FORMAT_TIME,
-			GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE,
-			GST_SEEK_TYPE_SET, 0, GST_SEEK_TYPE_NONE, 0);
+	event = gst_event_new_seek(4.0, // new rate
+			//GST_FORMAT_BYTES,
+			GST_FORMAT_TIME, // souphttpsrc doesn't support time based seeks???
+			GST_SEEK_FLAG_FLUSH, // flags - GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE,
+			GST_SEEK_TYPE_SET,
+			0,
+			GST_SEEK_TYPE_NONE,
+			-1);
+	/*
+	 * basesrc gstbasesrc.c:1747:gst_base_src_default_event:<source> handle event seek
+	 *  event from 'sink' at time 99:99:99.999999999: GstEventSeek, rate=(double)4,
+	 *  format=(GstFormat)GST_FORMAT_TIME, flags=(GstSeekFlags)GST_SEEK_FLAG_FLUSH,
+	 *  cur-type=(GstSeekType)GST_SEEK_TYPE_SET, cur=(gint64)0,
+	 *  stop-type=(GstSeekType)GST_SEEK_TYPE_NONE, stop=(gint64)-1;
+	 *
+	 * basesrc gstbasesrc.c:1785:gst_base_src_default_event:<source> is not seekable
+	 *
+	 * basesrc gstbasesrc.c:1819:gst_base_src_event_handler:<source> subclass refused event
+	 */
 
-	// Sending seek event
-	g_print("Creating seek event\n");
-
+	/*
 	g_print("Setting new URI on playbin prior to sending seek event\n");
 	if (!set_new_uri(data))
 	{
 		g_print("Problems setting new URI\n");
 		return;
 	}
+	*/
+
+	// Sending seek event
+	g_print("Sending seek event\n");
 	gst_element_send_event(data->pipeline, event);
 
 	// Wait until error or EOS
+	g_print("Sent seek event, getting bus\n");
 	bus = gst_element_get_bus (data->pipeline);
 
 	g_print("Waiting for EOS or ERROR\n");
@@ -609,6 +631,11 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 			test_seeking = TRUE;
 			g_print("Set to test seeking\n");
 		}
+		else if (strstr(argv[i], "file") != NULL)
+		{
+			use_file = TRUE;
+			g_print("Test using local file rather than URI\n");
+		}
 		else
 		{
 			g_printerr("Invalid option: %s\n", argv[i]);
@@ -630,7 +657,14 @@ static GstElement* create_playbin2_pipeline()
 	char launchLine[256];
 	char* line1 = "playbin2 uri=";
 
-	sprintf(launchLine, "%s%s", line1, uri);
+	if (!use_file)
+	{
+		sprintf(launchLine, "%s%s", line1, uri);
+	}
+	else
+	{
+		sprintf(launchLine, "%s%s", line1, file_location);
+	}
 
 	g_print("Starting up playbin2 using line: %s\n", launchLine);
 	pipeline = gst_parse_launch(launchLine, NULL);
@@ -641,10 +675,14 @@ static GstElement* create_playbin2_pipeline()
 
     // Uncomment this line to limit the amount of downloaded data
     //g_object_set (pipeline, "ring-buffer-max-size", (guint64)4000000, NULL);
-    g_object_set (pipeline, "ring-buffer-max-size", (guint64)400000, NULL);
+    //g_object_set (pipeline, "ring-buffer-max-size", (guint64)400000, NULL);
+    //g_object_set (pipeline, "ring-buffer-max-size", (guint64)400, NULL); - seg faults?
+    g_object_set (pipeline, "ring-buffer-max-size", (guint64)4000, NULL);
 
-    GstElement* fake_sink = gst_element_factory_make ("fakesink", "fakesink");
-    g_object_set (pipeline, "audio-sink", fake_sink, NULL);
+    // Tried to force audio to fake sink since it complained about audio decoder
+    // when trying to change URIs
+    //GstElement* fake_sink = gst_element_factory_make ("fakesink", "fakesink");
+    //g_object_set (pipeline, "audio-sink", fake_sink, NULL);
 
     return pipeline;
 }

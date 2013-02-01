@@ -76,6 +76,7 @@ struct _GstDlnaSrc
 	gfloat requested_rate;
 	GstFormat requested_format;
 	guint requested_start;
+	guint requested_stop;
 	GstPad* requested_pad;
 	gboolean event_received;
     GMutex event_mutex;
@@ -178,6 +179,7 @@ struct _GstDlnaSrcHeadResponseContentFeatures
 struct _GstDlnaSrcClass
 {
 	GstBinClass parent_class;
+	//GstPushSrcClass parent_class;
 
 };
 
