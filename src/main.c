@@ -1,9 +1,11 @@
 #include <gst/gst.h>
 #include <string.h>
+#include <stdio.h>
 
 // Global vars for cmd line args
 //
 static int waitSecs = 0;
+static int state_change_timeout_secs = 45;
 static gfloat requested_rate = 0;
 static int rrid = 2;
 static char host[256];
@@ -32,7 +34,7 @@ typedef struct _CustomData {
 // Local method declarations
 //
 static gboolean process_cmd_line_args(int argc, char*argv[]);
-static GstElement* create_playbin2_pipeline();
+static GstElement* create_playbin_pipeline();
 static GstElement* create_pipeline();
 static void on_source_changed(GstElement* element, GParamSpec* param, gpointer data);
 static void handle_message (CustomData *data, GstMessage *msg);
@@ -88,8 +90,8 @@ int main(int argc, char *argv[])
 	// Build the pipeline
 	if (usePlaybin)
 	{
-		g_print("Creating pipeline using playbin2\n");
-		data.pipeline = create_playbin2_pipeline();
+		g_print("Creating pipeline using playbin\n");
+		data.pipeline = create_playbin_pipeline();
 	}
 	else
 	{
@@ -106,7 +108,7 @@ int main(int argc, char *argv[])
 
 	// Start playing
 	g_print("Pipeline created, start playing\n");
-	if (!set_pipeline_state(&data, GST_STATE_PLAYING, 30))
+	if (!set_pipeline_state(&data, GST_STATE_PLAYING, state_change_timeout_secs))
 	{
 		g_printerr ("Unable to set the pipeline to the playing state.\n");
 		return -1;
@@ -155,6 +157,7 @@ static void perform_positioning(CustomData* data)
 	GstQuery* query;
 	gint64 start;
 	gint64 stop;
+	GstFormat fmt;
 
 	// Wait until error or EOS
 	bus = gst_element_get_bus (data->pipeline);
@@ -172,11 +175,10 @@ static void perform_positioning(CustomData* data)
 			// We got no message, this means the timeout expired
 			if (data->playing)
 			{
-				GstFormat fmt = GST_FORMAT_TIME;
 				gint64 current = -1;
 
 				// Query the current position of the stream
-				if (!gst_element_query_position (data->pipeline, &fmt, &current))
+				if (!gst_element_query_position (data->pipeline, GST_FORMAT_TIME, &current))
 				{
 					g_printerr ("Could not query current position.\n");
 				}
@@ -185,7 +187,7 @@ static void perform_positioning(CustomData* data)
 				if (!GST_CLOCK_TIME_IS_VALID (data->duration))
 				{
 					//g_print ("Current duration is invalid, query for duration\n");
-					if (!gst_element_query_duration (data->pipeline, &fmt, &data->duration))
+					if (!gst_element_query_duration (data->pipeline, GST_FORMAT_TIME, &data->duration))
 					{
 						g_printerr ("Could not query current duration.\n");
 					}
@@ -196,7 +198,7 @@ static void perform_positioning(CustomData* data)
 				}
 
 				// Get the current playback rate
-				query = gst_query_new_segment(fmt);
+				query = gst_query_new_segment(GST_FORMAT_TIME);
 				if (query != NULL)
 				{
 					gst_element_query(data->pipeline, query);
@@ -255,10 +257,9 @@ static void perform_rate_change(CustomData* data)
 		g_print("Requesting rate change to %4.1f\n", requested_rate);
 
 		gint64 position;
-		GstFormat format = GST_FORMAT_TIME;
 
 		// Obtain the current position, needed for the seek event
-		if (!gst_element_query_position(data->pipeline, &format, &position))
+		if (!gst_element_query_position(data->pipeline, GST_FORMAT_TIME, &position))
 		{
 			g_printerr("Unable to retrieve current position.\n");
 			return;
@@ -281,12 +282,12 @@ static void perform_rate_change(CustomData* data)
 	if ((requested_rate == 0) && (waitSecs != 0))
 	{
 		g_print("Pausing pipeline for %d secs due to rate=0 & wait!=0\n", waitSecs);
-		set_pipeline_state (data, GST_STATE_PAUSED, 10);
+		set_pipeline_state (data, GST_STATE_PAUSED, state_change_timeout_secs);
 
 		g_usleep(secs * 1000000L);
 
 		g_print("Resuming pipeline after %d sec pause\n", waitSecs);
-		set_pipeline_state (data, GST_STATE_PLAYING, 15);
+		set_pipeline_state (data, GST_STATE_PLAYING, state_change_timeout_secs);
 	}
 	gboolean done = FALSE;
 
@@ -614,7 +615,7 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 		else if (strstr(argv[i], "playbin") != NULL)
 		{
 			usePlaybin = TRUE;
-			g_print("Set to use playbin2\n");
+			g_print("Set to use playbin\n");
 		}
 		else if (strstr(argv[i], "switch") != NULL)
 		{
@@ -649,13 +650,13 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 }
 
 /**
- * Create playbin2 pipeline
+ * Create playbin pipeline
  */
-static GstElement* create_playbin2_pipeline()
+static GstElement* create_playbin_pipeline()
 {
 	GstElement* pipeline = NULL;
 	char launchLine[256];
-	char* line1 = "playbin2 uri=";
+	char* line1 = "playbin uri=";
 
 	if (!use_file)
 	{
@@ -666,10 +667,10 @@ static GstElement* create_playbin2_pipeline()
 		sprintf(launchLine, "%s%s", line1, file_location);
 	}
 
-	g_print("Starting up playbin2 using line: %s\n", launchLine);
+	g_print("Starting up playbin using line: %s\n", launchLine);
 	pipeline = gst_parse_launch(launchLine, NULL);
 
-	// Register to receive playbin2 source signal & call get property on sourc
+	// Register to receive playbin source signal & call get property on sourc
 	// to get supported playspeeds just like webkit would do
     g_signal_connect(pipeline, "notify::source", G_CALLBACK(on_source_changed), pipeline);
 
@@ -677,7 +678,7 @@ static GstElement* create_playbin2_pipeline()
     //g_object_set (pipeline, "ring-buffer-max-size", (guint64)4000000, NULL);
     //g_object_set (pipeline, "ring-buffer-max-size", (guint64)400000, NULL);
     //g_object_set (pipeline, "ring-buffer-max-size", (guint64)400, NULL); - seg faults?
-    g_object_set (pipeline, "ring-buffer-max-size", (guint64)4000, NULL);
+    //g_object_set (pipeline, "ring-buffer-max-size", (guint64)4000, NULL);
 
     // Tried to force audio to fake sink since it complained about audio decoder
     // when trying to change URIs
@@ -794,7 +795,7 @@ static GstElement* create_pipeline()
 }
 
 /**
- * Callback when playbin2's source element changes
+ * Callback when playbin's source element changes
  */
 static void on_source_changed(GstElement* element, GParamSpec* param, gpointer data)
 {
@@ -834,7 +835,8 @@ static void log_bin_elements(GstBin* bin)
 {
 	GstIterator* it = gst_bin_iterate_elements(bin);
 	gboolean done = FALSE;
-	gpointer item;
+	GValue item;
+	//GstElement item;
 	while (!done)
 	{
 		switch (gst_iterator_next (it, &item))
@@ -842,13 +844,15 @@ static void log_bin_elements(GstBin* bin)
 		case GST_ITERATOR_OK:
 			g_print("Bin %s has element: %s\n",
 				GST_ELEMENT_NAME(GST_ELEMENT(bin)),
-				GST_ELEMENT_NAME(GST_ELEMENT(item)));
+				GST_ELEMENT_NAME(&item));
 
 			// If this is a bin, log its elements
-			if (GST_IS_BIN(item))
+			if (GST_IS_BIN(&item))
 			{
-				log_bin_elements(GST_BIN(item));
+				log_bin_elements(GST_BIN(&item));
 			}
+
+			g_value_reset (&item);
 			break;
 		case GST_ITERATOR_RESYNC:
 			gst_iterator_resync (it);
@@ -862,6 +866,8 @@ static void log_bin_elements(GstBin* bin)
 			break;
 		}
 	}
+	g_value_unset (&item);
+	gst_iterator_free (it);
 }
 
 static gboolean set_pipeline_state(CustomData* data, GstState desired_state, gint timeoutSecs)
@@ -931,7 +937,7 @@ static gboolean set_new_uri(CustomData* data)
 	char* line4 = "&profile=MPEG_TS_SD_NA_ISO&mime=video/mpeg";
 	sprintf(new_uri, "%s%s%s%d%s", line2, host, line3, 7, line4);
 
-	// Get source of pipeline which is a playbin2
+	// Get source of pipeline which is a playbin
 	g_print("Getting source of playbin\n");
 	GstElement* dlna_src = NULL;
 	if (data->pipeline != NULL)
