@@ -349,7 +349,7 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
 static void
 gst_dlna_src_init (GstDlnaSrc * dlna_src)
 {
-    GST_LOG_OBJECT(dlna_src, "Initializing");
+    GST_INFO_OBJECT(dlna_src, "Initializing");
 
     GstPad *pad;
 
@@ -359,35 +359,17 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
 	// Initialize play rate to 1.0
 	dlna_src->rate = 1.0;
 
-	// *TODO* - should we really exit when errors are encountered?
 	// Create source element
 	dlna_src->http_src = gst_element_factory_make("souphttpsrc", ELEMENT_NAME_HTTP_SRC);
 	if (!dlna_src->http_src)
 	{
 		GST_ERROR_OBJECT(dlna_src, "The source element could not be created. Exiting.\n");
+		// *TODO* - should we really exit when errors are encountered?
 		exit(1);
 	}
 
 	// Add source element to the src
 	gst_bin_add(GST_BIN(&dlna_src->bin), dlna_src->http_src);
-
-	// Create src ghost pad of dlna src using http src so playbin will recognize element as a src
-	pad = gst_element_get_static_pad(dlna_src->http_src, "src");
-	if (!pad)
-	{
-		GST_ERROR_OBJECT(dlna_src, "Could not get pad for souphttpsrc. Exiting.\n");
-		exit(1);
-	}
-	dlna_src->src_pad = gst_ghost_pad_new("src", pad);
-	gst_pad_set_active (dlna_src->src_pad, TRUE);
-	gst_element_add_pad(GST_ELEMENT (&dlna_src->bin), dlna_src->src_pad);
-	gst_object_unref (pad);
-
-	// Configure event function on sink pad before adding pad to element
-	gst_pad_set_event_function(dlna_src->src_pad, (GstPadEventFunction)gst_dlna_src_src_event);
-
-	// Configure event function on sink pad before adding pad to element
-	gst_pad_set_query_function(dlna_src->src_pad, (GstPadQueryFunction)gst_dlna_src_src_query);
 
 	GST_LOG_OBJECT(dlna_src, "Initialization complete");
 }
@@ -443,6 +425,17 @@ gst_dlna_src_set_property (GObject * object, guint prop_id,
 			g_free(dlna_src->dtcp_key_storage);
 		}
 		dlna_src->dtcp_key_storage = g_value_dup_string (value);
+
+		// Set dtcpip storage property to this value
+		if (dlna_src->dtcp_decrypter != NULL)
+		{
+			g_object_set(dlna_src->dtcp_decrypter, "dtcpip_storage", dlna_src->dtcp_key_storage, NULL);
+			GST_INFO_OBJECT(dlna_src, "Set dtcp storage to: %s", dlna_src->dtcp_key_storage);
+		}
+		else
+		{
+			GST_INFO_OBJECT(dlna_src, "dtcp decrypter was NULL, storage set to: %s", dlna_src->dtcp_key_storage);
+		}
 		break;
 	}
 	default:
@@ -932,6 +925,7 @@ dlna_src_handle_event_seek(GstDlnaSrc *dlna_src, GstPad* pad, GstEvent* event)
     dlna_src->requested_start = start;
     dlna_src->requested_pad = pad;
 
+    // *TODO* - work in progress related to playspeed changes
     if (1)
     {
     	// Initiate actual change in separate thread so processing of seek event
@@ -1011,91 +1005,100 @@ dlna_src_change_request(gpointer data)
 	g_object_set_property(G_OBJECT(dlna_src->http_src), "extra-headers", &struct_value);
 	GST_INFO_OBJECT(dlna_src, "set extra hdrs of http src");
 
-	if (1)
+	// *TODO* - work in progress related to changing playspeeds
+	if (0)
 	{
-
-		// Set new URI on playbin 2 so it has new URI pending
-		// *TODO* - does this work when it's same URI but extra headers???
-		gchar* new_uri = "http://192.168.0.106:8008/ocaphn/recording?rrid=7&profile=MPEG_TS_SD_NA_ISO&mime=video/mpeg";
-
-		GST_INFO_OBJECT(dlna_src, "setting URI of playbin to force new request");
-		g_object_set(G_OBJECT(dlna_src->pipeline), "uri", new_uri, NULL);
-
-		// *TODO* - figure out what to really do here send a seek or a new segment
-
-		GST_INFO_OBJECT(dlna_src, "Creating new segment event");
-		/*
-		// Send new segment event
-		gboolean update = FALSE; // Is this segment an update to a previous one
-		gint64 position = 0;
-		GstSegment* segment = gst_segment_new();
-		gst_segment_init(segment, dlna_src->requested_format);
-		if (gst_segment_do_seek(segment, update,
-				dlna_src->requested_rate,
-				dlna_src->requested_format,
-				dlna_src->requested_start,
-				dlna_src->requested_stop,
-                            position))
+		if (1)
 		{
-			GST_ERROR_OBJECT(dlna_src, "New segment was not setup to do seek");
-			return FALSE;
-		}
+			// Set new URI on playbin 2 so it has new URI pending
+			// *TODO* - does this work when it's same URI but extra headers???
+			gchar* new_uri = "http://192.168.0.106:8008/ocaphn/recording?rrid=7&profile=MPEG_TS_SD_NA_ISO&mime=video/mpeg";
 
-		GstEvent* new_seg_event = gst_event_new_segment(segment);
-		if (!gst_element_send_event(dlna_src->pipeline, new_seg_event))
-		{
-			GST_ERROR_OBJECT(dlna_src, "New segment event was not handled");
-			return FALSE;
-		}
-		else
-		{
-			GST_INFO_OBJECT(dlna_src, "Sent new segment event");
-		}
-		*/
-		// Set soup http src state to PLAYING here to start reading new data????
-		if (!dlna_src_set_element_state(dlna_src, dlna_src->http_src, GST_STATE_PLAYING, 20))
-		{
-			GST_ERROR_OBJECT(dlna_src, "Problems setting http src state to PLAYING");
-			return NULL;
-		}
-	}
-	else
-	{
-		// Set new URI on playbin 2 so it has new URI pending
-		// *TODO* - does this work when it's same URI but extra headers???
-		GST_INFO_OBJECT(dlna_src, "setting URI of playbin to force new request");
-		g_object_set(G_OBJECT(dlna_src->pipeline), "uri", dlna_src->uri, NULL);
+			GST_INFO_OBJECT(dlna_src, "setting URI of playbin to force new request");
+			g_object_set(G_OBJECT(dlna_src->pipeline), "uri", new_uri, NULL);
 
-		// Signal EOS to uridecodebin so it will notify playbin that it is drained
-		GstElement* uridecodebin = dlna_src_find_bin_element(dlna_src, GST_BIN(dlna_src->pipeline), "uridecodebin0");
-		if (uridecodebin)
-		{
-			GST_INFO_OBJECT(dlna_src, "Found uridecodebin element, sending EOS");
+			// *TODO* - figure out what to really do here send a seek or a new segment
 
-			// Send EOS event to uridecodebin
-			GstEvent* eos_event = gst_event_new_eos();
-			if (!gst_element_send_event(uridecodebin, eos_event))
+			GST_INFO_OBJECT(dlna_src, "Creating new segment event");
+			/*
+			// Send new segment event
+			gboolean update = FALSE; // Is this segment an update to a previous one
+			gint64 position = 0;
+			GstSegment* segment = gst_segment_new();
+			gst_segment_init(segment, dlna_src->requested_format);
+			if (gst_segment_do_seek(segment, update,
+					dlna_src->requested_rate,
+					dlna_src->requested_format,
+					dlna_src->requested_start,
+					dlna_src->requested_stop,
+	                            position))
 			{
-				GST_ERROR_OBJECT(dlna_src, "EOS event was not handled");
+				GST_ERROR_OBJECT(dlna_src, "New segment was not setup to do seek");
+				return FALSE;
+			}
+
+			GstEvent* new_seg_event = gst_event_new_segment(segment);
+			if (!gst_element_send_event(dlna_src->pipeline, new_seg_event))
+			{
+				GST_ERROR_OBJECT(dlna_src, "New segment event was not handled");
 				return FALSE;
 			}
 			else
 			{
-				GST_INFO_OBJECT(dlna_src, "Sent EOS to uridecodebin");
+				GST_INFO_OBJECT(dlna_src, "Sent new segment event");
+			}
+			 */
+			// Set soup http src state to PLAYING here to start reading new data????
+			if (!dlna_src_set_element_state(dlna_src, dlna_src->http_src, GST_STATE_PLAYING, 20))
+			{
+				GST_ERROR_OBJECT(dlna_src, "Problems setting http src state to PLAYING");
+				return NULL;
 			}
 		}
 		else
 		{
-			GST_ERROR_OBJECT(dlna_src, "Unable to find uridecodebin element");
-			dlna_src_log_bin_elements(dlna_src, GST_BIN(dlna_src->pipeline));
+			// Set new URI on playbin 2 so it has new URI pending
+			// *TODO* - does this work when it's same URI but extra headers???
+			GST_INFO_OBJECT(dlna_src, "setting URI of playbin to force new request");
+			g_object_set(G_OBJECT(dlna_src->pipeline), "uri", dlna_src->uri, NULL);
+
+			// Signal EOS to uridecodebin so it will notify playbin that it is drained
+			GstElement* uridecodebin = dlna_src_find_bin_element(dlna_src, GST_BIN(dlna_src->pipeline), "uridecodebin0");
+			if (uridecodebin)
+			{
+				GST_INFO_OBJECT(dlna_src, "Found uridecodebin element, sending EOS");
+
+				// Send EOS event to uridecodebin
+				GstEvent* eos_event = gst_event_new_eos();
+				if (!gst_element_send_event(uridecodebin, eos_event))
+				{
+					GST_ERROR_OBJECT(dlna_src, "EOS event was not handled");
+					return FALSE;
+				}
+				else
+				{
+					GST_INFO_OBJECT(dlna_src, "Sent EOS to uridecodebin");
+				}
+			}
+			else
+			{
+				GST_ERROR_OBJECT(dlna_src, "Unable to find uridecodebin element");
+				dlna_src_log_bin_elements(dlna_src, GST_BIN(dlna_src->pipeline));
+			}
 		}
 	}
-
 	return NULL;
 }
 
 /**
+ * Determines if the requested rate and/or position change is valid.
  *
+ * @param	this element
+ * @param	new requested rate
+ * @param	format of change, either bytes or time
+ * @param	new starting position, either in bytes or time depending on format
+ *
+ * @return	true if change is valid, false otherwise
  */
 static gboolean
 dlna_src_is_change_valid(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start)
@@ -1188,6 +1191,105 @@ dlna_src_is_rate_supported(GstDlnaSrc *dlna_src, gfloat rate)
 	return is_supported;
 }
 
+/**
+ * Utility method to find pipeline which the supplied element is
+ * contained in and also the associated bus.
+ *
+ * @param	this element
+ *
+ * @return	true if pipeline and bus were found, false otherwise
+ */
+static gboolean dlna_src_find_pipeline_and_bus(GstDlnaSrc *dlna_src)
+{
+    gboolean found = FALSE;
+	GstObject* obj = (GstObject*)dlna_src;
+    GstObject* parent = obj;        // Ensure initialized to non-NULL
+
+	GST_INFO_OBJECT(dlna_src, "Discover pipeline element");
+
+	if (dlna_src->pipeline == NULL)
+	{
+	    // NULL parent is indicator we are done
+	    while (NULL != parent)
+	    {
+	        parent = GST_OBJECT_PARENT(obj);
+	        if (NULL == parent)
+	        {
+	            // Found pipeline
+	            dlna_src->pipeline = (GstElement*)obj;
+	            break;
+	        }
+	        else
+	        {
+	            // Move one step higher in the hierarchy
+	            obj = parent;
+	        }
+	    }
+	}
+	if (dlna_src->pipeline != NULL)
+	{
+		if (dlna_src->bus == NULL)
+		{
+			dlna_src->bus = gst_element_get_bus(dlna_src->pipeline);
+		}
+		found = TRUE;
+	}
+	else
+	{
+		found = FALSE;
+	}
+
+	return found;
+}
+
+/**
+ * Report an error on bus
+ *
+ * @param	dlna_src	this element
+ * @param	errMsg		error message to post
+ *
+ * @return	result
+ */
+/*landerson@landerson-Latitude-E6420:~$
+ *
+static gboolean
+dlna_src_post_error(GstDlnaSrc *dlna_src, const gchar* errMsg)
+{
+	gboolean rc = FALSE;
+	if (dlna_src->bus != NULL)
+	{
+		rc = gst_bus_post(dlna_src->bus,
+				gst_message_new_error((GstObject*)dlna_src, NULL, errMsg));
+	}
+	else
+	{
+		GST_ERROR_OBJECT(dlna_src, "Unable to retrieve bus to post error");landerson@landerson-Latitude-E6420:~$
+
+	}	if (dlna_src->pipeline == NULL)
+	{
+	    // NULL parent is indicator we are done
+	    while (NULL != parent)
+	    {
+	        parent = GST_OBJECT_PARENT(obj);
+	        if (NULL == parent)
+	        {
+	            // Found pipeline
+	            dlna_src->pipeline = (GstElement*)obj;
+	            break;
+	        }
+	        else
+	        {
+	            // Move one step higher in the hierarchy
+	            obj = parent;
+	        }
+	    }
+	}
+
+
+	return rc;
+}
+*/
+
 /*
 static void dlna_src_send_event(GstDlnaSrc *dlna_src, GstEvent* event)
 {
@@ -1275,22 +1377,24 @@ static void dlna_src_log_bin_elements(GstDlnaSrc *dlna_src, GstBin* bin)
 {
 	GstIterator* it = gst_bin_iterate_elements(bin);
 	gboolean done = FALSE;
-	GValue item;
+	GValue value = { 0 };
+	GstElement *elem = NULL;
 	while (!done)
 	{
 		GST_INFO_OBJECT(dlna_src, "Calling iterator");
-		switch (gst_iterator_next (it, &item))
+		switch (gst_iterator_next (it, &value))
 		{
 		case GST_ITERATOR_OK:
+		    elem = (GstElement *) g_value_get_object (&value);
 			GST_INFO_OBJECT(dlna_src, "Got playbin element: %s",
-					GST_ELEMENT_NAME(GST_ELEMENT(&item)));
+					GST_ELEMENT_NAME(elem));
 
 			// If this is a bin, log its elements
-			if (GST_IS_BIN(&item))
+			if (GST_IS_BIN(elem))
 			{
-				dlna_src_log_bin_elements(dlna_src, GST_BIN(&item));
+				dlna_src_log_bin_elements(dlna_src, GST_BIN(elem));
 			}
-			g_value_reset (&item);
+			g_value_unset (&value);
 			break;
 		case GST_ITERATOR_RESYNC:
 			gst_iterator_resync (it);
@@ -1304,7 +1408,6 @@ static void dlna_src_log_bin_elements(GstDlnaSrc *dlna_src, GstBin* bin)
 			break;
 		}
 	}
-	g_value_unset (&item);
 	gst_iterator_free (it);
 }
 
@@ -1345,8 +1448,18 @@ gboolean event_probe(GstPad *pad, GstEvent *event, gpointer u_data)
     return retVal;
 }
 */
+
 /**
+ * Utility method which changes state of supplied element, waits specified
+ * time out in secs if state change is asynchronous.
  *
+ * @param	dlna_src		this element
+ * @param	element			change state of this element
+ * @param	desired_state	change element state to this value
+ * @param	timeout_secs	wait this many seconds for state transistion
+ *
+ * @return	true if element's state transistioned into desired state within specified timeout,
+ * false otherwise
  */
 static gboolean dlna_src_set_element_state(GstDlnaSrc *dlna_src, GstElement* element,
 										   GstState desired_state, int timeout_secs)
@@ -1421,7 +1534,16 @@ static gboolean dlna_src_set_element_state(GstDlnaSrc *dlna_src, GstElement* ele
 }
 
 /**
+ * Create extra headers to supply to soup http src based on requested starting
+ * postion and rate.
  *
+ * @param	dlna_src 	this element
+ * @param	rate		requested rate to include in playspeed header
+ * @param	format		create either time or byte based seek header
+ * @param	start		starting position to include, will be either bytes or time depending on format
+ * @param	headers		extra headers structure to populate with results
+ *
+ * @return	true if extra headers were successfully created, false otherwise
  */
 static gboolean
 dlna_src_formulate_extra_headers(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start,
@@ -1594,10 +1716,13 @@ gst_dlna_src_uri_handler_init(gpointer g_iface, gpointer iface_data)
 }
 
 /**
- * Perform actions necessary based on supplied URI
+ * Perform actions necessary based on supplied URI which is called by
+ * playbin when this element is selected as source.
  *
  * @param dlna_src	this element
  * @param value		specified URI to use
+ *
+ * @return	true if uri is set without problems, false otherwise
  */
 static gboolean
 dlna_src_set_uri(GstDlnaSrc *dlna_src, const gchar* value)
@@ -1628,27 +1753,50 @@ dlna_src_set_uri(GstDlnaSrc *dlna_src, const gchar* value)
 		GST_INFO_OBJECT(dlna_src, "Successfully initialized URI: %s", dlna_src->uri);
 	}
 
-
 	// Set the URI
 	g_object_set(G_OBJECT(dlna_src->http_src), "location", dlna_src->uri, NULL);
 
 	// Setup elements based on HEAD response
 	// Use flag or profile name starts with DTCP (
-	// *TODO* - add check for profile name starting with DTCP
+	// *TODO* - also add check for profile name starting with DTCP or should just use flag???
 	if (dlna_src->head_response->content_features->flag_link_protected_set)
 	{
+		// Setup the dtcpip decrypter element, this will also ghost pad the
+		// src pad of the bin
 		if (!dlna_src_dtcp_setup(dlna_src))
 		{
 			GST_ERROR_OBJECT(dlna_src, "Problems setting up dtcp elements\n");
 			return FALSE;
-		}		// Set playbin to READY
-
+		}
 	}
 	else
 	{
 		GST_INFO_OBJECT(dlna_src, "No DTCP setup required\n");
+
+		// Create src ghost pad of dlna src using http src so playbin will recognize element as a src
+		GST_INFO_OBJECT(dlna_src, "Getting http src pad");
+		GstPad* pad = gst_element_get_static_pad(dlna_src->http_src, "src");
+		if (!pad)
+		{
+			GST_ERROR_OBJECT(dlna_src, "Could not get pad for dtcp decrypter. Exiting.\n");
+			// *TODO* - should we really exit here?
+			exit(1);
+		}
+
+		GST_INFO_OBJECT(dlna_src, "Creating src pad for dlnasrc bin using soup http src pad");
+		dlna_src->src_pad = gst_ghost_pad_new("src", pad);
+		gst_pad_set_active (dlna_src->src_pad, TRUE);
+		gst_element_add_pad(GST_ELEMENT (&dlna_src->bin), dlna_src->src_pad);
+		gst_object_unref (pad);
+
+		// Configure event function on sink pad before adding pad to element
+		gst_pad_set_event_function(dlna_src->src_pad, (GstPadEventFunction)gst_dlna_src_src_event);
+
+		// Configure event function on sink pad before adding pad to element
+		gst_pad_set_query_function(dlna_src->src_pad, (GstPadQueryFunction)gst_dlna_src_src_query);
 	}
 
+	// *TODO* - work in progress to support playspeed changes
 	/*
 	if (restart_http_src)
 	{
@@ -1674,35 +1822,115 @@ dlna_src_set_uri(GstDlnaSrc *dlna_src, const gchar* value)
 }
 
 /**
+ * Setup dtcp decoder element and add to src in order to handle DTCP encrypted
+ * content
  *
+ * @param dlna_src	this element
+ *
+ * @return	true if successfully setup, false otherwise
+ */
+static gboolean
+dlna_src_dtcp_setup(GstDlnaSrc *dlna_src)
+{
+	GST_INFO_OBJECT(dlna_src, "Setup for dtcp content");
+
+	// Create non-encrypt sink element
+	GST_INFO_OBJECT(dlna_src, "Creating dtcp decrypter");
+	dlna_src->dtcp_decrypter = gst_element_factory_make ("dtcpip",
+														ELEMENT_NAME_DTCP_DECRYPTER);
+	if (!dlna_src->dtcp_decrypter)
+	{
+		GST_ERROR_OBJECT(dlna_src,
+				"The dtcp decrypter element could not be created. Exiting.\n");
+		return FALSE;
+	}
+
+	// Set DTCP host property
+	g_object_set(G_OBJECT(dlna_src->dtcp_decrypter), "dtcp1host",
+			dlna_src->head_response->dtcp_host, NULL);
+
+	// Set DTCP port property
+	g_object_set(G_OBJECT(dlna_src->dtcp_decrypter), "dtcp1port",
+			dlna_src->head_response->dtcp_port, NULL);
+
+	// Set DTCP key storage property
+	g_object_set(G_OBJECT(dlna_src->dtcp_decrypter), "dtcpip_storage",
+			dlna_src->dtcp_key_storage, NULL);
+
+	// Add this element to the src
+	gst_bin_add(GST_BIN(&dlna_src->bin), dlna_src->dtcp_decrypter);
+
+	// Link elements together
+	if (!gst_element_link_many(dlna_src->http_src, dlna_src->dtcp_decrypter, NULL))
+	{
+		GST_ERROR_OBJECT(dlna_src, "Problems linking elements in src. Exiting.\n");
+		return FALSE;
+	}
+
+	GST_INFO_OBJECT(dlna_src, "Getting dtcpip decrypter src pad");
+	GstPad* pad = gst_element_get_static_pad(dlna_src->dtcp_decrypter, "src");
+	if (!pad)
+	{
+		GST_ERROR_OBJECT(dlna_src, "Could not get pad for dtcp decrypter. Exiting.\n");
+		// *TODO* - should we really exit here???
+		exit(1);
+	}
+
+	GST_INFO_OBJECT(dlna_src, "Creating src pad for dlnasrc bin using decyrpter src pad");
+	dlna_src->src_pad = gst_ghost_pad_new("src", pad);
+	gst_pad_set_active (dlna_src->src_pad, TRUE);
+	gst_element_add_pad(GST_ELEMENT (&dlna_src->bin), dlna_src->src_pad);
+	gst_object_unref (pad);
+
+	// Configure event function on sink pad before adding pad to element
+	gst_pad_set_event_function(dlna_src->src_pad, (GstPadEventFunction)gst_dlna_src_src_event);
+
+	// Configure event function on sink pad before adding pad to element
+	gst_pad_set_query_function(dlna_src->src_pad, (GstPadQueryFunction)gst_dlna_src_src_query);
+
+	return TRUE;
+}
+
+/**
+ * Utility method to find an ancestor which supplied name.
+ *
+ * @param	dlna_src		this element
+ * @param	bin				look in this bin for named element
+ * @param	element_name	name of element to look for
+ *
+ * @return	element if found, NULL if not found
  */
 static GstElement* dlna_src_find_bin_element(GstDlnaSrc *dlna_src, GstBin* bin, gchar* element_name)
 {
 	GstElement* found_element = NULL;
 	GstIterator* it = gst_bin_iterate_elements(bin);
 	gboolean done = FALSE;
-	GValue item;
+	GValue value = { 0 };
+	GstElement *elem = NULL;
+
 	while (!done)
 	{
-		switch (gst_iterator_next (it, &item))
+		switch (gst_iterator_next (it, &value))
 		{
 		case GST_ITERATOR_OK:
-			GST_LOG_OBJECT(dlna_src, "Bin %s has element: %s\n",
-					GST_ELEMENT_NAME(GST_ELEMENT(bin)),
-					GST_ELEMENT_NAME(GST_ELEMENT(&item)));
+		    elem = (GstElement *) g_value_get_object (&value);
 
-			if (strcmp(element_name, GST_ELEMENT_NAME(GST_ELEMENT(&item))))
+		    GST_LOG_OBJECT(dlna_src, "Bin %s has element: %s\n",
+					GST_ELEMENT_NAME(GST_ELEMENT(bin)),
+					GST_ELEMENT_NAME(elem));
+
+			if (strcmp(element_name, GST_ELEMENT_NAME(elem)))
 			{
-				found_element = GST_ELEMENT(&item);
+				found_element = elem;
 				GST_INFO_OBJECT(dlna_src, "Found element: %s\n", element_name);
 				done = TRUE;
 				break;
 			}
 
 			// If this is a bin, look at its elements
-			if (GST_IS_BIN(&item))
+			if (GST_IS_BIN(elem))
 			{
-				found_element = dlna_src_find_bin_element(dlna_src, GST_BIN(&item), element_name);
+				found_element = dlna_src_find_bin_element(dlna_src, GST_BIN(elem), element_name);
 				if (found_element)
 				{
 					GST_INFO_OBJECT(dlna_src, "Found element: %s\n", element_name);
@@ -1710,7 +1938,7 @@ static GstElement* dlna_src_find_bin_element(GstDlnaSrc *dlna_src, GstBin* bin, 
 					break;
 				}
 			}
-			g_value_reset (&item);
+			g_value_unset (&value);
 			break;
 		case GST_ITERATOR_RESYNC:
 			gst_iterator_resync (it);
@@ -1724,7 +1952,6 @@ static GstElement* dlna_src_find_bin_element(GstDlnaSrc *dlna_src, GstBin* bin, 
 			break;
 		}
 	}
-	g_value_unset (&item);
 	gst_iterator_free (it);
 	return found_element;
 }
@@ -1736,6 +1963,8 @@ static GstElement* dlna_src_find_bin_element(GstDlnaSrc *dlna_src, GstBin* bin, 
  *
  * @param dlna_src	this element
  * @param value		specified URI to use
+ *
+ * @return	true if no problems encountered, false otherwise
  */
 static gboolean
 dlna_src_init_uri(GstDlnaSrc *dlna_src, const gchar* value)
@@ -3290,50 +3519,6 @@ dlna_src_head_response_struct_to_str(GstDlnaSrc *dlna_src)
 }
 
 /**
- * Setup dtcp decoder element and add to src in order to handle DTCP encrypted
- * content
- *
- * @param dlna_src	this element
- */
-static gboolean
-dlna_src_dtcp_setup(GstDlnaSrc *dlna_src)
-{
-	GST_INFO_OBJECT(dlna_src, "Setup for dtcp content");
-
-	// Create non-encrypt sink element
-	GST_INFO_OBJECT(dlna_src, "Creating dtcp decrypter");
-	dlna_src->dtcp_decrypter = gst_element_factory_make ("dtcpip",
-														ELEMENT_NAME_DTCP_DECRYPTER);
-	if (!dlna_src->dtcp_decrypter) {
-		GST_ERROR_OBJECT(dlna_src, "The dtcp decrypter element could not be created. Exiting.\n");
-		return FALSE;
-	}
-
-	// Set DTCP host property
-	g_object_set(G_OBJECT(dlna_src->dtcp_decrypter), "dtcp1host",
-			dlna_src->head_response->dtcp_host, NULL);
-
-	// Set DTCP port property
-	g_object_set(G_OBJECT(dlna_src->dtcp_decrypter), "dtcp1port",
-			dlna_src->head_response->dtcp_port, NULL);
-
-	// Set DTCP key storage property
-	g_object_set(G_OBJECT(dlna_src->dtcp_decrypter), "dtcpip_storage",
-			dlna_src->dtcp_key_storage, NULL);
-
-	// Add this element to the src
-	gst_bin_add(GST_BIN(&dlna_src->bin), dlna_src->dtcp_decrypter);
-
-	// Link elements together
-	if (!gst_element_link_many(dlna_src->http_src, dlna_src->dtcp_decrypter, NULL))
-	{
-		GST_ERROR_OBJECT(dlna_src, "Problems linking elements in src. Exiting.\n");
-		return FALSE;
-	}
-	return TRUE;
-}
-
-/**
  * Convert supplied string which represents normal play time (npt) into
  * nanoseconds.  The format of NPT is as follows:
  *
@@ -3386,96 +3571,6 @@ dlna_src_npt_to_nanos(GstDlnaSrc *dlna_src, gchar* string, guint64* media_time_n
     return ret;
 }
 
-static gboolean dlna_src_find_pipeline_and_bus(GstDlnaSrc *dlna_src)
-{
-    gboolean found = FALSE;
-	GstObject* obj = (GstObject*)dlna_src;
-    GstObject* parent = obj;        // Ensure initialized to non-NULL
-
-	GST_INFO_OBJECT(dlna_src, "Discover pipeline element");
-
-	if (dlna_src->pipeline == NULL)
-	{
-	    // NULL parent is indicator we are done
-	    while (NULL != parent)
-	    {
-	        parent = GST_OBJECT_PARENT(obj);
-	        if (NULL == parent)
-	        {
-	            // Found pipeline
-	            dlna_src->pipeline = (GstElement*)obj;
-	            break;
-	        }
-	        else
-	        {
-	            // Move one step higher in the hierarchy
-	            obj = parent;
-	        }
-	    }
-	}
-	if (dlna_src->pipeline != NULL)
-	{
-		if (dlna_src->bus == NULL)
-		{
-			dlna_src->bus = gst_element_get_bus(dlna_src->pipeline);
-		}
-		found = TRUE;
-	}
-	else
-	{
-		found = FALSE;
-	}
-
-	return found;
-}
-
-/**
- * Report an error on bus
- *
- * @param	dlna_src	this element
- * @param	errMsg		error message to post
- *
- * @return	result
- */
-/*landerson@landerson-Latitude-E6420:~$
- *
-static gboolean
-dlna_src_post_error(GstDlnaSrc *dlna_src, const gchar* errMsg)
-{
-	gboolean rc = FALSE;
-	if (dlna_src->bus != NULL)
-	{
-		rc = gst_bus_post(dlna_src->bus,
-				gst_message_new_error((GstObject*)dlna_src, NULL, errMsg));
-	}
-	else
-	{
-		GST_ERROR_OBJECT(dlna_src, "Unable to retrieve bus to post error");landerson@landerson-Latitude-E6420:~$
-
-	}	if (dlna_src->pipeline == NULL)
-	{
-	    // NULL parent is indicator we are done
-	    while (NULL != parent)
-	    {
-	        parent = GST_OBJECT_PARENT(obj);
-	        if (NULL == parent)
-	        {
-	            // Found pipeline
-	            dlna_src->pipeline = (GstElement*)obj;
-	            break;
-	        }
-	        else
-	        {
-	            // Move one step higher in the hierarchy
-	            obj = parent;
-	        }
-	    }
-	}
-
-
-	return rc;
-}
-*/
 /* 
  * The following section supports the GStreamer auto plugging infrastructure. 
  * Set to 0 if this is done on a package level using (ie gstelements.[hc])

@@ -10,14 +10,18 @@ static gfloat requested_rate = 0;
 static int rrid = 2;
 static char host[256];
 static char uri[256];
+static gchar* dtcp_key_storage = "home/landerson/RUIHRI/truecrypt/dtcpip_mock.so";
 static gboolean usePlaybin = FALSE;
+static gboolean use_dtcp = FALSE;
+
 static gboolean test_positioning = FALSE;
 static gboolean test_uri_switch = FALSE;
 static gboolean test_rate_change = FALSE;
 static gboolean test_seeking = FALSE;
+
 static gboolean use_file = FALSE;
-//static gchar* file_location = "file:///home/landerson/RUIHRI/git-dlnaplugin/gst-plugin-la/clock.mpg";
-static gchar* file_location = "file:///home/landerson/RUIHRI/git-dlnaplugin/gst-plugin-la/clock_2x.mpg";
+static char file_name[256];
+static gchar* file_path = "file:///home/landerson/RUIHRI/git-dlnaplugin/gst-plugin-la/";
 
 
 /* Structure to contain all our information, so we can pass it around */
@@ -68,7 +72,7 @@ int main(int argc, char *argv[])
 	// Assign default values
 	strcpy(host, "192.168.2.2");
 	uri[0] = '\0';
-
+	file_name[0] = '\0';
 	if (!process_cmd_line_args(argc, argv))
 	{
 		g_printerr("Exit due to problems with cmd line args\n");
@@ -81,6 +85,10 @@ int main(int argc, char *argv[])
 		char* line2 = "http://";
 		char* line3 = ":8008/ocaphn/recording?rrid=";
 		char* line4 = "&profile=MPEG_TS_SD_NA_ISO&mime=video/mpeg";
+		if (use_dtcp)
+		{
+			line4 = "&profile=DTCP_MPEG_TS_SD_NA_ISO&mime=video/mpeg";
+		}
 		sprintf(uri, "%s%s%s%d%s", line2, host, line3, rrid, line4);
 	}
 
@@ -245,6 +253,10 @@ static void perform_rate_change(CustomData* data)
 	GstEvent* event;
 	GstBus *bus;
 	GstMessage *msg;
+	//GstFormat format = GST_FORMAT_TIME;
+	//GstFormat format = GST_FORMAT_BYTES;
+	GstFormat format = GST_FORMAT_DEFAULT;
+	GstElement* video_sink = NULL;
 
 	// Wait for 10 seconds for playback to start up
 	long secs = waitSecs;
@@ -259,19 +271,45 @@ static void perform_rate_change(CustomData* data)
 		gint64 position;
 
 		// Obtain the current position, needed for the seek event
-		if (!gst_element_query_position(data->pipeline, GST_FORMAT_TIME, &position))
+		if (!gst_element_query_position(data->pipeline, format, &position))
 		{
 			g_printerr("Unable to retrieve current position.\n");
 			return;
 		}
 
-		// Create the seek event
-		event = gst_event_new_seek(requested_rate, GST_FORMAT_TIME,
-				GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE,
-				GST_SEEK_TYPE_SET, position, GST_SEEK_TYPE_NONE, 0);
+		if (0)
+		{
+			// Create the seek event
+			g_print("Creating seek event\n");
+			event = gst_event_new_seek(requested_rate, format,
+					GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE,
+					GST_SEEK_TYPE_SET, position, GST_SEEK_TYPE_NONE, 0);
 
-		// Send the event
-		gst_element_send_event(data->pipeline, event);
+			g_print("Get video sink in order to send event\n");
+			g_object_get (data->pipeline, "video-sink", &video_sink, NULL);
+			if (video_sink != NULL)
+			{
+				// Send the event
+				g_print("Sending seek event to video sink\n");
+				gst_element_send_event(video_sink, event);
+			}
+			else
+			{
+				g_print("Not ending seek event due to NULL video sink\n");
+			}
+		}
+		else
+		{
+			g_print("Seeking on pipeline element\n");
+			if (!gst_element_seek (data->pipeline, requested_rate,
+					GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH,
+	                GST_SEEK_TYPE_SET, position,
+	                GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE))
+			{
+				g_printerr("Unable to retrieve current position.\n");
+				return;
+			}
+		}
 	}
 	else
 	{
@@ -632,10 +670,23 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 			test_seeking = TRUE;
 			g_print("Set to test seeking\n");
 		}
-		else if (strstr(argv[i], "file") != NULL)
+		else if (strstr(argv[i], "file=") != NULL)
 		{
-			use_file = TRUE;
-			g_print("Test using local file rather than URI\n");
+			if (sscanf(argv[i], "file=%s\n", &file_name[0]) != 1)
+			{
+				g_printerr("Invalid file name specified: %s\n", argv[i]);
+				return FALSE;
+			}
+			else
+			{
+				use_file = TRUE;
+				g_print("Test using local file %s rather than URI\n", file_name);
+			}
+		}
+		else if (strstr(argv[i], "dtcp") != NULL)
+		{
+			use_dtcp = TRUE;
+			g_print("Set to use dtcp URI\n");
 		}
 		else
 		{
@@ -664,7 +715,7 @@ static GstElement* create_playbin_pipeline()
 	}
 	else
 	{
-		sprintf(launchLine, "%s%s", line1, file_location);
+		sprintf(launchLine, "%s%s%s", line1, file_path, file_name);
 	}
 
 	g_print("Starting up playbin using line: %s\n", launchLine);
@@ -804,25 +855,40 @@ static void on_source_changed(GstElement* element, GParamSpec* param, gpointer d
 	int i = 0;
 	float rate = 0;
     GstElement* src = NULL;
+    gchar *strVal = NULL;
+
     g_object_get(element, "source", &src, NULL);
     if (src != NULL)
     {
-    	g_print("Got src from callback, getting supported rates property\n");
+    	g_print("Got src from callback, determine if dlnasrc\n");
 
-    	// Get supported rates property value which is a GArray
-    	GArray* arrayVal = NULL;
-    	g_object_get(src, "supported_rates", &arrayVal, NULL);
-        if (arrayVal != NULL)
+    	g_object_get(src, "cl_name", &strVal, NULL);
+    	if (strVal != NULL)
     	{
-        	g_print("Supported rates cnt: %d\n", arrayVal->len);
-        	for (i = 0; i < arrayVal->len; i++)
-        	{
-        		g_print("Retrieved rate %d: %f\n", (i+1), g_array_index(arrayVal, gfloat, i));
-        	}
+    		g_print("dlnasrc is source for pipeline, setting dtcp dll property\n");
+    		// Set dll storage property for dtcp
+    		g_object_set(src, "dtcp_key_storage", dtcp_key_storage, NULL);
+
+    		// Get supported rates property value which is a GArray
+    		g_print("Getting supported rates\n");
+    		GArray* arrayVal = NULL;
+    		g_object_get(src, "supported_rates", &arrayVal, NULL);
+    		if (arrayVal != NULL)
+    		{
+    			g_print("Supported rates cnt: %d\n", arrayVal->len);
+    			for (i = 0; i < arrayVal->len; i++)
+    			{
+    				g_print("Retrieved rate %d: %f\n", (i+1), g_array_index(arrayVal, gfloat, i));
+    			}
+    		}
+    		else
+    		{
+    			g_printerr("Got null value for supported rates property\n");
+    		}
     	}
     	else
     	{
-    	   	g_printerr("Got null value for supported rates property\n");
+       		g_print("dlnasrc is NOT source for pipeline\n");
     	}
     }
     else
@@ -835,24 +901,24 @@ static void log_bin_elements(GstBin* bin)
 {
 	GstIterator* it = gst_bin_iterate_elements(bin);
 	gboolean done = FALSE;
-	GValue item;
-	//GstElement item;
+	GValue value = { 0 };
+	GstElement *elem = NULL;
 	while (!done)
 	{
-		switch (gst_iterator_next (it, &item))
+		switch (gst_iterator_next (it, &value))
 		{
 		case GST_ITERATOR_OK:
+		    elem = (GstElement *) g_value_get_object (&value);
 			g_print("Bin %s has element: %s\n",
 				GST_ELEMENT_NAME(GST_ELEMENT(bin)),
-				GST_ELEMENT_NAME(&item));
+				GST_ELEMENT_NAME(elem));
 
 			// If this is a bin, log its elements
-			if (GST_IS_BIN(&item))
+			if (GST_IS_BIN(elem))
 			{
-				log_bin_elements(GST_BIN(&item));
+				log_bin_elements(GST_BIN(elem));
 			}
-
-			g_value_reset (&item);
+			g_value_unset (&value);
 			break;
 		case GST_ITERATOR_RESYNC:
 			gst_iterator_resync (it);
@@ -866,7 +932,6 @@ static void log_bin_elements(GstBin* bin)
 			break;
 		}
 	}
-	g_value_unset (&item);
 	gst_iterator_free (it);
 }
 
