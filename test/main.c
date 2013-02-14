@@ -1,6 +1,7 @@
 #include <gst/gst.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 // Global vars for cmd line args
 //
@@ -10,8 +11,7 @@ static gfloat requested_rate = 0;
 static int rrid = 2;
 static char host[256];
 static char uri[256];
-static gchar* dtcp_key_storage = "home/landerson/RUIHRI/truecrypt/dtcpip_mock.so";
-static gboolean usePlaybin = FALSE;
+static gboolean usePlaybin = TRUE;
 static gboolean use_dtcp = FALSE;
 
 static gboolean test_positioning = FALSE;
@@ -21,7 +21,10 @@ static gboolean test_seeking = FALSE;
 
 static gboolean use_file = FALSE;
 static char file_name[256];
-static gchar* file_path = "file:///home/landerson/RUIHRI/git-dlnaplugin/gst-plugin-la/";
+// *TODO* - change this to env var
+//static gchar* file_path = "file:///home/landerson/RUIHRI/git-dlnaplugin/gst-plugin-la/";
+static gchar* file_path = NULL;
+static gchar* TEST_FILE_URL_PREFIX_ENV = "TEST_FILE_URL_PREFIX";
 
 
 /* Structure to contain all our information, so we can pass it around */
@@ -31,7 +34,7 @@ typedef struct _CustomData {
 	gboolean terminate;    /* Should we terminate execution? */
 	gboolean seek_enabled; /* Is seeking enabled for this media? */
 	gboolean seek_done;    /* Have we performed the seek already? */
-	guint64 duration;      /* How long does this media last, in nanoseconds */
+	gint64 duration;       /* How long does this media last, in nanoseconds */
 	gdouble rate;		   /* current playspeed */
 } CustomData;
 
@@ -57,10 +60,7 @@ static gboolean set_new_uri(CustomData* data);
  */
 int main(int argc, char *argv[]) 
 {
-	GstBus *bus;
-	GstMessage *msg;
-	GstStateChangeReturn ret;
-	GstEvent* seek_event;
+	GstBus *bus = NULL;
 
 	CustomData data;
 	data.playing = FALSE;
@@ -151,9 +151,12 @@ int main(int argc, char *argv[])
 	{
 		g_print("Testing 1x playback\n");
 		bus = gst_element_get_bus (data.pipeline);
-		msg = gst_bus_timed_pop_filtered (bus,
+		if (bus != NULL)
+		{
+			gst_bus_timed_pop_filtered (bus,
 				GST_CLOCK_TIME_NONE, GST_MESSAGE_ERROR | GST_MESSAGE_EOS);
-		gst_object_unref (bus);
+			gst_object_unref (bus);
+		}
 	}
 	return 0;
 }
@@ -361,7 +364,6 @@ static void perform_uri_switch(CustomData* data)
 {
 	GstBus *bus;
 	GstMessage *msg;
-	GstStateChangeReturn ret;
 
 	// Wait for 10 seconds for playback to start up
 	long secs = waitSecs;
@@ -650,10 +652,10 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 				g_print("Set requested host ip to %s\n", host);
 			}
 		}
-		else if (strstr(argv[i], "playbin") != NULL)
+		else if (strstr(argv[i], "pipeline") != NULL)
 		{
-			usePlaybin = TRUE;
-			g_print("Set to use playbin\n");
+			usePlaybin = FALSE;
+			g_print("Set to manually build pipeline\n");
 		}
 		else if (strstr(argv[i], "switch") != NULL)
 		{
@@ -715,7 +717,16 @@ static GstElement* create_playbin_pipeline()
 	}
 	else
 	{
-		sprintf(launchLine, "%s%s%s", line1, file_path, file_name);
+		file_path = getenv(TEST_FILE_URL_PREFIX_ENV);
+		if (file_path == NULL)
+		{
+			g_printerr ("Could not get env var %s value\n", TEST_FILE_URL_PREFIX_ENV);
+			return NULL;
+		}
+		else
+		{
+			sprintf(launchLine, "%s%s%s", line1, file_path, file_name);
+		}
 	}
 
 	g_print("Starting up playbin using line: %s\n", launchLine);
@@ -853,7 +864,6 @@ static void on_source_changed(GstElement* element, GParamSpec* param, gpointer d
 	g_print("Notified of source change, gather supported rates\n");
 
 	int i = 0;
-	float rate = 0;
     GstElement* src = NULL;
     gchar *strVal = NULL;
 
@@ -865,10 +875,6 @@ static void on_source_changed(GstElement* element, GParamSpec* param, gpointer d
     	g_object_get(src, "cl_name", &strVal, NULL);
     	if (strVal != NULL)
     	{
-    		g_print("dlnasrc is source for pipeline, setting dtcp dll property\n");
-    		// Set dll storage property for dtcp
-    		g_object_set(src, "dtcp_key_storage", dtcp_key_storage, NULL);
-
     		// Get supported rates property value which is a GArray
     		g_print("Getting supported rates\n");
     		GArray* arrayVal = NULL;
@@ -924,7 +930,7 @@ static void log_bin_elements(GstBin* bin)
 			gst_iterator_resync (it);
 			break;
 		case GST_ITERATOR_ERROR:
-			g_printf("Unable to iterate through elements\n");
+			g_printerr("Unable to iterate through elements\n");
 			done = TRUE;
 			break;
 		case GST_ITERATOR_DONE:

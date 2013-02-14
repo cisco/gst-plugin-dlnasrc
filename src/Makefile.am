@@ -14,8 +14,7 @@ plugin_LTLIBRARIES = libgstdlnasrc.la
 ##############################################################################
 
 # sources used to compile this plug-in
-libgstdlnasrc_la_SOURCES = gstdlnasrc.c \
-                           gstdlnasrc.h 
+libgstdlnasrc_la_SOURCES = gstdlnasrc.c gstdlnasrc.h
 
 # compiler and linker flags used to compile this plugin, set in configure.ac
 libgstdlnasrc_la_CFLAGS = $(GST_CFLAGS)
@@ -25,4 +24,4 @@ libgstdlnasrc_la_LDFLAGS = $(GST_PLUGIN_LDFLAGS)
 libgstdlnasrc_la_LIBTOOLFLAGS = --tag=disable-static
 
 # headers we need but don't want installed
-noinst_HEADERS = gstplugin.h
+noinst_HEADERS = gstdlnasrc.h

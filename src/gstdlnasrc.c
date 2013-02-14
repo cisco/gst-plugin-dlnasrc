@@ -40,7 +40,6 @@ enum
 {
 	PROP_0,
 	PROP_URI,
-	PROP_DTCP_KEY_STORAGE,
 	PROP_CL_NAME,
 	PROP_SUPPORTED_RATES,
 	//...
@@ -326,11 +325,6 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
 					"CableLabs name used to verify playbin selected source",
 					NULL, G_PARAM_READABLE));
 
-	g_object_class_install_property (gobject_klass, PROP_DTCP_KEY_STORAGE,
-			g_param_spec_string ("dtcp_key_storage", "dtcp_key_storage",
-					"Directory that contains client's keys",
-					"/media/truecrypt1/dll/test_keys", G_PARAM_READWRITE));
-
 	g_object_class_install_property (gobject_klass, PROP_SUPPORTED_RATES,
 				g_param_spec_boxed ("supported_rates", "Supported PlayarrayVal->lenspeed rates",
 						"List of supported playspeed rates of DLNA server content",
@@ -351,9 +345,7 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
 {
     GST_INFO_OBJECT(dlna_src, "Initializing");
 
-    GstPad *pad;
-
-	// Initialize source name
+    // Initialize source name
 	dlna_src->cl_name = g_strdup(DLNA_SRC_CL_NAME);
 
 	// Initialize play rate to 1.0
@@ -418,26 +410,6 @@ gst_dlna_src_set_property (GObject * object, guint prop_id,
 		}
 		break;
 	}
-	case PROP_DTCP_KEY_STORAGE:
-	{
-		if (dlna_src->dtcp_key_storage)
-		{
-			g_free(dlna_src->dtcp_key_storage);
-		}
-		dlna_src->dtcp_key_storage = g_value_dup_string (value);
-
-		// Set dtcpip storage property to this value
-		if (dlna_src->dtcp_decrypter != NULL)
-		{
-			g_object_set(dlna_src->dtcp_decrypter, "dtcpip_storage", dlna_src->dtcp_key_storage, NULL);
-			GST_INFO_OBJECT(dlna_src, "Set dtcp storage to: %s", dlna_src->dtcp_key_storage);
-		}
-		else
-		{
-			GST_INFO_OBJECT(dlna_src, "dtcp decrypter was NULL, storage set to: %s", dlna_src->dtcp_key_storage);
-		}
-		break;
-	}
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 		break;
@@ -474,12 +446,6 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
 				g_value_get_string(value));
 		}
 		break;
-    case PROP_DTCP_KEY_STORAGE:
-    	if (dlna_src->dtcp_key_storage != NULL)
-    	{
-    		g_value_set_string (value, dlna_src->dtcp_key_storage);
-    	}
-      break;
 
 	case PROP_CL_NAME:
     	if (dlna_src->cl_name != NULL)
@@ -1852,10 +1818,6 @@ dlna_src_dtcp_setup(GstDlnaSrc *dlna_src)
 	// Set DTCP port property
 	g_object_set(G_OBJECT(dlna_src->dtcp_decrypter), "dtcp1port",
 			dlna_src->head_response->dtcp_port, NULL);
-
-	// Set DTCP key storage property
-	g_object_set(G_OBJECT(dlna_src->dtcp_decrypter), "dtcpip_storage",
-			dlna_src->dtcp_key_storage, NULL);
 
 	// Add this element to the src
 	gst_bin_add(GST_BIN(&dlna_src->bin), dlna_src->dtcp_decrypter);
