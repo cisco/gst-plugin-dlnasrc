@@ -5,8 +5,8 @@ dnl TODO: fill in your package name and package version here
 AC_INIT([gstdlnasrc],[1.0.0])
 
 dnl required versions of gstreamer and plugins-base
-GST_REQUIRED=0.10.0
-GSTPB_REQUIRED=0.10.0
+GST_REQUIRED=1.0.0
+GSTPB_REQUIRED=1.0.0
 
 AC_CONFIG_SRCDIR([src/gstdlnasrc.c])
 AC_CONFIG_HEADERS([config.h])
@@ -43,9 +43,9 @@ dnl for libgstrtp-1.0: gstreamer-rtp-1.0 >= $GST_REQUIRED
 dnl for libgstrtsp-1.0: gstreamer-rtsp-1.0 >= $GST_REQUIRED
 dnl etc.
 PKG_CHECK_MODULES(GST, [
-  gstreamer-0.10 >= $GST_REQUIRED
-  gstreamer-base-0.10 >= $GST_REQUIRED
-  gstreamer-controller-0.10 >= $GST_REQUIRED
+  gstreamer-1.0 >= $GST_REQUIRED
+  gstreamer-base-1.0 >= $GST_REQUIRED
+  gstreamer-controller-1.0 >= $GST_REQUIRED
 ], [
   AC_SUBST(GST_CFLAGS)
   AC_SUBST(GST_LIBS)
@@ -72,9 +72,9 @@ AC_COMPILE_IFELSE([AC_LANG_PROGRAM([ ], [ ])], [
 
 dnl set the plugindir where plugins should be installed (for src/Makefile.am)
 if test "x${prefix}" = "x$HOME"; then
-  plugindir="$HOME/.gstreamer-0.10/plugins"
+  plugindir="$HOME/.gstreamer-1.0/plugins"
 else
-  plugindir="\$(libdir)/gstreamer-0.10"
+  plugindir="\$(libdir)/gstreamer-1.0"
 fi
 AC_SUBST(plugindir)
 

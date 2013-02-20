@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define GSTREAMER_010
+//#define GSTREAMER_010
 
 // Global vars for cmd line args
 //

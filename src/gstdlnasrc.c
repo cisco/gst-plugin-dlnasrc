@@ -35,7 +35,7 @@
 
 #include "gstdlnasrc.h"
 
-#define GSTREAMER_010
+//#define GSTREAMER_010
 
 /* props */
 enum
@@ -278,7 +278,7 @@ static GstElement* dlna_src_find_bin_element(GstDlnaSrc *dlna_src, GstBin* bin, 
 	GST_BOILERPLATE_FULL(GstDlnaSrc, gst_dlna_src, GstElement, GST_TYPE_BIN, _do_Init);
 
 	const GstElementDetails gst_dlna_src_details
-	= GST_ELEMENT_DETAILS("HTTP/DLNA client source 2/19/13 12:26 PM",
+	= GST_ELEMENT_DETAILS("HTTP/DLNA client source 2/20/13 7:35 AM",
 		"Source/Network",
 		"Receive data as a client via HTTP with DLNA extensions",
 		"Eric Winkelman <e.winkelman@cablelabs.com>");
@@ -315,7 +315,7 @@ gst_dlna_src_base_init (gpointer gclass)
 			"HTTP/DLNA client source",
 			"Source/Network",
 			"Receive data as a client via HTTP with DLNA extensions",
-			"Eric Winkelman <e.winkelman@cablelabs.com> 2/19/13 12:08 PM");
+			"Eric Winkelman <e.winkelman@cablelabs.com> 2/20/13 7:36 AM");
 
 	gst_element_class_add_pad_template(element_class,
 			gst_static_pad_template_get(&gst_dlna_src_src_pad_template));
@@ -344,7 +344,7 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
 	parent_class = g_type_class_peek_parent (klass);
 #else
 	gst_element_class_set_static_metadata (gstelement_klass,
-			"HTTP/DLNA client source 2/19/13 12:07 PM",
+			"HTTP/DLNA client source 2/20/13 7:37 AM",
 					"Source/Network",
 					"Receive data as a client via HTTP with DLNA extensions",
 					"Eric Winkelman <e.winkelman@cablelabs.com>");
