@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#define GSTREAMER_010
+
 // Global vars for cmd line args
 //
 static int waitSecs = 0;
@@ -189,7 +191,11 @@ static void perform_positioning(CustomData* data)
 				gint64 current = -1;
 
 				// Query the current position of the stream
+#ifdef GSTREAMER_010
+				if (!gst_element_query_position (data->pipeline, &fmt, &current))
+#else
 				if (!gst_element_query_position (data->pipeline, GST_FORMAT_TIME, &current))
+#endif
 				{
 					g_printerr ("Could not query current position.\n");
 				}
@@ -198,7 +204,11 @@ static void perform_positioning(CustomData* data)
 				if (!GST_CLOCK_TIME_IS_VALID (data->duration))
 				{
 					//g_print ("Current duration is invalid, query for duration\n");
+#ifdef GSTREAMER_010
+					if (!gst_element_query_duration (data->pipeline, &fmt, &data->duration))
+#else
 					if (!gst_element_query_duration (data->pipeline, GST_FORMAT_TIME, &data->duration))
+#endif
 					{
 						g_printerr ("Could not query current duration.\n");
 					}
@@ -209,7 +219,11 @@ static void perform_positioning(CustomData* data)
 				}
 
 				// Get the current playback rate
+#ifdef GSTREAMER_010
+				query = gst_query_new_segment(fmt);
+#else
 				query = gst_query_new_segment(GST_FORMAT_TIME);
+#endif
 				if (query != NULL)
 				{
 					gst_element_query(data->pipeline, query);
@@ -274,7 +288,11 @@ static void perform_rate_change(CustomData* data)
 		gint64 position;
 
 		// Obtain the current position, needed for the seek event
+#ifdef GSTREAMER_010
+		if (!gst_element_query_position(data->pipeline, &format, &position))
+#else
 		if (!gst_element_query_position(data->pipeline, format, &position))
+#endif
 		{
 			g_printerr("Unable to retrieve current position.\n");
 			return;
@@ -709,8 +727,11 @@ static GstElement* create_playbin_pipeline()
 {
 	GstElement* pipeline = NULL;
 	char launchLine[256];
+#ifdef GSTREAMER_010
+	char* line1 = "playbin2 uri=";
+#else
 	char* line1 = "playbin uri=";
-
+#endif
 	if (!use_file)
 	{
 		sprintf(launchLine, "%s%s", line1, uri);
@@ -905,6 +926,9 @@ static void on_source_changed(GstElement* element, GParamSpec* param, gpointer d
 
 static void log_bin_elements(GstBin* bin)
 {
+#ifdef GSTREAMER_010
+	return;
+#else
 	GstIterator* it = gst_bin_iterate_elements(bin);
 	gboolean done = FALSE;
 	GValue value = { 0 };
@@ -939,6 +963,7 @@ static void log_bin_elements(GstBin* bin)
 		}
 	}
 	gst_iterator_free (it);
+#endif
 }
 
 static gboolean set_pipeline_state(CustomData* data, GstState desired_state, gint timeoutSecs)

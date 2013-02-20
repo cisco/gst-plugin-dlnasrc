@@ -35,6 +35,8 @@
 
 #include "gstdlnasrc.h"
 
+#define GSTREAMER_010
+
 /* props */
 enum
 {
@@ -54,6 +56,7 @@ enum
 
 #define MAX_HTTP_BUF_SIZE 1024
 static const char CRLF[] = "\r\n";
+
 static const char COLON[] = ":";
 
 // Constant strings identifiers for header fields in HEAD response
@@ -147,7 +150,6 @@ static const gint LOP_CLEARTEXTBYTES = 1 << 14; // Support for Limited RADA Clea
 
 static const int RESERVED_FLAGS_LENGTH = 24;
 
-
 // Description of a pad that the element will (or might) create and use
 //
 static GstStaticPadTemplate gst_dlna_src_src_pad_template =
@@ -169,9 +171,18 @@ static void gst_dlna_src_set_property (GObject* object, guint prop_id,
 static void gst_dlna_src_get_property (GObject* object, guint prop_id,
 		GValue* value, GParamSpec* spec);
 
-static gboolean gst_dlna_src_src_event(GstPad* pad, GstObject* parent, GstEvent* event);
+#ifdef GSTREAMER_010
+	static gboolean gst_dlna_src_src_event(GstPad* pad, GstEvent* event);
+#else
+	static gboolean gst_dlna_src_src_event(GstPad* pad, GstObject* parent, GstEvent* event);
+#endif
 
-static gboolean gst_dlna_src_src_query(GstPad *pad, GstObject* parent, GstQuery *query);
+
+#ifdef GSTREAMER_010
+	static gboolean gst_dlna_src_src_query(GstPad *pad, GstQuery *query);
+#else
+	static gboolean gst_dlna_src_src_query(GstPad *pad, GstObject* parent, GstQuery *query);
+#endif
 
 
 
@@ -261,6 +272,23 @@ static GstElement* dlna_src_find_bin_element(GstDlnaSrc *dlna_src, GstBin* bin, 
 
 //static gboolean dlna_src_post_error(GstDlnaSrc *dlna_src, const gchar* errMsg);
 
+#ifdef GSTREAMER_010
+	static void _do_Init(GType type);
+
+	GST_BOILERPLATE_FULL(GstDlnaSrc, gst_dlna_src, GstElement, GST_TYPE_BIN, _do_Init);
+
+	const GstElementDetails gst_dlna_src_details
+	= GST_ELEMENT_DETAILS("HTTP/DLNA client source 2/19/13 12:26 PM",
+		"Source/Network",
+		"Receive data as a client via HTTP with DLNA extensions",
+		"Eric Winkelman <e.winkelman@cablelabs.com>");
+#else
+	#define gst_dlna_src_parent_class parent_class
+
+	G_DEFINE_TYPE_WITH_CODE (GstDlnaSrc, gst_dlna_src, GST_TYPE_BIN,
+			G_IMPLEMENT_INTERFACE (GST_TYPE_URI_HANDLER,
+					gst_dlna_src_uri_handler_init));
+#endif
 
 // Recommended in tutorial for writing a plugin
 //
@@ -277,12 +305,22 @@ gst_play_marshal_VOID__OBJECT_BOOLEAN (GClosure *closure,
 GST_DEBUG_CATEGORY_STATIC (gst_dlna_src_debug);
 #define GST_CAT_DEFAULT gst_dlna_src_debug
 
-#define gst_dlna_src_parent_class parent_class
+#ifdef GSTREAMER_010
+static void
+gst_dlna_src_base_init (gpointer gclass)
+{
+	GstElementClass *element_class = GST_ELEMENT_CLASS (gclass);
 
-G_DEFINE_TYPE_WITH_CODE (GstDlnaSrc, gst_dlna_src, GST_TYPE_BIN,
-    G_IMPLEMENT_INTERFACE (GST_TYPE_URI_HANDLER,
-        gst_dlna_src_uri_handler_init));
+	gst_element_class_set_details_simple(element_class,
+			"HTTP/DLNA client source",
+			"Source/Network",
+			"Receive data as a client via HTTP with DLNA extensions",
+			"Eric Winkelman <e.winkelman@cablelabs.com> 2/19/13 12:08 PM");
 
+	gst_element_class_add_pad_template(element_class,
+			gst_static_pad_template_get(&gst_dlna_src_src_pad_template));
+}
+#endif
 
 /*
  * Initializes (only called once) the class associated with this element from within
@@ -302,8 +340,11 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
 	gobject_klass = (GObjectClass *) klass;
 	gstelement_klass = (GstElementClass *) klass;
 
+#ifdef GSTREAMER_010
+	parent_class = g_type_class_peek_parent (klass);
+#else
 	gst_element_class_set_static_metadata (gstelement_klass,
-			"HTTP/DLNA client source 11/19/12 7:26 PM",
+			"HTTP/DLNA client source 2/19/13 12:07 PM",
 					"Source/Network",
 					"Receive data as a client via HTTP with DLNA extensions",
 					"Eric Winkelman <e.winkelman@cablelabs.com>");
@@ -311,6 +352,7 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
 	// Add the src pad template
 	gst_element_class_add_pad_template(gstelement_klass,
 			gst_static_pad_template_get(&gst_dlna_src_src_pad_template));
+#endif
 
 	gobject_klass->set_property = gst_dlna_src_set_property;
 	gobject_klass->get_property = gst_dlna_src_get_property;
@@ -331,6 +373,10 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
 						G_TYPE_ARRAY, G_PARAM_READABLE));
 
 	gobject_klass->dispose = GST_DEBUG_FUNCPTR (gst_dlna_src_dispose);
+
+#ifdef GSTREAMER_010
+	gst_element_class_set_details (gstelement_klass, &gst_dlna_src_details);
+#endif
 }
 
 /*
@@ -341,7 +387,12 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
  * @param gclass	class representation of this element
  */
 static void
+#ifdef GSTREAMER_010
+gst_dlna_src_init (GstDlnaSrc * dlna_src,
+		GstDlnaSrcClass * gclass)
+#else
 gst_dlna_src_init (GstDlnaSrc * dlna_src)
+#endif
 {
     GST_INFO_OBJECT(dlna_src, "Initializing");
 
@@ -492,9 +543,14 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
  * @return	true if this element handles event, false otherwise
  */
 static gboolean
+#ifdef GSTREAMER_010
+gst_dlna_src_src_event(GstPad    *pad,
+					   GstEvent  *event)
+#else
 gst_dlna_src_src_event(GstPad    *pad,
 					   GstObject *parent,
 					   GstEvent  *event)
+#endif
 {
 	gboolean ret;
 	GstDlnaSrc *dlna_src = GST_DLNA_SRC(gst_pad_get_parent(pad));
@@ -506,35 +562,59 @@ gst_dlna_src_src_event(GstPad    *pad,
 		ret = dlna_src_handle_event_seek(dlna_src, pad, event);
 		if (!ret)
 		{
+#ifdef GSTREAMER_010
+			ret = gst_pad_event_default (pad, event);
+#else
 			ret = gst_pad_event_default (pad, parent, event);
+#endif
 		}
 		break;
 
 	case GST_EVENT_NAVIGATION:
 		// Just call the default handler
+#ifdef GSTREAMER_010
+		ret = gst_pad_event_default (pad, event);
+#else
 		ret = gst_pad_event_default (pad, parent, event);
+#endif
 		break;
 
 	case GST_EVENT_QOS:
 		// Just call the default handler
+#ifdef GSTREAMER_010
+		ret = gst_pad_event_default (pad, event);
+#else
 		ret = gst_pad_event_default (pad, parent, event);
+#endif
 		break;
 
 	case GST_EVENT_LATENCY:
 		// Just call the default handler
+#ifdef GSTREAMER_010
+		ret = gst_pad_event_default (pad, event);
+#else
 		ret = gst_pad_event_default (pad, parent, event);
+#endif
 		break;
 
 	case GST_EVENT_FLUSH_START:
 		GST_INFO_OBJECT(dlna_src, "Got src event: %s", GST_EVENT_TYPE_NAME(event));
 		// Just call the default handler
+#ifdef GSTREAMER_010
+		ret = gst_pad_event_default (pad, event);
+#else
 		ret = gst_pad_event_default (pad, parent, event);
+#endif
 		break;
 
 	default:
 		// Just call the default handler
 		GST_INFO_OBJECT(dlna_src, "Unsupported event: %s", GST_EVENT_TYPE_NAME(event));
+#ifdef GSTREAMER_010
+		ret = gst_pad_event_default (pad, event);
+#else
 		ret = gst_pad_event_default (pad, parent, event);
+#endif
 		break;
 	}
 
@@ -547,9 +627,14 @@ gst_dlna_src_src_event(GstPad    *pad,
  * @return true if query could be performed
  */
 static gboolean
+#ifdef GSTREAMER_010
+gst_dlna_src_src_query (GstPad    *pad,
+						GstQuery  *query)
+#else
 gst_dlna_src_src_query (GstPad    *pad,
 		   	   	   	    GstObject *parent,
 						GstQuery  *query)
+#endif
 {
 	gboolean ret = FALSE;
 	GstDlnaSrc *dlna_src = GST_DLNA_SRC(gst_pad_get_parent(pad));
@@ -558,14 +643,22 @@ gst_dlna_src_src_query (GstPad    *pad,
 	{
 	case GST_QUERY_POSITION:
 		// Don't know current position in stream, let some other element handle this
+#ifdef GSTREAMER_010
+		ret = gst_pad_query_default (pad, query);
+#else
 		ret = gst_pad_query_default (pad, parent, query);
+#endif
 		break;
 
 	case GST_QUERY_DURATION:
 		ret = dlna_src_handle_query_duration(dlna_src, query);
 		if (!ret)
 		{
+#ifdef GSTREAMER_010
+			ret = gst_pad_query_default (pad, query);
+#else
 			ret = gst_pad_query_default (pad, parent, query);
+#endif
 		}
 		break;
 
@@ -573,7 +666,11 @@ gst_dlna_src_src_query (GstPad    *pad,
 		ret = dlna_src_handle_query_seeking(dlna_src, query);
 		if (!ret)
 		{
+#ifdef GSTREAMER_010
+			ret = gst_pad_query_default (pad, query);
+#else
 			ret = gst_pad_query_default (pad, parent, query);
+#endif
 		}
 		break;
 
@@ -581,19 +678,31 @@ gst_dlna_src_src_query (GstPad    *pad,
 		ret = dlna_src_handle_query_segment(dlna_src, query);
 		if (!ret)
 		{
+#ifdef GSTREAMER_010
+			ret = gst_pad_query_default (pad, query);
+#else
 			ret = gst_pad_query_default (pad, parent, query);
+#endif
 		}
 		break;
 
 	case GST_QUERY_LATENCY:
+#ifdef GSTREAMER_010
+		ret = gst_pad_query_default (pad, query);
+#else
 		ret = gst_pad_query_default (pad, parent, query);
+#endif
 		break;
 
 	default:
 		// just call the default handler
 		GST_INFO_OBJECT(dlna_src, "Got src query: %s, passing to default handler",
 				GST_QUERY_TYPE_NAME(query));
+#ifdef GSTREAMER_010
+		ret = gst_pad_query_default (pad, query);
+#else
 		ret = gst_pad_query_default (pad, parent, query);
+#endif
 		break;
 	}
 
@@ -1341,6 +1450,9 @@ static void dlna_src_send_event(GstDlnaSrc *dlna_src, GstEvent* event)
 
 static void dlna_src_log_bin_elements(GstDlnaSrc *dlna_src, GstBin* bin)
 {
+#ifdef GSTREAMER_010
+	return;
+#else
 	GstIterator* it = gst_bin_iterate_elements(bin);
 	gboolean done = FALSE;
 	GValue value = { 0 };
@@ -1375,6 +1487,7 @@ static void dlna_src_log_bin_elements(GstDlnaSrc *dlna_src, GstBin* bin)
 		}
 	}
 	gst_iterator_free (it);
+#endif
 }
 
 /*
@@ -1632,26 +1745,58 @@ dlna_src_formulate_extra_headers(GstDlnaSrc *dlna_src, gfloat rate, GstFormat fo
 	return TRUE;
 }
 
+#ifdef GSTREAMER_010
+static void
+_do_Init(GType type)
+{
+    static const GInterfaceInfo urihandler_info =
+    {
+        gst_dlna_src_uri_handler_init,
+        NULL,
+        NULL
+    };
+
+    g_type_add_interface_static(type, GST_TYPE_URI_HANDLER, &urihandler_info);
+}
+#endif
+
 /*********************************************/
 /**********                         **********/
 /********** GstUriHandler INTERFACE **********/
 /**********                         **********/
 /*********************************************/
-
+#ifdef GSTREAMER_010
+static GstURIType
+gst_dlna_src_uri_get_type(void)
+#else
 static guint
 gst_dlna_src_uri_get_type(GType type)
+#endif
 {
 	return GST_URI_SRC;
 }
 
+#ifdef GSTREAMER_010
+static gchar **
+gst_dlna_src_uri_get_protocols(void)
+#else
 static const gchar *const *
 gst_dlna_src_uri_get_protocols(GType type)
+#endif
 {
+#ifdef GSTREAMER_010
+	static gchar *protocols[] = { "http", "https", NULL };
+#else
 	static const gchar *protocols[] = { "http", "https", NULL };
+#endif
 	return protocols;
 }
 
+#ifdef GSTREAMER_010
+static const gchar *
+#else
 static gchar *
+#endif
 gst_dlna_src_uri_get_uri(GstURIHandler* handler)
 {
 	GstDlnaSrc *dlna_src = GST_DLNA_SRC(handler);
@@ -1659,8 +1804,12 @@ gst_dlna_src_uri_get_uri(GstURIHandler* handler)
 }
 
 static gboolean
+#ifdef GSTREAMER_010
+gst_dlna_src_uri_set_uri(GstURIHandler * handler, const gchar * uri)
+#else
 gst_dlna_src_uri_set_uri(GstURIHandler * handler, const gchar * uri,
 	    GError ** error)
+#endif
 {
 	GstDlnaSrc *dlna_src = GST_DLNA_SRC(handler);
 
@@ -1752,6 +1901,7 @@ dlna_src_set_uri(GstDlnaSrc *dlna_src, const gchar* value)
 		GST_INFO_OBJECT(dlna_src, "Creating src pad for dlnasrc bin using soup http src pad");
 		dlna_src->src_pad = gst_ghost_pad_new("src", pad);
 		gst_pad_set_active (dlna_src->src_pad, TRUE);
+
 		gst_element_add_pad(GST_ELEMENT (&dlna_src->bin), dlna_src->src_pad);
 		gst_object_unref (pad);
 
@@ -1772,7 +1922,9 @@ dlna_src_set_uri(GstDlnaSrc *dlna_src, const gchar* value)
 		{
 			GST_ERROR_OBJECT(dlna_src, "Problems starting http src element");
 			return FALSE;
-		}
+		}gst_dlna_src_uri_set_uri(GstURIHandler * handler, const gchar * uri,
+	    GError ** error)
+
 		else
 		{
 			GST_INFO_OBJECT(dlna_src, "Set http src into playing state");
@@ -1867,7 +2019,11 @@ static GstElement* dlna_src_find_bin_element(GstDlnaSrc *dlna_src, GstBin* bin, 
 	GstElement* found_element = NULL;
 	GstIterator* it = gst_bin_iterate_elements(bin);
 	gboolean done = FALSE;
+#ifdef GSTREAMER_010
+	gpointer value;
+#else
 	GValue value = { 0 };
+#endif
 	GstElement *elem = NULL;
 
 	while (!done)
@@ -1875,8 +2031,11 @@ static GstElement* dlna_src_find_bin_element(GstDlnaSrc *dlna_src, GstBin* bin, 
 		switch (gst_iterator_next (it, &value))
 		{
 		case GST_ITERATOR_OK:
+#ifdef GSTREAMER_010
+		    elem = GST_ELEMENT(value);
+#else
 		    elem = (GstElement *) g_value_get_object (&value);
-
+#endif
 		    GST_LOG_OBJECT(dlna_src, "Bin %s has element: %s\n",
 					GST_ELEMENT_NAME(GST_ELEMENT(bin)),
 					GST_ELEMENT_NAME(elem));
@@ -1900,7 +2059,10 @@ static GstElement* dlna_src_find_bin_element(GstDlnaSrc *dlna_src, GstBin* bin, 
 					break;
 				}
 			}
+#ifdef GSTREAMER_010
+#else
 			g_value_unset (&value);
+#endif
 			break;
 		case GST_ITERATOR_RESYNC:
 			gst_iterator_resync (it);
@@ -3574,7 +3736,11 @@ dlna_src_init (GstPlugin * dlna_src)
 GST_PLUGIN_DEFINE (
     GST_VERSION_MAJOR,
     GST_VERSION_MINOR,
+#ifdef GSTREAMER_010
+    "dlnasrc",
+#else
     dlnasrc,
+#endif
     "MPEG+DLNA Decoder",
     (GstPluginInitFunc)dlna_src_init,
     VERSION,
