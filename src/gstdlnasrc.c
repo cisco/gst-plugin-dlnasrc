@@ -35,6 +35,7 @@
 
 #include "gstdlnasrc.h"
 
+// Uncomment to compile under GStreamer-0.10 instead of GStreamer-1.0
 //#define GSTREAMER_010
 
 /* props */

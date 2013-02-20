@@ -21,8 +21,8 @@ Makefile.in
 missing
 stamp-h1
 test/test
-test/clock.mpg
-test/true_lies.mpg
-test/two_videos.mkv
-test/two_videos.ogv
+test/*.mkv
+test/*.ogv
+test/*.mpg
+test/*.txt
 
