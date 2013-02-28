@@ -3,6 +3,7 @@
 #define __GST_DLNA_SRC_H__
 
 #include <gst/gst.h>
+#include <gst/base/gstbasesrc.h>
 
 G_BEGIN_DECLS
 

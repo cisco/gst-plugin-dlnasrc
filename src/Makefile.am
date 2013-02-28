@@ -3,7 +3,7 @@
 ##############################################################################
 # TODO: change libgstplugin.la to something else, e.g. libmysomething.la     #
 ##############################################################################
-plugin_LTLIBRARIES = libgstdlnasrc.la
+plugin_LTLIBRARIES = libgstdlnasrc.la libgstdlnasouphttpsrc.la
 
 ##############################################################################
 # TODO: for the next set of variables, name the prefix if you named the .la, #
@@ -14,7 +14,9 @@ plugin_LTLIBRARIES = libgstdlnasrc.la
 ##############################################################################
 
 # sources used to compile this plug-in
-libgstdlnasrc_la_SOURCES = gstdlnasrc.c gstdlnasrc.h
+libgstdlnasrc_la_SOURCES = gstdlnasrc.c gstdlnasrc.h 
+
+libgstdlnasouphttpsrc_la_SOURCES = gstdlnasouphttpsrc.c gstdlnasouphttpsrc.h
 
 # compiler and linker flags used to compile this plugin, set in configure.ac
 libgstdlnasrc_la_CFLAGS = $(GST_CFLAGS)
@@ -23,5 +25,10 @@ libgstdlnasrc_la_LIBADD = $(GST_LIBS)
 libgstdlnasrc_la_LDFLAGS = $(GST_PLUGIN_LDFLAGS)
 libgstdlnasrc_la_LIBTOOLFLAGS = --tag=disable-static
 
+libgstdlnasouphttpsrc_la_CFLAGS = $(GST_CFLAGS) $(SOUP_CFLAGS) 
+libgstdlnasouphttpsrc_la_LIBADD = $(GST_LIBS) $(SOUP_LIBS)
+libgstdlnasouphttpsrc_la_LDFLAGS = $(GST_PLUGIN_LDFLAGS)
+libgstdlnasouphttpsrc_la_LIBTOOLFLAGS = --tag=disable-static
+
 # headers we need but don't want installed
-noinst_HEADERS = gstdlnasrc.h
+noinst_HEADERS = gstdlnasrc.h gstdlnasouphttpsrc.h

@@ -164,6 +164,10 @@ int main(int argc, char *argv[])
 	return 0;
 }
 
+/**
+ * Test which queries current position, duration and rate (via new segment).
+ * If queries are successful, initiates a rate change.
+ */
 static void perform_positioning(CustomData* data)
 {
 	GstBus *bus;
@@ -172,6 +176,7 @@ static void perform_positioning(CustomData* data)
 	gint64 start;
 	gint64 stop;
 	GstFormat fmt;
+	GstElement *video_sink = NULL;
 
 	// Wait until error or EOS
 	bus = gst_element_get_bus (data->pipeline);
@@ -199,6 +204,7 @@ static void perform_positioning(CustomData* data)
 #endif
 				{
 					g_printerr ("Could not query current position.\n");
+					return;
 				}
 
 				// If we didn't know it yet, query the stream duration
@@ -212,6 +218,7 @@ static void perform_positioning(CustomData* data)
 #endif
 					{
 						g_printerr ("Could not query current duration.\n");
+						return;
 					}
 					else
 					{
@@ -235,6 +242,7 @@ static void perform_positioning(CustomData* data)
 				else
 				{
 					g_printerr ("Could not query segment to get playback rate\n");
+					return;
 				}
 
 				// Print current position and total duration
@@ -244,20 +252,94 @@ static void perform_positioning(CustomData* data)
 				// If seeking is enabled, we have not done it yet, and the time is right, seek
 				if (data->seek_enabled && !data->seek_done && current > 10 * GST_SECOND)
 				{
-					g_print ("\nReached 10s, performing seek with rate %3.1f...\n", data->rate);
+					g_print ("\nReached 10s, performing seek with requested rate %3.1f...\n", requested_rate);
 
 					// If not changing rate, use seek simple
 					if (requested_rate == 0.0)
 					{
 						// Seek simple will send rate of 0 which will be ignored
-						gst_element_seek_simple (data->pipeline, GST_FORMAT_TIME,
-								GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT, 30 * GST_SECOND);
+						if (!gst_element_seek_simple (data->pipeline, GST_FORMAT_TIME,
+								GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT, 30 * GST_SECOND))
+						{
+							g_printerr ("Problems doing a simple seek with no rate change\n");
+							return;
+						}
+						else
+						{
+							g_print("Completed seek with no rate change\n");
+						}
 					}
 					else
 					{
-						gst_element_seek(data->pipeline, data->rate, GST_FORMAT_TIME,
-								GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT,
-								GST_SEEK_TYPE_END, 30 * GST_SECOND, GST_SEEK_TYPE_NONE, 0);
+						if (1)
+						{
+							GstEvent* seek_event = gst_event_new_seek (requested_rate, 		// rate
+																	   GST_FORMAT_TIME, 	// format
+																	   GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE, // flags
+																	   GST_SEEK_TYPE_NONE, 	// start type?
+																	   current,				// start
+																	   GST_SEEK_TYPE_NONE, 	// stop type
+																	   -1);					// stop
+
+							if (seek_event != NULL)
+							{
+								if (1)
+								{
+									g_print("Created seek event for rate change, sending through video sink\n");
+									g_object_get (data->pipeline, "video-sink", &video_sink, NULL);
+									if (video_sink != NULL)
+									{
+										if (!gst_element_send_event(video_sink, seek_event))
+										{
+											g_printerr ("Problems sending seek event through video sink for rate change\n");
+											return;
+										}
+										else
+										{
+											g_print("Sent seek event through video sink for rate change\n");
+										}
+									}
+									else
+									{
+										g_printerr("Not ending seek event due to NULL video sink\n");
+										return;
+									}
+								}
+								else
+								{
+									if (!gst_element_send_event (data->pipeline, seek_event))
+									{
+										g_printerr ("Problems sending seek event through playbin for rate change\n");
+										return;
+									}
+									else
+									{
+										g_print("Sent seek event through playbin for rate change\n");
+									}
+								}
+							}
+							else
+							{
+								g_printerr ("Unable to create seek event for rate change\n");
+								return;
+							}
+						}
+						else
+						{
+							if (!gst_element_seek(data->pipeline, requested_rate, GST_FORMAT_TIME,
+									GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT,
+									GST_SEEK_TYPE_END, 30 * GST_SECOND, GST_SEEK_TYPE_NONE, 0))
+							{
+								g_printerr ("Problems doing a seek with rate change to %3.1f\n",
+										requested_rate);
+								return;
+							}
+							else
+							{
+								g_print("Completed seek with rate change to %3.1f\n",
+										requested_rate);
+							}
+						}
 					}
 					data->seek_done = TRUE;
 				}
@@ -271,9 +353,9 @@ static void perform_rate_change(CustomData* data)
 	GstEvent* event;
 	GstBus *bus;
 	GstMessage *msg;
-	//GstFormat format = GST_FORMAT_TIME;
+	GstFormat format = GST_FORMAT_TIME;
 	//GstFormat format = GST_FORMAT_BYTES;
-	GstFormat format = GST_FORMAT_DEFAULT;
+	//GstFormat format = GST_FORMAT_DEFAULT;
 	GstElement* video_sink = NULL;
 
 	// Wait for 10 seconds for playback to start up
@@ -286,51 +368,105 @@ static void perform_rate_change(CustomData* data)
 	{
 		g_print("Requesting rate change to %4.1f\n", requested_rate);
 
-		gint64 position;
+		gint64 position = -1;
 
 		// Obtain the current position, needed for the seek event
-#ifdef GSTREAMER_010
-		if (!gst_element_query_position(data->pipeline, &format, &position))
-#else
-		if (!gst_element_query_position(data->pipeline, format, &position))
-#endif
-		{
-			g_printerr("Unable to retrieve current position.\n");
-			return;
-		}
-
 		if (0)
 		{
-			// Create the seek event
-			g_print("Creating seek event\n");
-			event = gst_event_new_seek(requested_rate, format,
-					GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE,
-					GST_SEEK_TYPE_SET, position, GST_SEEK_TYPE_NONE, 0);
-
 			g_print("Get video sink in order to send event\n");
 			g_object_get (data->pipeline, "video-sink", &video_sink, NULL);
 			if (video_sink != NULL)
 			{
-				// Send the event
-				g_print("Sending seek event to video sink\n");
-				gst_element_send_event(video_sink, event);
+#ifdef GSTREAMER_010
+				if (!gst_element_query_position(video_sink, &format, &position))
+#else
+				if (!gst_element_query_position(video_sink, format, &position))
+#endif
+				{
+					g_printerr("Unable to retrieve current position.\n");
+					return;
+				}
 			}
 			else
 			{
-				g_print("Not ending seek event due to NULL video sink\n");
+				g_printerr("Not ending seek event due to NULL video sink\n");
+				return;
+			}
+
+			// Create the seek event
+			g_print("Creating seek event\n");
+			event = gst_event_new_seek(requested_rate, format,
+					//GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE, // see flush stop err
+					//GST_SEEK_FLAG_NONE, // don't see error but playback stalls
+					GST_SEEK_FLAG_FLUSH,
+					GST_SEEK_TYPE_SET, position, GST_SEEK_TYPE_NONE, -1);
+			if (event == NULL)
+			{
+				g_printerr("Unable to create SEEK event\n");
+				return;
+			}
+
+			// Send the event
+			g_print("Sending seek event to video sink\n");
+			if (!gst_element_send_event(video_sink, event))
+			{
+				g_printerr("Unable to send seek event via video sink\n");
+				return;
+			}
+			else
+			{
+				g_print("Seek event sent via video sink\n");
 			}
 		}
 		else
 		{
-			g_print("Seeking on pipeline element\n");
-			if (!gst_element_seek (data->pipeline, requested_rate,
-					GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH,
-	                GST_SEEK_TYPE_SET, position,
-	                GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE))
+			g_print("Query position in format: %s\n", gst_format_get_name(format));
+			format = GST_FORMAT_TIME;
+#ifdef GSTREAMER_010
+			if (!gst_element_query_position(data->pipeline, &format, &position))
+#else
+			if (!gst_element_query_position(data->pipeline, format, &position))
+#endif
 			{
 				g_printerr("Unable to retrieve current position.\n");
 				return;
 			}
+			g_print("Got current position in format %s: %llu\n",
+					gst_format_get_name(format), position);
+
+			if (0)
+			{
+				// Create the EOS event
+				g_print("Creating EOS event\n");
+				event = gst_event_new_eos();
+				if (event == NULL)
+				{
+					g_printerr("Unable to create EOS event\n");
+					return;
+				}
+
+				// Send the event
+				g_print("Sending EOS to video sink\n");
+				if (!gst_element_send_event(data->pipeline, event))
+				{
+					g_printerr("Unable to send EOS event via video sink\n");
+					return;
+				}
+				else
+				{
+					g_print("EOS event sent via video sink\n");
+				}
+			}
+			g_print("Seeking on pipeline element\n");
+			if (!gst_element_seek (data->pipeline, requested_rate,
+					GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH,
+					GST_SEEK_TYPE_SET, position,
+					GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE))
+			{
+				g_printerr("Problems changing rate.\n");
+				return;
+			}
+			g_print("Seeking on pipeline element complete\n");
 		}
 	}
 	else
@@ -762,7 +898,7 @@ static GstElement* create_playbin_pipeline()
     //g_object_set (pipeline, "ring-buffer-max-size", (guint64)4000000, NULL);
     //g_object_set (pipeline, "ring-buffer-max-size", (guint64)400000, NULL);
     //g_object_set (pipeline, "ring-buffer-max-size", (guint64)400, NULL); - seg faults?
-    //g_object_set (pipeline, "ring-buffer-max-size", (guint64)4000, NULL);
+    g_object_set (pipeline, "ring-buffer-max-size", (guint64)4000, NULL);
 
     // Tried to force audio to fake sink since it complained about audio decoder
     // when trying to change URIs
@@ -930,6 +1066,7 @@ static void log_bin_elements(GstBin* bin)
 #ifdef GSTREAMER_010
 	return;
 #else
+	g_print("Iterate through elements\n");
 	GstIterator* it = gst_bin_iterate_elements(bin);
 	gboolean done = FALSE;
 	GValue value = { 0 };
@@ -1005,7 +1142,7 @@ static gboolean set_pipeline_state(CustomData* data, GstState desired_state, gin
              }
              else if (ret == GST_STATE_CHANGE_ASYNC)
              {
-                 g_printerr ("State change time out\n");
+                 g_printerr ("State change time out: %d secs\n", curCnt);
              }
              else
              {

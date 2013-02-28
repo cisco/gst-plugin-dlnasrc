@@ -59,6 +59,19 @@ PKG_CHECK_MODULES(GST, [
   ])
 ])
 
+dnl *** soup ***
+PKG_CHECK_MODULES(SOUP, [
+  libsoup-gnome-2.4 >= 2.3.2
+], [
+  AC_SUBST(SOUP_CFLAGS)
+  AC_SUBST(SOUP_LIBS)
+], [
+  AC_MSG_ERROR([
+      You need to install or upgrade the libsoup on your system. 
+      The minimum version required is 2.3.2.
+  ])
+])
+
 dnl check if compiler understands -Wall (if yes, add -Wall to GST_CFLAGS)
 AC_MSG_CHECKING([to see if compiler understands -Wall])
 save_CFLAGS="$CFLAGS"

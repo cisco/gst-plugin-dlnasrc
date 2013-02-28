@@ -25,4 +25,6 @@ test/*.mkv
 test/*.ogv
 test/*.mpg
 test/*.txt
+test/*.log
+bug
 
