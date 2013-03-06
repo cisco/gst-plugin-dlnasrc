@@ -76,7 +76,7 @@ struct _GstDlnaSoupHTTPSrc {
 
   gboolean seekable;           /* FALSE if the server does not support
                                   Range. */
-  guint64 request_position;    /* Seek to this position. */
+  guint64 request_position;       /* Seek to this position. */
 
   gdouble request_rate;		   /* requested rate for playback */
   gdouble current_rate;		   /* current rate for playback */

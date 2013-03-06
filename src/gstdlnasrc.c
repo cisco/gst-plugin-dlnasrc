@@ -36,7 +36,7 @@
 #include "gstdlnasrc.h"
 
 // Uncomment to compile under GStreamer-0.10 instead of GStreamer-1.0
-//#define GSTREAMER_010
+#define GSTREAMER_010
 
 // Uncomment to use soup http src rather than dlna soup http src
 //#define USE_SOUP_HTTP_SRC
@@ -157,7 +157,7 @@ static const int RESERVED_FLAGS_LENGTH = 24;
 
 // Description of a pad that the element will (or might) create and use
 //
-static GstStaticPadTemplate gst_dlna_src_src_pad_template =
+static GstStaticPadTemplate gst_dlna_src_pad_template =
 		GST_STATIC_PAD_TEMPLATE (
 				"src",					// name for pad
 				GST_PAD_SRC,				// direction of pad
@@ -177,16 +177,16 @@ static void gst_dlna_src_get_property (GObject* object, guint prop_id,
 		GValue* value, GParamSpec* spec);
 
 #ifdef GSTREAMER_010
-	static gboolean gst_dlna_src_src_event(GstPad* pad, GstEvent* event);
+	static gboolean gst_dlna_src_event(GstPad* pad, GstEvent* event);
 #else
-	static gboolean gst_dlna_src_src_event(GstPad* pad, GstObject* parent, GstEvent* event);
+	static gboolean gst_dlna_src_event(GstPad* pad, GstObject* parent, GstEvent* event);
 #endif
 
 
 #ifdef GSTREAMER_010
-	static gboolean gst_dlna_src_src_query(GstPad *pad, GstQuery *query);
+	static gboolean gst_dlna_src_query(GstPad *pad, GstQuery *query);
 #else
-	static gboolean gst_dlna_src_src_query(GstPad *pad, GstObject* parent, GstQuery *query);
+	static gboolean gst_dlna_src_query(GstPad *pad, GstObject* parent, GstQuery *query);
 #endif
 
 // **********************
@@ -257,12 +257,14 @@ static gboolean dlna_src_is_change_valid(GstDlnaSrc *dlna_src, gfloat rate, GstF
 
 static gboolean dlna_src_is_rate_supported(GstDlnaSrc *dlna_src, gfloat rate);
 
+static gboolean dlna_src_is_new_http_request_needed(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start, guint64 stop);
+
 static gboolean dlna_src_find_pipeline_and_bus(GstDlnaSrc *dlna_src);
 
 static gboolean dlna_src_set_element_state(GstDlnaSrc *dlna_src, GstElement* element, GstState desired_state, int timeout_secs);
 
 static gboolean dlna_src_formulate_extra_headers(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format,
-												 guint64 start, GstStructure* headers);
+												 guint64 start, GstStructure** headers);
 
 static gboolean dlna_src_npt_to_nanos(GstDlnaSrc *dlna_src, gchar* string, guint64* media_time_nanos);
 
@@ -323,7 +325,7 @@ gst_dlna_src_base_init (gpointer gclass)
 			"Eric Winkelman <e.winkelman@cablelabs.com> 2/20/13 7:36 AM");
 
 	gst_element_class_add_pad_template(element_class,
-			gst_static_pad_template_get(&gst_dlna_src_src_pad_template));
+			gst_static_pad_template_get(&gst_dlna_src_pad_template));
 }
 #endif
 
@@ -356,7 +358,7 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
 
 	// Add the src pad template
 	gst_element_class_add_pad_template(gstelement_klass,
-			gst_static_pad_template_get(&gst_dlna_src_src_pad_template));
+			gst_static_pad_template_get(&gst_dlna_src_pad_template));
 #endif
 
 	gobject_klass->set_property = gst_dlna_src_set_property;
@@ -554,99 +556,58 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
  */
 static gboolean
 #ifdef GSTREAMER_010
-gst_dlna_src_src_event(GstPad    *pad,
+gst_dlna_src_event(GstPad    *pad,
 					   GstEvent  *event)
 #else
-gst_dlna_src_src_event(GstPad    *pad,
+gst_dlna_src_event(GstPad    *pad,
 					   GstObject *parent,
 					   GstEvent  *event)
 #endif
 {
-	gboolean ret;
+	gboolean ret = FALSE;
 	GstDlnaSrc *dlna_src = GST_DLNA_SRC(gst_pad_get_parent(pad));
-	GST_INFO_OBJECT(dlna_src, "Got src event: %s", GST_EVENT_TYPE_NAME(event));
 
-	if (0)
+	switch (GST_EVENT_TYPE (event))
 	{
-		//GST_INFO_OBJECT(dlna_src, "Got src event: %s", GST_EVENT_TYPE_NAME(event));
-		switch (GST_EVENT_TYPE (event))
-		{
-		case GST_EVENT_SEEK:
-			ret = dlna_src_handle_event_seek(dlna_src, pad, event);
-			if (!ret)
-			{
-	#ifdef GSTREAMER_010
-				ret = gst_pad_event_default (pad, event);
-	#else
-				ret = gst_pad_event_default (pad, parent, event);
-	#endif
-			}
-			break;
+	case GST_EVENT_SEEK:
+		GST_INFO_OBJECT(dlna_src, "Got src event: %s", GST_EVENT_TYPE_NAME(event));
+		ret = dlna_src_handle_event_seek(dlna_src, pad, event);
+		break;
 
-		case GST_EVENT_NAVIGATION:
-			// Just call the default handler
-	#ifdef GSTREAMER_010
-			ret = gst_pad_event_default (pad, event);
-	#else
-			ret = gst_pad_event_default (pad, parent, event);
-	#endif
-			break;
+	case GST_EVENT_FLUSH_START:
+		GST_INFO_OBJECT(dlna_src, "Got src event: %s", GST_EVENT_TYPE_NAME(event));
+		// *TODO* - should we be doing something?
+		break;
 
-		case GST_EVENT_QOS:
-			// Just call the default handler
-	#ifdef GSTREAMER_010
-			ret = gst_pad_event_default (pad, event);
-	#else
-			ret = gst_pad_event_default (pad, parent, event);
-	#endif
-			break;
+	case GST_EVENT_QOS:
+		// *TODO* - tmp just to get rid of all qos log messages
+		//ret = TRUE;
+		break;
 
-		case GST_EVENT_LATENCY:
-			// Just call the default handler
-	#ifdef GSTREAMER_010
-			ret = gst_pad_event_default (pad, event);
-	#else
-			ret = gst_pad_event_default (pad, parent, event);
-	#endif
-			break;
+	case GST_EVENT_LATENCY:
+		// Just call the default handler
+		break;
 
-		case GST_EVENT_FLUSH_START:
-			GST_INFO_OBJECT(dlna_src, "Got src event: %s", GST_EVENT_TYPE_NAME(event));
-			// Just call the default handler
-	#ifdef GSTREAMER_010
-			ret = gst_pad_event_default (pad, event);
-	#else
-			ret = gst_pad_event_default (pad, parent, event);
-	#endif
-			break;
+	case GST_EVENT_NAVIGATION:
+		// *TODO* - what does this event mean?
+		// Just call the default handler
+		break;
 
-		default:
-			// Just call the default handler
-			GST_INFO_OBJECT(dlna_src, "Unsupported event: %s", GST_EVENT_TYPE_NAME(event));
-	#ifdef GSTREAMER_010
-			ret = gst_pad_event_default (pad, event);
-	#else
-			ret = gst_pad_event_default (pad, parent, event);
-	#endif
-			break;
-		}
-
+	default:
+		// Just call the default handler
+		GST_INFO_OBJECT(dlna_src, "Unsupported event: %s",
+				GST_EVENT_TYPE_NAME(event));
+		break;
 	}
-	else
+
+	// If not handled, pass on to default handler
+	if (!ret)
 	{
-		switch (GST_EVENT_TYPE (event))
-		{
-		case GST_EVENT_QOS:
-			// *TODO* - tmp just to get rid of all qos log messages
-			ret = TRUE;
-			break;
-		default:
 #ifdef GSTREAMER_010
 		ret = gst_pad_event_default (pad, event);
 #else
 		ret = gst_pad_event_default (pad, parent, event);
 #endif
-		}
 	}
 
 	return ret;
@@ -659,89 +620,63 @@ gst_dlna_src_src_event(GstPad    *pad,
  */
 static gboolean
 #ifdef GSTREAMER_010
-gst_dlna_src_src_query (GstPad    *pad,
+gst_dlna_src_query (GstPad    *pad,
 						GstQuery  *query)
 #else
-gst_dlna_src_src_query (GstPad    *pad,
+gst_dlna_src_query (GstPad    *pad,
 		   	   	   	    GstObject *parent,
 						GstQuery  *query)
 #endif
 {
 	gboolean ret = FALSE;
 	GstDlnaSrc *dlna_src = GST_DLNA_SRC(gst_pad_get_parent(pad));
-	//GST_INFO_OBJECT(dlna_src, "Got src query: %s", GST_QUERY_TYPE_NAME(query));
-	GST_INFO_OBJECT(dlna_src, "Got src query");
 
-	if (0)
+	GST_LOG_OBJECT(dlna_src, "Got src query: %s", GST_QUERY_TYPE_NAME(query));
+
+	switch (GST_QUERY_TYPE (query))
 	{
-		switch (GST_QUERY_TYPE (query))
-		{
-		case GST_QUERY_POSITION:
-			// Don't know current position in stream, let some other element handle this
-	#ifdef GSTREAMER_010
-			ret = gst_pad_query_default (pad, query);
-	#else
-			ret = gst_pad_query_default (pad, parent, query);
-	#endif
-			break;
+	case GST_QUERY_DURATION:
+		ret = dlna_src_handle_query_duration(dlna_src, query);
+		break;
 
-		case GST_QUERY_DURATION:
-			ret = dlna_src_handle_query_duration(dlna_src, query);
-			if (!ret)
-			{
-	#ifdef GSTREAMER_010
-				ret = gst_pad_query_default (pad, query);
-	#else
-				ret = gst_pad_query_default (pad, parent, query);
-	#endif
-			}
-			break;
+	case GST_QUERY_SEEKING:
+		ret = dlna_src_handle_query_seeking(dlna_src, query);
+		break;
 
-		case GST_QUERY_SEEKING:
-			ret = dlna_src_handle_query_seeking(dlna_src, query);
-			if (!ret)
-			{
-	#ifdef GSTREAMER_010
-				ret = gst_pad_query_default (pad, query);
-	#else
-				ret = gst_pad_query_default (pad, parent, query);
-	#endif
-			}
-			break;
+	case GST_QUERY_SEGMENT:
+		ret = dlna_src_handle_query_segment(dlna_src, query);
+		break;
 
-		case GST_QUERY_SEGMENT:
-			ret = dlna_src_handle_query_segment(dlna_src, query);
-			if (!ret)
-			{
-	#ifdef GSTREAMER_010
-				ret = gst_pad_query_default (pad, query);
-	#else
-				ret = gst_pad_query_default (pad, parent, query);
-	#endif
-			}
-			break;
+	case GST_QUERY_URI:
+		GST_INFO_OBJECT (dlna_src, "query uri");
+		gst_query_set_uri (query, dlna_src->uri);
+		ret = TRUE;
+		break;
 
-		case GST_QUERY_LATENCY:
-	#ifdef GSTREAMER_010
-			ret = gst_pad_query_default (pad, query);
-	#else
-			ret = gst_pad_query_default (pad, parent, query);
-	#endif
-			break;
+    case GST_QUERY_FORMATS:
+        GST_INFO_OBJECT (dlna_src, "format query");
+        gst_query_set_formats (query, 3, GST_FORMAT_DEFAULT,
+            GST_FORMAT_BYTES, GST_FORMAT_TIME);
+        ret = TRUE;
+        break;
 
-		default:
-			// just call the default handler
-			GST_INFO_OBJECT(dlna_src, "Got src query: %s, passing to default handler",
-					GST_QUERY_TYPE_NAME(query));
-	#ifdef GSTREAMER_010
-			ret = gst_pad_query_default (pad, query);
-	#else
-			ret = gst_pad_query_default (pad, parent, query);
-	#endif
-			break;
-		}
+	case GST_QUERY_LATENCY:
+		// Don't know latency, let some other element handle this
+		break;
+
+	case GST_QUERY_POSITION:
+		// Don't know current position in stream, let some other element handle this
+		break;
+
+	default:
+		// Call the default handler
+		GST_DEBUG_OBJECT(dlna_src,
+				"Got unsupported src query: %s, passing to default handler",
+				GST_QUERY_TYPE_NAME(query));
+		break;
 	}
-	else
+
+	if (!ret)
 	{
 #ifdef GSTREAMER_010
 		ret = gst_pad_query_default (pad, query);
@@ -848,13 +783,15 @@ static gboolean dlna_src_handle_query_seeking(GstDlnaSrc *dlna_src, GstQuery *qu
 	// Parse query to see what format was requested
 	gst_query_parse_seeking(query, &format, &supports_seeking, &seek_start, &seek_end);
 
-	if (format == GST_FORMAT_BYTES)
+	if ((format == GST_FORMAT_BYTES) ||
+		(format == GST_FORMAT_DEFAULT))
 	{
 		// Determine if this server supports byte based seeks for this content
 		if (dlna_src->head_response->content_features->op_range_supported)
 		{
 			// *TODO* - add check for DTCP since range will be different
 
+			// Set results of query but don't do actual seek???
 			gst_query_set_seeking(query, GST_FORMAT_BYTES, TRUE,
 					dlna_src->head_response->byte_seek_start, dlna_src->head_response->byte_seek_end);
 			ret = TRUE;
@@ -871,6 +808,7 @@ static gboolean dlna_src_handle_query_seeking(GstDlnaSrc *dlna_src, GstQuery *qu
 	{
 		if (dlna_src->head_response->content_features->op_time_seek_supported)
 		{
+			// Set results of query but don't do actual seek???
 			gst_query_set_seeking(query, GST_FORMAT_TIME, TRUE,
 					dlna_src->head_response->time_seek_npt_start, dlna_src->head_response->time_seek_npt_end);
 			ret = TRUE;
@@ -992,8 +930,8 @@ dlna_src_handle_event_seek(GstDlnaSrc *dlna_src, GstPad* pad, GstEvent* event)
     if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
     		(dlna_src->head_response->content_features == NULL))
     {
-    	GST_ERROR_OBJECT(dlna_src, "No URI and/or HEAD response info, unable to handle event");
-    	return FALSE;
+    	GST_ERROR_OBJECT(dlna_src, "No URI and/or HEAD response info, event handled");
+    	return TRUE;
     }
 
     // Parse event received
@@ -1033,31 +971,88 @@ dlna_src_handle_event_seek(GstDlnaSrc *dlna_src, GstPad* pad, GstEvent* event)
     // Verify requested change is valid
     if (!dlna_src_is_change_valid(dlna_src, rate, format, start))
     {
-    	GST_ERROR_OBJECT(dlna_src, "Requested change is invalid");
-    	return FALSE;
+    	GST_ERROR_OBJECT(dlna_src, "Requested change is invalid, event handled");
+    	return TRUE;
     }
 
-    // Set up requested change values
-    dlna_src->requested_change = TRUE;
+    // Determine if new HTTP GET Request needs to be issues
+    if (!dlna_src_is_new_http_request_needed(dlna_src, rate, format, start, stop))
+    {
+    	GST_INFO_OBJECT(dlna_src,
+    		"Current http request would satisfy, but new request appears to be needed???");
+        //return FALSE;
+    	// Playback terminates if we don't issue another request
+    	// Do we need to stop current one??? - no because the current one will be cancelled
+    	// when the request start is different from start
+    }
+
+    // Set up new requested change values
     dlna_src->requested_rate = rate;
     dlna_src->requested_format = format;
     dlna_src->requested_start = start;
-    dlna_src->requested_pad = pad;
+    dlna_src->requested_stop = stop;
+
+	// Create necessary extra headers for http src so change can be requested
+	GstStructure* extra_hdrs_struct = NULL;
+
+	if (!dlna_src_formulate_extra_headers(dlna_src, dlna_src->requested_rate,
+			dlna_src->requested_format, dlna_src->requested_start, &extra_hdrs_struct))
+	{
+		GST_ERROR_OBJECT(dlna_src, "Problem formulating extra headers");
+		// Returning true to prevent further processing
+		return TRUE;
+	}
+	if (extra_hdrs_struct == NULL)
+	{
+		GST_ERROR_OBJECT(dlna_src, "Extra headers structure was NULL");
+		// Returning true to prevent further processing
+		return TRUE;
+	}
+	else
+	{
+		GST_LOG_OBJECT(dlna_src, "Successfully formulated extra headers structure");
+	}
+
+	// Convert structure to GValue in order to set property
+	GValue struct_value = { 0 };
+	g_value_init(&struct_value, GST_TYPE_STRUCTURE);
+	gst_value_set_structure(&struct_value, extra_hdrs_struct);
+    const GstStructure *s = gst_value_get_structure (&struct_value);
+    if (s == NULL)
+    {
+        GST_ERROR_OBJECT(dlna_src, "Value for extra headers was NULL");
+        return TRUE;
+    }
+	else
+	{
+		GST_LOG_OBJECT(dlna_src, "Got extra header struct from gvalue");
+	}
+
+	// *TODO* - is this necessary????
+	//gst_structure_free(extra_hdrs_struct);
+
+	GST_LOG_OBJECT(dlna_src, "Setting extra headers of http src property");
+	g_object_set_property(G_OBJECT(dlna_src->http_src), "extra-headers", &struct_value);
+	GST_LOG_OBJECT(dlna_src, "set extra hdrs of http src");
 
     // *TODO* - work in progress related to playspeed changes
-    if (1)
-    {
-    	// Initiate actual change in separate thread so processing of seek event
-    	// can be completed
-    	(void)g_thread_new("change_request", (GThreadFunc)dlna_src_change_request, (gpointer)dlna_src);
-    }
-    else
+    if (0)
     {
     	dlna_src_change_request(dlna_src);
     }
 
-	GST_INFO_OBJECT(dlna_src, "Returning TRUE for handle seek event");
-	return TRUE;
+	GST_LOG_OBJECT(dlna_src,
+			"returning false, make sure soup src do_seek is called");
+    return FALSE;
+
+    // Somehow get stuck in endless loop?
+	//GST_INFO_OBJECT(dlna_src,
+	//		"returning true, to prevent endless loop???");
+    //return TRUE;
+
+    // *TODO* - if this works need check for dlna vs non-dlna soup src
+    // Call dlna soup http src event handler
+    //return gst_dlna_soup_http_src_event(GST_DLNA_SOUP_HTTP_SRC(dlna_src->http_src), event);
 }
 
 /**
@@ -1097,18 +1092,20 @@ dlna_src_change_request(gpointer data)
 		}
 	}
 
+	/* *TODO* - not sure we want to do this, just try updating headers for now
 	// Set http src state to READY so it stops reading data
 	if (!dlna_src_set_element_state(dlna_src, dlna_src->http_src, GST_STATE_READY, 20))
 	{
 		GST_ERROR_OBJECT(dlna_src, "Problems setting http src state to READY");
 		return NULL;
 	}
+	*/
 
 	// Create necessary extra headers for http src so change can be requested
 	GstStructure* extra_hdrs_struct = NULL;
 
 	if (!dlna_src_formulate_extra_headers(dlna_src, dlna_src->requested_rate,
-			dlna_src->requested_format, dlna_src->requested_start, extra_hdrs_struct))
+			dlna_src->requested_format, dlna_src->requested_start, &extra_hdrs_struct))
 	{
 		GST_ERROR_OBJECT(dlna_src, "Problem getting extra headers");
 		return NULL;
@@ -1271,6 +1268,58 @@ dlna_src_is_change_valid(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, gu
 	GST_INFO_OBJECT(dlna_src, "Requested change is valid");
 
 	return TRUE;
+}
+
+static gboolean
+dlna_src_is_new_http_request_needed(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start, guint64 stop)
+{
+	// Has rate changed?
+
+	// Check if supplied formats are the same
+	if (((format == GST_FORMAT_BYTES) && (dlna_src->requested_format == GST_FORMAT_BYTES)) ||
+		((format == GST_FORMAT_TIME) && (dlna_src->requested_format == GST_FORMAT_TIME)))
+	{
+		// Verify start is within range
+		// *TODO* - add support for DTCP
+		if (start < dlna_src->requested_start)
+		{
+			GST_INFO_OBJECT(dlna_src,
+				"New request needed since start %llu is smaller than requested start %llu",
+					start, dlna_src->requested_start);
+			return TRUE;
+		}
+		else if (stop > dlna_src->requested_stop)
+		{
+			GST_INFO_OBJECT(dlna_src,
+				"New request needed since stop %llu is larger than requested stop %llu",
+					start, dlna_src->requested_stop);
+			return TRUE;
+		}
+		else
+		{
+			GST_INFO_OBJECT(dlna_src,
+				"New seek, starting at %llu, stopping at %llu, is within current range, starting %llu, stopping %llu",
+					start, stop, dlna_src->requested_start, dlna_src->requested_stop);
+		}
+	}
+	else
+	{
+		GST_INFO_OBJECT(dlna_src,
+			"New requested needed since format %s is used rather than requested format %s",
+			gst_format_get_name(format), gst_format_get_name(dlna_src->requested_format));
+	}
+
+	// Check for rate change
+	if (rate != dlna_src->requested_rate)
+	{
+		GST_INFO_OBJECT(dlna_src,
+			"New request needed since new rate of %3.1f is different from requested rate %3.1f",
+				rate, dlna_src->requested_rate);
+		return TRUE;
+	}
+
+	GST_INFO_OBJECT(dlna_src, "New request not needed");
+	return FALSE;
 }
 
 /**
@@ -1494,20 +1543,27 @@ static void dlna_src_send_event(GstDlnaSrc *dlna_src, GstEvent* event)
 
 static void dlna_src_log_bin_elements(GstDlnaSrc *dlna_src, GstBin* bin)
 {
-#ifdef GSTREAMER_010
-	return;
-#else
 	GstIterator* it = gst_bin_iterate_elements(bin);
 	gboolean done = FALSE;
-	GValue value = { 0 };
 	GstElement *elem = NULL;
+#ifdef GSTREAMER_010
+	gpointer value;
+#else
+	GValue value = { 0 };
+#endif
+
 	while (!done)
 	{
 		GST_INFO_OBJECT(dlna_src, "Calling iterator");
+
 		switch (gst_iterator_next (it, &value))
 		{
 		case GST_ITERATOR_OK:
-		    elem = (GstElement *) g_value_get_object (&value);
+#ifdef GSTREAMER_010
+			elem = GST_ELEMENT(value);
+#else
+			elem = (GstElement *) g_value_get_object (&value);
+#endif
 			GST_INFO_OBJECT(dlna_src, "Got playbin element: %s",
 					GST_ELEMENT_NAME(elem));
 
@@ -1516,7 +1572,9 @@ static void dlna_src_log_bin_elements(GstDlnaSrc *dlna_src, GstBin* bin)
 			{
 				dlna_src_log_bin_elements(dlna_src, GST_BIN(elem));
 			}
+#ifndef GSTREAMER_010
 			g_value_unset (&value);
+#endif
 			break;
 		case GST_ITERATOR_RESYNC:
 			gst_iterator_resync (it);
@@ -1531,7 +1589,6 @@ static void dlna_src_log_bin_elements(GstDlnaSrc *dlna_src, GstBin* bin)
 		}
 	}
 	gst_iterator_free (it);
-#endif
 }
 
 /*
@@ -1670,7 +1727,7 @@ static gboolean dlna_src_set_element_state(GstDlnaSrc *dlna_src, GstElement* ele
  */
 static gboolean
 dlna_src_formulate_extra_headers(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start,
-								 GstStructure* headers)
+								 GstStructure** headers)
 {
 	// *TODO* - make these constants
 	gchar* ps_field_name = "PlaySpeed.dlna.org";
@@ -1745,7 +1802,7 @@ dlna_src_formulate_extra_headers(GstDlnaSrc *dlna_src, gfloat rate, GstFormat fo
 		// Include playspeed header for either byte or time
 		if (GST_FORMAT_BYTES == format)
 		{
-			headers = gst_structure_new("extraHdrsStruct",
+			*headers = gst_structure_new("extraHdrsStruct",
 											ps_field_name,
 											G_TYPE_STRING,
 											&ps_field_value,
@@ -1756,7 +1813,7 @@ dlna_src_formulate_extra_headers(GstDlnaSrc *dlna_src, gfloat rate, GstFormat fo
 		}
 		else
 		{
-			headers = gst_structure_new("extraHdrsStruct",
+			*headers = gst_structure_new("extraHdrsStruct",
 											ps_field_name,
 											G_TYPE_STRING,
 											&ps_field_value,
@@ -1770,7 +1827,7 @@ dlna_src_formulate_extra_headers(GstDlnaSrc *dlna_src, gfloat rate, GstFormat fo
 	{
 		if (GST_FORMAT_BYTES == format)
 		{
-			headers = gst_structure_new("extraHdrsStruct",
+			*headers = gst_structure_new("extraHdrsStruct",
 											br_field_name,
 											G_TYPE_STRING,
 											&br_field_value,
@@ -1778,12 +1835,22 @@ dlna_src_formulate_extra_headers(GstDlnaSrc *dlna_src, gfloat rate, GstFormat fo
 		}
 		else
 		{
-			headers = gst_structure_new("extraHdrsStruct",
+			*headers = gst_structure_new("extraHdrsStruct",
 											ts_field_name,
 											G_TYPE_STRING,
 											&ts_field_value,
 											NULL);
 		}
+	}
+
+	if (*headers == NULL)
+	{
+		GST_ERROR_OBJECT(dlna_src, "Unable to create extra headers structure");
+		return FALSE;
+	}
+	else
+	{
+		GST_LOG_OBJECT(dlna_src, "Created extra headers structure");
 	}
 
 	return TRUE;
@@ -1924,6 +1991,12 @@ dlna_src_set_uri(GstDlnaSrc *dlna_src, const gchar* value)
 	g_object_set(G_OBJECT(dlna_src->http_src), "content-duration", dlna_src->head_response->time_seek_npt_duration, NULL);
 #endif
 
+	// Initialize current requested values
+    dlna_src->requested_rate = 1.0;
+    dlna_src->requested_format = GST_FORMAT_BYTES;
+    dlna_src->requested_start = 0;
+    dlna_src->requested_stop = -1;
+
 	// Setup elements based on HEAD response
 	// Use flag or profile name starts with DTCP (
 	// *TODO* - also add check for profile name starting with DTCP or should just use flag???
@@ -1959,10 +2032,10 @@ dlna_src_set_uri(GstDlnaSrc *dlna_src, const gchar* value)
 		gst_object_unref (pad);
 
 		// Configure event function on sink pad before adding pad to element
-		gst_pad_set_event_function(dlna_src->src_pad, (GstPadEventFunction)gst_dlna_src_src_event);
+		gst_pad_set_event_function(dlna_src->src_pad, (GstPadEventFunction)gst_dlna_src_event);
 
 		// Configure event function on sink pad before adding pad to element
-		gst_pad_set_query_function(dlna_src->src_pad, (GstPadQueryFunction)gst_dlna_src_src_query);
+		gst_pad_set_query_function(dlna_src->src_pad, (GstPadQueryFunction)gst_dlna_src_query);
 	}
 
 	// *TODO* - work in progress to support playspeed changes
@@ -2050,10 +2123,10 @@ dlna_src_dtcp_setup(GstDlnaSrc *dlna_src)
 	gst_object_unref (pad);
 
 	// Configure event function on sink pad before adding pad to element
-	gst_pad_set_event_function(dlna_src->src_pad, (GstPadEventFunction)gst_dlna_src_src_event);
+	gst_pad_set_event_function(dlna_src->src_pad, (GstPadEventFunction)gst_dlna_src_event);
 
 	// Configure event function on sink pad before adding pad to element
-	gst_pad_set_query_function(dlna_src->src_pad, (GstPadQueryFunction)gst_dlna_src_src_query);
+	gst_pad_set_query_function(dlna_src->src_pad, (GstPadQueryFunction)gst_dlna_src_query);
 
 	return TRUE;
 }

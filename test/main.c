@@ -4,7 +4,7 @@
 #include <stdlib.h>
 
 // Uncomment to compile under GStreamer-0.10 instead of GStreamer-1.0
-//#define GSTREAMER_010
+#define GSTREAMER_010
 
 // Global vars for cmd line args
 //
@@ -45,7 +45,8 @@ typedef struct _CustomData {
 //
 static gboolean process_cmd_line_args(int argc, char*argv[]);
 static GstElement* create_playbin_pipeline();
-static GstElement* create_pipeline();
+static GstElement* create_manual_playbin_pipeline();
+static GstElement* create_fancy_pipeline();
 static void on_source_changed(GstElement* element, GParamSpec* param, gpointer data);
 static void handle_message (CustomData *data, GstMessage *msg);
 
@@ -106,8 +107,16 @@ int main(int argc, char *argv[])
 	}
 	else
 	{
-		g_print("Creating pipeline by assembling elements\n");
-		data.pipeline = create_pipeline();
+		if (1)
+		{
+			g_print("Creating pipeline by assembling elements\n");
+			data.pipeline = create_manual_playbin_pipeline();
+		}
+		else
+		{
+			g_print("Creating pipeline used by Fancy\n");
+			data.pipeline = create_fancy_pipeline();
+		}
 	}
 
 	// Check that pipeline was properly created
@@ -460,8 +469,9 @@ static void perform_rate_change(CustomData* data)
 			g_print("Seeking on pipeline element\n");
 			if (!gst_element_seek (data->pipeline, requested_rate,
 					GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH,
-					GST_SEEK_TYPE_SET, position,
-					GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE))
+					//GST_SEEK_TYPE_SET, position,
+					GST_SEEK_TYPE_SET, 0,
+						GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE))
 			{
 				g_printerr("Problems changing rate.\n");
 				return;
@@ -909,9 +919,103 @@ static GstElement* create_playbin_pipeline()
 }
 
 /**
+ * Create pipeline manually based on pipeline which
+ * playbin creates which is:
+ *
+ * Bin playbin20 has element: inputselector0
+ * Bin playbin20 has element: uridecodebin0
+ * Bin playbin20 has element: playsink0
+ * Bin playsink0 has element: vbin
+ *
+ * Bin uridecodebin0 has element: queue20
+ * Bin uridecodebin0 has element: decodebin20
+ * Bin uridecodebin0 has element: typefindelement0
+ * Bin uridecodebin0 has element: source
+ *
+ * Bin decodebin20 has element: mpeg2dec0
+ * Bin decodebin20 has element: mpegvparse0
+ * Bin decodebin20 has element: multiqueue0
+ * Bin decodebin20 has element: mpegtsdemux0
+ * Bin decodebin20 has element: typefind
+ *
+ * Bin source has element: dlna-soup-http-source
+ *
+ * Bin vbin has element: vconv
+ *
+ * Bin vconv has element: scale
+ * Bin vconv has element: conv
+ * Bin vconv has element: identity
+ *
+ * Bin vbin has element: vqueue
+ * Bin vbin has element: videosink
  * Create pipeline which is built from manual assembly of components
  */
-static GstElement* create_pipeline()
+static GstElement* create_manual_playbin_pipeline()
+{
+	// Create gstreamer elements
+	GstElement* pipeline = gst_pipeline_new("manual-playbin");
+	if (!pipeline)
+	{
+		g_printerr ("Pipeline element could not be created.\n");
+		return NULL;
+	}
+	GstElement* dlnasrc  = gst_element_factory_make ("dlnasrc", "http-source");
+	if (!dlnasrc)
+	{
+		g_printerr ("Dlnasrc element could not be created.\n");
+		return NULL;
+	}
+	g_object_set(G_OBJECT(dlnasrc), "uri", uri, NULL);
+
+	GstElement* mpegtsdemux = gst_element_factory_make ("mpegtsdemux", "mpeg ts demux");
+	if (!mpegtsdemux)
+	{
+		g_printerr ("mpegvideoparse element could not be created.\n");
+		return NULL;
+	}
+
+	GstElement* mpegvideoparse = gst_element_factory_make ("mpegvideoparse", "mpeg parser");
+	if (!mpegvideoparse)
+	{
+		g_printerr ("mpegvideoparse element could not be created.\n");
+		return NULL;
+	}
+
+	GstElement* mpeg2dec = gst_element_factory_make ("mpeg2dec",  "mpeg decoder");
+	if (!mpeg2dec)
+	{
+		g_printerr ("mpeg2dec element could not be created.\n");
+		return NULL;
+	}
+
+	// Create a file sink to dump output to verify results
+	GstElement* filesink = gst_element_factory_make ("filesink", "output_sink");
+	if (!filesink)
+	{
+		g_printerr ("Filesink element could not be created.\n");
+		return NULL;
+	}
+	g_object_set(G_OBJECT(filesink), "location", "file.output", NULL);
+
+	// Add all elements into the pipeline
+	gst_bin_add_many (GST_BIN (pipeline),
+			dlnasrc, mpegtsdemux, mpegvideoparse, mpeg2dec, filesink, NULL);
+
+	// Link the elements together
+	if (!gst_element_link_many (dlnasrc, mpegtsdemux, mpegvideoparse, mpeg2dec, filesink, NULL))
+	{
+		g_printerr ("Problems linking elements together\n");
+		return NULL;
+	}
+
+	return pipeline;
+}
+
+/**
+ * Create pipeline which is built from manual assembly of components
+ * which Fancy uses for her testing.
+ */
+static GstElement* create_fancy_pipeline()
 {
 	// Create gstreamer elements
 	GstElement* pipeline = gst_pipeline_new("manual-playbin");
@@ -1063,20 +1167,27 @@ static void on_source_changed(GstElement* element, GParamSpec* param, gpointer d
 
 static void log_bin_elements(GstBin* bin)
 {
-#ifdef GSTREAMER_010
-	return;
-#else
-	g_print("Iterate through elements\n");
+	g_print("Playbin elements:\n");
+
 	GstIterator* it = gst_bin_iterate_elements(bin);
 	gboolean done = FALSE;
-	GValue value = { 0 };
 	GstElement *elem = NULL;
+#ifdef GSTREAMER_010
+	gpointer value;
+#else
+	GValue value = { 0 };
+#endif
+
 	while (!done)
 	{
 		switch (gst_iterator_next (it, &value))
 		{
 		case GST_ITERATOR_OK:
-		    elem = (GstElement *) g_value_get_object (&value);
+#ifdef GSTREAMER_010
+			elem = GST_ELEMENT(value);
+#else
+			elem = (GstElement *) g_value_get_object (&value);
+#endif
 			g_print("Bin %s has element: %s\n",
 				GST_ELEMENT_NAME(GST_ELEMENT(bin)),
 				GST_ELEMENT_NAME(elem));
@@ -1086,7 +1197,9 @@ static void log_bin_elements(GstBin* bin)
 			{
 				log_bin_elements(GST_BIN(elem));
 			}
+#ifndef GSTREAMER_010
 			g_value_unset (&value);
+#endif
 			break;
 		case GST_ITERATOR_RESYNC:
 			gst_iterator_resync (it);
@@ -1101,7 +1214,6 @@ static void log_bin_elements(GstBin* bin)
 		}
 	}
 	gst_iterator_free (it);
-#endif
 }
 
 static gboolean set_pipeline_state(CustomData* data, GstState desired_state, gint timeoutSecs)

@@ -74,11 +74,12 @@ struct _GstDlnaSrc
 
 	// Requested change info
 	gboolean requested_change;
+
 	gfloat requested_rate;
 	GstFormat requested_format;
-	guint requested_start;
-	guint requested_stop;
-	GstPad* requested_pad;
+	guint64 requested_start;
+	guint64 requested_stop;
+
 	gboolean event_received;
     GMutex event_mutex;
     GCond event_cond;

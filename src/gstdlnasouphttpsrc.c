@@ -85,7 +85,7 @@
 #include "gstdlnasouphttpsrc.h"
 //#include <gst/tag/tag.h>
 
-//#define GSTREAMER_010
+#define GSTREAMER_010
 
 GST_DEBUG_CATEGORY_STATIC (gst_dlna_soup_http_src_debug);
 #define GST_CAT_DEFAULT gst_dlna_soup_http_src_debug
@@ -135,6 +135,8 @@ static gboolean gst_dlna_soup_http_src_is_seekable (GstBaseSrc * bsrc);
 static gboolean gst_dlna_soup_http_src_do_seek (GstBaseSrc * bsrc,
     GstSegment * segment);
 static gboolean gst_dlna_soup_http_src_query (GstBaseSrc * bsrc, GstQuery * query);
+
+static gboolean gst_dlna_soup_http_src_event (GstBaseSrc * bsrc, GstEvent * event);
 static gboolean gst_dlna_soup_http_src_unlock (GstBaseSrc * bsrc);
 static gboolean gst_dlna_soup_http_src_unlock_stop (GstBaseSrc * bsrc);
 #ifdef GSTREAMER_010
@@ -146,7 +148,7 @@ static gboolean gst_dlna_soup_http_src_set_location (GstDlnaSoupHTTPSrc * src,
 #endif
 static gboolean gst_dlna_soup_http_src_set_proxy (GstDlnaSoupHTTPSrc * src,
     const gchar * uri);
-static char *gst_dlna_soup_http_src_unicodify (const char *str);
+//static char *gst_dlna_soup_http_src_unicodify (const char *str);
 static gboolean gst_dlna_soup_http_src_build_message (GstDlnaSoupHTTPSrc * src);
 static void gst_dlna_soup_http_src_cancel_message (GstDlnaSoupHTTPSrc * src);
 static void gst_dlna_soup_http_src_queue_message (GstDlnaSoupHTTPSrc * src);
@@ -173,6 +175,8 @@ static void gst_dlna_soup_http_src_finished_cb (SoupMessage * msg,
 static void gst_dlna_soup_http_src_authenticate_cb (SoupSession * session,
     SoupMessage * msg, SoupAuth * auth, gboolean retrying,
     GstDlnaSoupHTTPSrc * src);
+
+static gboolean _print_extra_headers (GstDlnaSoupHTTPSrc * src);
 
 #ifdef GSTREAMER_010
 static void
@@ -315,7 +319,7 @@ gst_dlna_soup_http_src_class_init (GstDlnaSoupHTTPSrcClass * klass)
       GST_DEBUG_FUNCPTR (gst_dlna_soup_http_src_is_seekable);
   gstbasesrc_class->do_seek = GST_DEBUG_FUNCPTR (gst_dlna_soup_http_src_do_seek);
   gstbasesrc_class->query = GST_DEBUG_FUNCPTR (gst_dlna_soup_http_src_query);
-
+  gstbasesrc_class->event = GST_DEBUG_FUNCPTR (gst_dlna_soup_http_src_event);
   gstpushsrc_class->create = GST_DEBUG_FUNCPTR (gst_dlna_soup_http_src_create);
 
   #ifndef GSTREAMER_010
@@ -385,7 +389,10 @@ gst_dlna_soup_http_src_init (GstDlnaSoupHTTPSrc * src)
 
   gst_dlna_soup_http_src_reset (src);
 
-  gst_base_src_set_format(GST_BASE_SRC(src), GST_FORMAT_TIME);
+  // Sets the default format of the source. This will be the format used
+  // for sending NEW_SEGMENT events and for performing seeks.
+  //gst_base_src_set_format(GST_BASE_SRC(src), GST_FORMAT_TIME);
+  gst_base_src_set_format(GST_BASE_SRC(src), GST_FORMAT_BYTES);
 }
 
 static void
@@ -491,12 +498,32 @@ gst_dlna_soup_http_src_set_property (GObject * object, guint prop_id,
       src->timeout = g_value_get_uint (value);
       break;
     case PROP_EXTRA_HEADERS:{
+
+      GST_INFO_OBJECT(src, "Set extra headers property called");
+
       const GstStructure *s = gst_value_get_structure (value);
+      if (!s)
+      {
+          GST_ERROR_OBJECT(src, "Supplied value for extra headers was NULL");
+          break;
+      }
 
       if (src->extra_headers)
         gst_structure_free (src->extra_headers);
 
       src->extra_headers = s ? gst_structure_copy (s) : NULL;
+
+      // Print out extra headers that were set
+      if (src->extra_headers)
+      {
+          GST_LOG_OBJECT(src, "Printing out extra headers");
+    	  _print_extra_headers(src);
+      }
+      else
+      {
+          GST_ERROR_OBJECT(src, "Extra headers were not added");
+      }
+
       break;
     }
     case PROP_DLNA_SEEKABLE:
@@ -598,6 +625,7 @@ gst_dlna_soup_http_src_get_property (GObject * object, guint prop_id,
   }
 }
 
+/*
 static gchar *
 gst_dlna_soup_http_src_unicodify (const gchar * str)
 {
@@ -608,24 +636,32 @@ gst_dlna_soup_http_src_unicodify (const gchar * str)
   //return tag_freeform_string_to_utf8 (str, -1, env_vars);
   return NULL;
 }
-
+*/
 static void
 gst_dlna_soup_http_src_cancel_message (GstDlnaSoupHTTPSrc * src)
 {
+  GST_LOG_OBJECT (src, "called");
+
   if (src->msg != NULL) {
     src->session_io_status = GST_DLNA_SOUP_HTTP_SRC_SESSION_IO_STATUS_CANCELLED;
+    GST_INFO_OBJECT (src, "STATE: CANCELLED");
     soup_session_cancel_message (src->session, src->msg, SOUP_STATUS_CANCELLED);
   }
   src->session_io_status = GST_DLNA_SOUP_HTTP_SRC_SESSION_IO_STATUS_IDLE;
+  GST_INFO_OBJECT (src, "STATE: IDLE");
   src->msg = NULL;
 }
 
 static void
 gst_dlna_soup_http_src_queue_message (GstDlnaSoupHTTPSrc * src)
 {
+  GST_LOG_OBJECT (src, "called");
+
+  // *TODO* - are we calling this with null msg?
   soup_session_queue_message (src->session, src->msg,
       (SoupSessionCallback) gst_dlna_soup_http_src_response_cb, src);
   src->session_io_status = GST_DLNA_SOUP_HTTP_SRC_SESSION_IO_STATUS_QUEUED;
+  GST_INFO_OBJECT (src, "STATE: QUEUED");
 }
 
 static gboolean
@@ -650,76 +686,140 @@ gst_dlna_soup_http_src_add_range_header (GstDlnaSoupHTTPSrc * src, guint64 offse
 static gboolean
 _append_extra_header (GQuark field_id, const GValue * value, gpointer user_data)
 {
-  GstDlnaSoupHTTPSrc *src = GST_DLNA_SOUP_HTTP_SRC (user_data);
-  const gchar *field_name = g_quark_to_string (field_id);
-  gchar *field_content = NULL;
+	GstDlnaSoupHTTPSrc *src = GST_DLNA_SOUP_HTTP_SRC (user_data);
+	GST_LOG_OBJECT(src, "called");
 
-  if (G_VALUE_TYPE (value) == G_TYPE_STRING) {
-    field_content = g_value_dup_string (value);
-  } else {
-    GValue dest = { 0, };
+	const gchar *field_name = g_quark_to_string (field_id);
+	gchar *field_content = NULL;
 
-    g_value_init (&dest, G_TYPE_STRING);
-    if (g_value_transform (value, &dest)) {
-      field_content = g_value_dup_string (&dest);
-    }
-  }
+	if (G_VALUE_TYPE (value) == G_TYPE_STRING)
+	{
+		field_content = g_value_dup_string (value);
+	}
+	else
+	{
+		GValue dest = { 0, };
 
-  if (field_content == NULL) {
-    GST_ERROR_OBJECT (src, "extra-headers field '%s' contains no value "
-        "or can't be converted to a string", field_name);
-    return FALSE;
-  }
+		g_value_init (&dest, G_TYPE_STRING);
+		if (g_value_transform (value, &dest))
+		{
+			field_content = g_value_dup_string (&dest);
+		}
+	}
 
-  GST_DEBUG_OBJECT (src, "Appending extra header: \"%s: %s\"", field_name,
-      field_content);
-  soup_message_headers_append (src->msg->request_headers, field_name,
-      field_content);
+	if (field_content == NULL)
+	{
+		GST_ERROR_OBJECT (src, "extra-headers field '%s' contains no value "
+				"or can't be converted to a string", field_name);
+		return FALSE;
+	}
 
-  g_free (field_content);
+	GST_DEBUG_OBJECT (src, "Appending extra header: \"%s: %s\"", field_name,
+			field_content);
+	soup_message_headers_append (src->msg->request_headers, field_name,
+			field_content);
 
-  return TRUE;
+	g_free (field_content);
+
+	return TRUE;
 }
 
 static gboolean
-_append_extra_headers (GQuark field_id, const GValue * value,
-    gpointer user_data)
+_append_extra_headers (GQuark field_id, const GValue * value, gpointer user_data)
 {
-  if (G_VALUE_TYPE (value) == GST_TYPE_ARRAY) {
-    guint n = gst_value_array_get_size (value);
-    guint i;
+	GstDlnaSoupHTTPSrc *src = GST_DLNA_SOUP_HTTP_SRC (user_data);
+	GST_LOG_OBJECT(src, "called");
+	if (G_VALUE_TYPE (value) == GST_TYPE_ARRAY)
+	{
+		guint n = gst_value_array_get_size (value);
+		guint i;
 
-    for (i = 0; i < n; i++) {
-      const GValue *v = gst_value_array_get_value (value, i);
+		for (i = 0; i < n; i++)
+		{
+			const GValue *v = gst_value_array_get_value (value, i);
 
-      if (!_append_extra_header (field_id, v, user_data))
-        return FALSE;
-    }
-  } else if (G_VALUE_TYPE (value) == GST_TYPE_LIST) {
-    guint n = gst_value_list_get_size (value);
-    guint i;
+			if (!_append_extra_header (field_id, v, user_data))
+				return FALSE;
+		}
+	}
+	else if (G_VALUE_TYPE (value) == GST_TYPE_LIST)
+	{
+		guint n = gst_value_list_get_size (value);
+		guint i;
 
-    for (i = 0; i < n; i++) {
-      const GValue *v = gst_value_list_get_value (value, i);
+		for (i = 0; i < n; i++)
+		{
+			const GValue *v = gst_value_list_get_value (value, i);
 
-      if (!_append_extra_header (field_id, v, user_data))
-        return FALSE;
-    }
-  } else {
-    return _append_extra_header (field_id, value, user_data);
-  }
+			if (!_append_extra_header (field_id, v, user_data))
+				return FALSE;
+		}
+	}
+	else
+	{
+		return _append_extra_header (field_id, value, user_data);
+	}
 
-  return TRUE;
+	return TRUE;
 }
 
+
+static gboolean
+_print_extra_headers (GstDlnaSoupHTTPSrc* src)
+{
+	GST_LOG_OBJECT(src, "called");
+
+	// Convert GstStructure to GValue
+	GValue value = { 0 };
+	g_value_init(&value, GST_TYPE_STRUCTURE);
+	gst_value_set_structure(&value, src->extra_headers);
+
+	if (G_VALUE_TYPE (&value) == GST_TYPE_ARRAY)
+	{
+		guint n = gst_value_array_get_size (&value);
+		guint i;
+
+		for (i = 0; i < n; i++)
+		{
+			//const GValue *v = gst_value_array_get_value (value, i);
+
+			//if (!_append_extra_header (field_id, v, user_data))
+			//	return FALSE;
+		}
+	}
+	else if (G_VALUE_TYPE (&value) == GST_TYPE_LIST)
+	{
+		guint n = gst_value_list_get_size (&value);
+		guint i;
+
+		for (i = 0; i < n; i++)
+		{
+			//const GValue *v = gst_value_list_get_value (value, i);
+
+			//if (!_append_extra_header (field_id, v, user_data))
+			//	return FALSE;
+		}
+	}
+	else
+	{
+		//return _append_extra_header (field_id, value, user_data);
+	}
+
+	return TRUE;
+}
 
 static gboolean
 gst_dlna_soup_http_src_add_extra_headers (GstDlnaSoupHTTPSrc * src)
 {
-  if (!src->extra_headers)
-    return TRUE;
-
-  return gst_structure_foreach (src->extra_headers, _append_extra_headers, src);
+	GST_LOG_OBJECT (src, "Called");
+	if (!src->extra_headers)
+	{
+		// No extra headers, just return
+		GST_LOG_OBJECT (src, "No extra headers to be added");
+		return TRUE;
+	}
+	GST_DEBUG_OBJECT (src, "Calling append extra headers");
+	return gst_structure_foreach (src->extra_headers, _append_extra_headers, src);
 }
 
 
@@ -778,12 +878,12 @@ static void
 gst_dlna_soup_http_src_got_headers_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * src)
 {
   const char *value;
-  GstTagList *tag_list;
+  //GstTagList *tag_list = NULL;
   GstBaseSrc *basesrc;
   guint64 newsize;
   GHashTable *params = NULL;
 
-  GST_DEBUG_OBJECT (src, "got headers:");
+  GST_DEBUG_OBJECT (src, "Printing out headers received in response:");
   soup_message_headers_foreach (msg->response_headers,
       gst_dlna_soup_http_src_headers_foreach, src);
 
@@ -804,6 +904,7 @@ gst_dlna_soup_http_src_got_headers_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * s
     return;
 
   src->session_io_status = GST_DLNA_SOUP_HTTP_SRC_SESSION_IO_STATUS_RUNNING;
+  GST_INFO_OBJECT (src, "STATE: RUNNING");
 
   // Parse Content-Length.
   if (soup_message_headers_get_encoding (msg->response_headers) ==
@@ -912,7 +1013,7 @@ gst_dlna_soup_http_src_got_headers_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * s
 
   if (params != NULL)
     g_hash_table_destroy (params);
-
+/*
   if ((value =
 #ifdef GSTREAMER_010
          soup_message_headers_get (msg->response_headers,
@@ -932,6 +1033,7 @@ gst_dlna_soup_http_src_got_headers_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * s
           src->iradio_name, NULL);
     }
   }
+
   if ((value =
 #ifdef GSTREAMER_010
           soup_message_headers_get (msg->response_headers,
@@ -987,11 +1089,14 @@ gst_dlna_soup_http_src_got_headers_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * s
      gst_tag_list_unref (tag_list);
  #endif
   }
+  */
 
   // Handle HTTP errors.
   gst_dlna_soup_http_src_parse_status (msg, src);
 
   // Check if Range header was respected.
+  // *TODO* - fix this up since can't include range when playspeed is included
+  /*
   if (src->ret == GST_FLOW_CUSTOM_ERROR &&
       src->read_position && msg->status_code != SOUP_STATUS_PARTIAL_CONTENT)
   {
@@ -1000,12 +1105,15 @@ gst_dlna_soup_http_src_got_headers_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * s
     		src->location);
     src->ret = GST_FLOW_ERROR;
   }
+  */
 }
 
 /* Have body. Signal EOS. */
 static void
 gst_dlna_soup_http_src_got_body_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * src)
 {
+  GST_LOG_OBJECT (src, "called");
+
   if (G_UNLIKELY (msg != src->msg)) {
     GST_DEBUG_OBJECT (src, "got body, but not for current message");
     return;
@@ -1031,11 +1139,13 @@ gst_dlna_soup_http_src_got_body_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * src)
 static void
 gst_dlna_soup_http_src_finished_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * src)
 {
+  GST_LOG_OBJECT (src, "called");
+
   if (G_UNLIKELY (msg != src->msg)) {
     GST_DEBUG_OBJECT (src, "finished, but not for current message");
     return;
   }
-  GST_DEBUG_OBJECT (src, "finished");
+  GST_LOG_OBJECT (src, "finished");
   #ifdef GSTREAMER_010
   src->ret = GST_FLOW_UNEXPECTED;
   #else
@@ -1211,6 +1321,8 @@ static void
 gst_dlna_soup_http_src_response_cb (SoupSession * session, SoupMessage * msg,
     GstDlnaSoupHTTPSrc * src)
 {
+  GST_LOG_OBJECT (src, "called");
+
   if (G_UNLIKELY (msg != src->msg)) {
     GST_DEBUG_OBJECT (src, "got response %d: %s, but not for current message",
         msg->status_code, msg->reason_phrase);
@@ -1295,9 +1407,14 @@ gst_dlna_soup_http_src_parse_status (SoupMessage * msg, GstDlnaSoupHTTPSrc * src
   }
 }
 
+/**
+ * Create a new HTTP GET Request which will be a soup message.
+ */
 static gboolean
 gst_dlna_soup_http_src_build_message (GstDlnaSoupHTTPSrc * src)
 {
+  GST_LOG_OBJECT (src, "called");
+
   src->msg = soup_message_new (SOUP_METHOD_GET, src->location);
   if (!src->msg) {
     //GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ,
@@ -1305,6 +1422,7 @@ gst_dlna_soup_http_src_build_message (GstDlnaSoupHTTPSrc * src)
     return FALSE;
   }
   src->session_io_status = GST_DLNA_SOUP_HTTP_SRC_SESSION_IO_STATUS_IDLE;
+  GST_INFO_OBJECT (src, "STATE: IDLE");
   soup_message_headers_append (src->msg->request_headers, "Connection",
       "close");
   #ifdef GSTREAMER_010
@@ -1324,12 +1442,15 @@ gst_dlna_soup_http_src_build_message (GstDlnaSoupHTTPSrc * src)
     }
   }
 
+  // *TODO* - don't we want this for 1.0?  Need better logic here
   #ifdef GSTREAMER_010
   soup_message_headers_append (src->msg->request_headers,
       "transferMode.dlna.org", "Streaming");
   #endif
+
   src->retry = FALSE;
 
+  // Setup callbacks
   g_signal_connect (src->msg, "got_headers",
       G_CALLBACK (gst_dlna_soup_http_src_got_headers_cb), src);
   g_signal_connect (src->msg, "got_body",
@@ -1338,11 +1459,18 @@ gst_dlna_soup_http_src_build_message (GstDlnaSoupHTTPSrc * src)
       G_CALLBACK (gst_dlna_soup_http_src_finished_cb), src);
   g_signal_connect (src->msg, "got_chunk",
       G_CALLBACK (gst_dlna_soup_http_src_got_chunk_cb), src);
+
+  // Setup soup message
   soup_message_set_flags (src->msg, SOUP_MESSAGE_OVERWRITE_CHUNKS |
       (src->automatic_redirect ? 0 : SOUP_MESSAGE_NO_REDIRECT));
   soup_message_set_chunk_allocator (src->msg,
       gst_dlna_soup_http_src_chunk_allocator, src, NULL);
-  gst_dlna_soup_http_src_add_range_header (src, src->request_position);
+
+  // DLNA server's don't like range header with playspeed
+  if (0)
+  {
+	  gst_dlna_soup_http_src_add_range_header (src, src->request_position);
+  }
 
   gst_dlna_soup_http_src_add_extra_headers (src);
 
@@ -1356,101 +1484,137 @@ gst_dlna_soup_http_src_build_message (GstDlnaSoupHTTPSrc * src)
 static GstFlowReturn
 gst_dlna_soup_http_src_create (GstPushSrc * psrc, GstBuffer ** outbuf)
 {
-  GstDlnaSoupHTTPSrc *src;
+	GstDlnaSoupHTTPSrc *src;
 
-  src = GST_DLNA_SOUP_HTTP_SRC (psrc);
+	src = GST_DLNA_SOUP_HTTP_SRC (psrc);
 
-  // *TODO* - force a sleep to see if lots of buffers are queued up
-  //g_usleep(1000000L);
-  //g_usleep(100000L);
+	// See if change has been requested
+	if (src->msg &&
+	   ((src->request_position != src->read_position) ||	// position change requested
+	    (src->current_rate != src->request_rate)))			// rate change requested
+	{
+		GST_INFO_OBJECT (src, "Got msg and position/rate change");
 
-
-  if (src->msg && (src->request_position != src->read_position)) {
-      GST_INFO_OBJECT (src, "Got msg and position change");
-
-    if (src->content_size != 0 && src->request_position >= src->content_size) {
-      GST_WARNING_OBJECT (src, "Seeking behind the end of file -- EOS");
+		// *TODO* - need to verify position change is valid
+		//if (src->content_size != 0 && src->request_position >= src->content_size)
+		if (src->content_size == 0)
+		{
+			GST_WARNING_OBJECT (src, "Seeking behind the end of file -- EOS");
 #ifdef GSTREAMER_010
-      return GST_FLOW_UNEXPECTED;
+			return GST_FLOW_UNEXPECTED;
 #else
-      return GST_FLOW_EOS;
+			return GST_FLOW_EOS;
 #endif
-    } else if (src->session_io_status ==
-        GST_DLNA_SOUP_HTTP_SRC_SESSION_IO_STATUS_IDLE) {
-      GST_DEBUG_OBJECT (src, "Adding range header");
+		}
+		// If session hasn't started yet, just update headers
+		else if (src->session_io_status ==
+				GST_DLNA_SOUP_HTTP_SRC_SESSION_IO_STATUS_IDLE)
+		{
+			// *TODO* - should we let dlnasrc update headers as appropriate?  Or do it here also?
+			// This is redundant and doesn't address rate
+			GST_DEBUG_OBJECT (src, "No active session, just add range header");
 
-      gst_dlna_soup_http_src_add_range_header (src, src->request_position);
-    } else {
-      GST_DEBUG_OBJECT (src, "Seek from position %" G_GUINT64_FORMAT
-          " to %" G_GUINT64_FORMAT ": requeueing connection request",
-          src->read_position, src->request_position);
-      gst_dlna_soup_http_src_cancel_message (src);
-    }
-  }
-  /*
-  if (src->msg && (src->request_rate != src->current_rate))
-  {
-      GST_DEBUG_OBJECT (src, "Saw rate change, shutting down");
-      //gst_dlna_soup_http_src_cancel_message (src);
-  }
-  */
-  if (!src->msg) {
-      GST_INFO_OBJECT (src, "No message, building message");
-    if (!gst_dlna_soup_http_src_build_message (src)) {
-      GST_ERROR_OBJECT (src, "Problems building message");
-      return GST_FLOW_ERROR;
-    }
-  }
-  src->ret = GST_FLOW_CUSTOM_ERROR;
-  src->outbuf = outbuf;
-  do {
-    if (src->interrupted) {
-      GST_DEBUG_OBJECT (src, "interrupted");
-      break;
-    }
-    if (src->retry) {
-      GST_DEBUG_OBJECT (src, "Reconnecting");
-      if (!gst_dlna_soup_http_src_build_message (src))
-        return GST_FLOW_ERROR;
-      src->retry = FALSE;
-      continue;
-    }
-    if (!src->msg) {
-      GST_DEBUG_OBJECT (src, "EOS reached");
-      break;
-    }
+			// *TODO* - do we really need to add range header here?
+			if (0)
+			{
+				gst_dlna_soup_http_src_add_range_header (src, src->request_position);
+			}
+		}
+		else
+		{
+			// *TODO* - this is all that really should be done here
+			GST_DEBUG_OBJECT (src, "Seek from position %" G_GUINT64_FORMAT
+					" to %" G_GUINT64_FORMAT ": requeueing connection request",
+					src->read_position, src->request_position);
 
-    switch (src->session_io_status) {
-      case GST_DLNA_SOUP_HTTP_SRC_SESSION_IO_STATUS_IDLE:
-        GST_DEBUG_OBJECT (src, "Queueing connection request");
-        gst_dlna_soup_http_src_queue_message (src);
-        break;
-      case GST_DLNA_SOUP_HTTP_SRC_SESSION_IO_STATUS_QUEUED:
-        GST_DEBUG_OBJECT (src, "IO Status queued");
-        break;
-      case GST_DLNA_SOUP_HTTP_SRC_SESSION_IO_STATUS_RUNNING:
-        // Normal state when creating buffers
-    	GST_LOG_OBJECT (src, "Unpausing");
-    	gst_dlna_soup_http_src_session_unpause_message (src);
-        break;
-      case GST_DLNA_SOUP_HTTP_SRC_SESSION_IO_STATUS_CANCELLED:
-        /* Impossible. */
-        break;
-    }
+			// Set status to idle and msg to NULL
+			gst_dlna_soup_http_src_cancel_message (src);
 
-    if (src->ret == GST_FLOW_CUSTOM_ERROR)
-      g_main_loop_run (src->loop);
-  } while (src->ret == GST_FLOW_CUSTOM_ERROR);
+			// Set current rate to requested rate
+			src->current_rate = src->request_rate;
+		}
+	}
 
-  if (src->ret == GST_FLOW_CUSTOM_ERROR) {
-    GST_DEBUG_OBJECT (src, "Returning due to custom error");
+	// If message is NULL, create a new message request
+	if (!src->msg)
+	{
+		GST_INFO_OBJECT (src, "No message, building message");
+		if (!gst_dlna_soup_http_src_build_message (src))
+		{
+			GST_ERROR_OBJECT (src, "Problems building message");
+			return GST_FLOW_ERROR;
+		}
+	}
+
+	// ??? what r we doing here?
+	src->ret = GST_FLOW_CUSTOM_ERROR;
+	src->outbuf = outbuf;
+	do
+	{
+		if (src->interrupted)
+		{
+			GST_DEBUG_OBJECT (src,
+			  "interrupted, leaving ret = custom error to continue in loop");
+			break;
+		}
+		if (src->retry)
+		{
+			GST_DEBUG_OBJECT (src, "Reconnecting");
+			// Build another message
+			// *TODO* - have we cleaned up properly from last msg?
+			if (!gst_dlna_soup_http_src_build_message (src))
+			{
+				GST_ERROR_OBJECT (src,
+					"Returning error since unable to create new message request for retry");
+				return GST_FLOW_ERROR;
+			}
+			src->retry = FALSE;
+			continue;
+		}
+
+		if (!src->msg)
+		{
+			// *TODO* - why does this indicate EOS?
+			GST_DEBUG_OBJECT (src, "EOS reached");
+			break;
+		}
+
+		switch (src->session_io_status)
+		{
+		case GST_DLNA_SOUP_HTTP_SRC_SESSION_IO_STATUS_IDLE:
+			GST_DEBUG_OBJECT (src, "Queueing connection request");
+			gst_dlna_soup_http_src_queue_message (src);
+			break;
+		case GST_DLNA_SOUP_HTTP_SRC_SESSION_IO_STATUS_QUEUED:
+			GST_DEBUG_OBJECT (src, "IO Status queued");
+			break;
+		case GST_DLNA_SOUP_HTTP_SRC_SESSION_IO_STATUS_RUNNING:
+			// Normal state when creating buffers
+			GST_LOG_OBJECT (src, "Running");
+			gst_dlna_soup_http_src_session_unpause_message (src);
+			break;
+		case GST_DLNA_SOUP_HTTP_SRC_SESSION_IO_STATUS_CANCELLED:
+			/* Impossible. */
+			break;
+		}
+
+		// *TODO* - what does this do??? starting up loop here?
+		if (src->ret == GST_FLOW_CUSTOM_ERROR)
+			g_main_loop_run (src->loop);
+
+	} while (src->ret == GST_FLOW_CUSTOM_ERROR);
+
+	// Got out of above loop with custom error, either interrupted or EOS
+	if (src->ret == GST_FLOW_CUSTOM_ERROR)
+	{
+		GST_DEBUG_OBJECT (src, "Returning due to interrupted or EOS");
 #ifdef GSTREAMER_010
-    src->ret = GST_FLOW_UNEXPECTED;
+		src->ret = GST_FLOW_UNEXPECTED;
 #else
-    src->ret = GST_FLOW_EOS;
+		src->ret = GST_FLOW_EOS;
 #endif
-  }
-  return src->ret;
+	}
+	return src->ret;
 }
 
 static gboolean
@@ -1582,6 +1746,18 @@ gst_dlna_soup_http_src_is_seekable (GstBaseSrc * bsrc)
   return src->seekable;
 }
 
+/**
+ * According to GStreamer design doc, to support Server-side trick modes:
+ *
+ * - Need to reopen connection to server with new rate and positions
+ * - Set rate in segment to 1 so client side trick mode is not enabled
+ *  Update info in segment so downstream elements know what is required.
+ *
+ *  NOTE:
+ * 		- Base src just updates segment->time
+ * 		- Filesrc doesn't have a do_seek method so some other element must do
+ * 		  something with the rate change???
+ */
 static gboolean
 gst_dlna_soup_http_src_do_seek (GstBaseSrc * bsrc, GstSegment * segment)
 {
@@ -1594,116 +1770,267 @@ gst_dlna_soup_http_src_do_seek (GstBaseSrc * bsrc, GstSegment * segment)
   GST_DEBUG_OBJECT (src, "do_seek(%" G_GUINT64_FORMAT ")",
       segment->start);
 #endif
-#ifdef GSTREAMER_010
-  if (src->request_rate != segment->rate)
-   {
-     GST_INFO_OBJECT (src, "Rate change requested: %3.1f", segment->rate);
-     //src->request_rate = segment->rate;
-    }
-#endif
-  if ((src->read_position == segment->start) && (segment->format == GST_FORMAT_BYTES)) {
-    GST_INFO_OBJECT (src, "Seeking to current read position");
-    return TRUE;
-  }
 
-  if (!src->seekable) {
-    GST_WARNING_OBJECT (src, "Not seekable");
-    return FALSE;
-  }
-
-  /*
-  if (segment->rate < 0.0 || segment->format != GST_FORMAT_BYTES) {
-    GST_WARNING_OBJECT (src, "Invalid seek segment");
-    return FALSE;
-  }
-  */
-
-  if (src->content_size != 0 && segment->start >= src->content_size &&
-		  segment->format == GST_FORMAT_BYTES) {
-    GST_WARNING_OBJECT (src, "Seeking behind end of file, will go to EOS soon");
-  }
-  // *TODO* - need something similar for time
-
-  /* Wait for create() to handle the jump in offset. */
-  if (segment->format == GST_FORMAT_BYTES)
+  // Make sure this is seekable
+  if (!src->seekable)
   {
-	  src->request_position = segment->start;
+	  GST_WARNING_OBJECT (src, "Not seekable");
+	  return FALSE;
   }
-  else if (segment->format == GST_FORMAT_TIME)
+
+  // Assuming dlnasrc verified request is valid so no verifications is needed here
+  if (0)
   {
-	  // *TODO* - something with time
-	  // Need to reopen new connection & issue new get request
-	  // Set rate to 1.0 so client side trick mode is not enabled
-	  src->request_position = segment->start;
+	  if ((src->read_position == segment->start) && (segment->format == GST_FORMAT_BYTES)) {
+	    GST_INFO_OBJECT (src, "Seeking to current read position");
+	    return TRUE;
+	  }
+
+	  /*
+	  if (segment->rate < 0.0 || segment->format != GST_FORMAT_BYTES) {
+	    GST_WARNING_OBJECT (src, "Invalid seek segment");
+	    return FALSE;
+	  }
+	  */
+
+	  if (src->content_size != 0 && segment->start >= src->content_size &&
+			  segment->format == GST_FORMAT_BYTES) {
+	    GST_WARNING_OBJECT (src, "Seeking behind end of file, will go to EOS soon");
+	  }
+	  // *TODO* - need something similar for time
+
+	  /* Wait for create() to handle the jump in offset. */
+	  if (segment->format == GST_FORMAT_BYTES)
+	  {
+		  src->request_position = segment->start;
+	  }
+	  else if (segment->format == GST_FORMAT_TIME)
+	  {
+		  // *TODO* - something with time
+		  // Need to reopen new connection & issue new get request
+		  // Set rate to 1.0 so client side trick mode is not enabled
+		  src->request_position = segment->start;
+	  }
   }
+
+  // Current request will be canceled in _create() since rate change will be detected
+  // *TODO* - is this really right?  Or should we be modifying state & let it cancel???
+  if (src->current_rate != segment->rate)
+  {
+	  GST_INFO_OBJECT (src, "Rate change requested: %3.1f", segment->rate);
+	  src->request_rate = segment->rate;
+  }
+  // *TODO* - add checks for time and byte positions, not just rate
+
+  // New request will be issued in _create()
+
+  // Set stop position to valid value
+  if ((segment->stop != -1) && (segment->stop < segment->start))
+  {
+	  // This prevents initial 1x playback from starting
+	  // *TODO* - need to fix this up
+	  GST_WARNING_OBJECT (src, "Adjusting stop from %lld to %lld",
+			  segment->stop, (segment->start + 1));
+	  segment->stop = segment->start + 1;
+  }
+  // Set rate to 1.0 to prevent client-side trick mode processing
+  if (segment->rate != 1.0)
+  {
+	  segment->applied_rate = src->request_rate;
+ 	  GST_INFO_OBJECT (src, "Set segment rate %3.1f back to 1.0 to inhibit client-side trick modes",
+			  segment->rate);
+	  segment->rate = 1.0;
+ }
+
+  GST_WARNING_OBJECT (src, "Performed actions necessary for seek");
   return TRUE;
+}
+
+gboolean
+gst_dlna_soup_http_src_event(GstBaseSrc * src,
+					   GstEvent  *event)
+{
+	GstDlnaSoupHTTPSrc *dsrc = GST_DLNA_SOUP_HTTP_SRC (src);
+	gboolean ret = FALSE;
+
+	switch (GST_EVENT_TYPE (event))
+	{
+	case GST_EVENT_SEEK:
+		GST_INFO_OBJECT(dsrc, "Got src event: %s", GST_EVENT_TYPE_NAME(event));
+		break;
+	case GST_EVENT_NAVIGATION:
+		GST_INFO_OBJECT(dsrc, "Got src event: %s", GST_EVENT_TYPE_NAME(event));
+		break;
+	default:
+		break;
+	}
+	if (!ret)
+	{
+		ret = GST_BASE_SRC_CLASS (parent_class)->event (src, event);
+	}
+	return ret;
 }
 
 static gboolean
 gst_dlna_soup_http_src_query (GstBaseSrc * bsrc, GstQuery * query)
 {
-  GstDlnaSoupHTTPSrc *src = GST_DLNA_SOUP_HTTP_SRC (bsrc);
-  gboolean ret = FALSE;
-  GstFormat format = GST_FORMAT_DEFAULT;
+	GstDlnaSoupHTTPSrc *src = GST_DLNA_SOUP_HTTP_SRC (bsrc);
+	gboolean ret = FALSE;
+	GstFormat src_fmt, dest_fmt;
+	gint64 src_val, dest_val;
 
-  switch (GST_QUERY_TYPE (query)) {
+	GstClockTime min, max;
+    gboolean live;
 
-  case GST_QUERY_URI:
-	  GST_INFO_OBJECT (src, "query uri");
-      gst_query_set_uri (query, src->location);
-      ret = TRUE;
-      break;
+	switch (GST_QUERY_TYPE (query))
+	{
+	case GST_QUERY_LATENCY:
 
-    case GST_QUERY_POSITION:
-      GST_INFO_OBJECT (src, "position query");
-      break;
+		ret = gst_base_src_query_latency (bsrc, &live, &min, &max);
 
-    case GST_QUERY_DURATION:
-        gst_query_parse_duration (query, &format, NULL);
+		// *TODO* - hard code to false for now
+		live = FALSE;
 
-        if (format == GST_FORMAT_TIME)
-        {
-        	gst_query_set_duration (query, GST_FORMAT_TIME, src->content_duration);
-        	ret = TRUE;
-            GST_LOG_OBJECT (src, "duration query in time format returning %llu",
-            		src->content_duration);
-        }
-        else if (format == GST_FORMAT_BYTES)
-        {
-        	gst_query_set_duration (query, GST_FORMAT_BYTES, src->content_size);
-        	ret = TRUE;
-            GST_LOG_OBJECT (src, "duration query in byte format returning %llu",
-            		src->content_size);
-        }
-        else
-        {
-        	  GST_INFO_OBJECT (src, "query duration in unsupported format: %s",
-        			  gst_format_get_name(format));
-        }
+		// Set min and max clock times
+
+		GST_DEBUG_OBJECT (src, "report latency: live %d, min %" GST_TIME_FORMAT
+				", max %" GST_TIME_FORMAT, live, GST_TIME_ARGS (min),
+				GST_TIME_ARGS (max));
+
+		gst_query_set_latency (query, live, min, max);
+		break;
+
+	case GST_QUERY_CONVERT:
+
+		gst_query_parse_convert (query, &src_fmt, &src_val, &dest_fmt, &dest_val);
+
+		// Print out info about conversion that has been requested
+		GST_INFO_OBJECT(src, "Got conversion query: src fmt %s, dest fmt %s, src val %lld, dest val %lld",
+				gst_format_get_name(src_fmt), gst_format_get_name(dest_fmt), src_val, dest_val);
+
+		if (src_fmt == dest_fmt)
+		{
+			dest_val = src_val;
+			GST_INFO_OBJECT(src, "Setting dest to src");
+			ret = TRUE;
+		}
+		else
+		{
+			// Handle simple case
+			if (src_val == 0)
+			{
+				dest_val = 1;
+				GST_INFO_OBJECT(src, "Setting dest to zero");
+				ret = TRUE;
+			}
+			else
+			{
+				// *TODO* - Figure out conversion here, do a head & get response
+				GST_INFO_OBJECT(src, "Doing nothing");
+				ret = FALSE;
+			}
+		}
+		gst_query_set_convert (query, src_fmt, src_val, dest_fmt, dest_val);
+		break;
+
+	default:
+		// Log queries to get an idea of what ends up here
+		GST_INFO_OBJECT(src, "Src query: %s", GST_QUERY_TYPE_NAME(query));
+		break;
+	}
+
+	// If not handled here, let base have a chance
+	if (!ret)
+	{
+		ret = GST_BASE_SRC_CLASS (parent_class)->query (bsrc, query);
+	}
+	return ret;
+}
+
+/*
+ * static gboolean
+gst_videomixer_query_latency (GstVideoMixer * mix, GstQuery * query)
+{
+  GstClockTime min, max;
+  gboolean live;
+  gboolean res;
+  GstIterator *it;
+  gboolean done;
+
+  res = TRUE;
+  done = FALSE;
+  live = FALSE;
+  min = 0;
+  max = GST_CLOCK_TIME_NONE;
+
+  // Take maximum of all latency values
+  it = gst_element_iterate_sink_pads (GST_ELEMENT_CAST (mix));
+  while (!done) {
+    GstIteratorResult ires;
+    gpointer item;
+
+    ires = gst_iterator_next (it, &item);
+    switch (ires) {
+      case GST_ITERATOR_DONE:
+        done = TRUE;
         break;
+      case GST_ITERATOR_OK:
+      {
+        GstPad *pad = GST_PAD_CAST (item);
 
-    case GST_QUERY_SEEKING:
-        GST_INFO_OBJECT (src, "seeking query");
-        break;
+        GstQuery *peerquery;
 
-    case GST_QUERY_FORMATS:
-        GST_INFO_OBJECT (src, "format query");
-        gst_query_set_formats (query, 3, GST_FORMAT_DEFAULT,
-            GST_FORMAT_BYTES, GST_FORMAT_TIME);
-        ret = TRUE;
+        GstClockTime min_cur, max_cur;
+
+        gboolean live_cur;
+
+        peerquery = gst_query_new_latency ();
+
+         res &= gst_pad_peer_query (pad, peerquery);
+
+        if (res) {
+          gst_query_parse_latency (peerquery, &live_cur, &min_cur, &max_cur);
+
+          if (min_cur > min)
+            min = min_cur;
+
+          if (max_cur != GST_CLOCK_TIME_NONE &&
+              ((max != GST_CLOCK_TIME_NONE && max_cur > max) ||
+                  (max == GST_CLOCK_TIME_NONE)))
+            max = max_cur;
+
+          live = live || live_cur;
+        }
+
+        gst_query_unref (peerquery);
+        gst_object_unref (pad);
         break;
-    default:
-      GST_INFO_OBJECT (src, "unsupported query: %s",
-    		  GST_QUERY_TYPE_NAME(query));
-      ret = FALSE;
-      break;
+      }
+      case GST_ITERATOR_RESYNC:
+        live = FALSE;
+        min = 0;
+        max = GST_CLOCK_TIME_NONE;
+        res = TRUE;
+        gst_iterator_resync (it);
+        break;
+      default:
+        res = FALSE;
+        done = TRUE;
+        break;
+    }
+  }
+  gst_iterator_free (it);
+
+  if (res) {
+    GST_DEBUG_OBJECT (mix, "Calculated total latency: live %s, min %"
+        GST_TIME_FORMAT ", max %" GST_TIME_FORMAT,
+        (live ? "yes" : "no"), GST_TIME_ARGS (min), GST_TIME_ARGS (max));
+    gst_query_set_latency (query, live, min, max);
   }
 
-  if (!ret)
-    ret = GST_BASE_SRC_CLASS (parent_class)->query (bsrc, query);
-
-  return ret;
+  return res;
 }
+ */
 
 static gboolean
 #ifdef GSTREAMER_010
