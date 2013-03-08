@@ -4,7 +4,7 @@
 #include <stdlib.h>
 
 // Uncomment to compile under GStreamer-0.10 instead of GStreamer-1.0
-#define GSTREAMER_010
+//#define GSTREAMER_010
 
 // Global vars for cmd line args
 //
@@ -14,7 +14,10 @@ static gfloat requested_rate = 0;
 static int rrid = 2;
 static char host[256];
 static char uri[256];
-static gboolean usePlaybin = TRUE;
+static gboolean usePlaybin = TRUE;    //g_object_set (pipeline, "ring-buffer-max-size", (guint64)4000000, NULL);
+//g_object_set (pipeline, "ring-buffer-max-size", (guint64)400000, NULL);
+//g_object_set (pipeline, "ring-buffer-max-size", (guint64)400, NULL); - seg faults?
+
 static gboolean use_dtcp = FALSE;
 
 static gboolean test_positioning = FALSE;
@@ -56,6 +59,8 @@ static void perform_uri_switch(CustomData* data);
 static void perform_seek(CustomData* data);
 
 static void log_bin_elements(GstBin* bin);
+static GstElement* log_element_links(GstElement* elem);
+
 static gboolean set_pipeline_state(CustomData* data, GstState desired_state, gint timeoutSecs);
 static gboolean set_new_uri(CustomData* data);
 
@@ -359,163 +364,93 @@ static void perform_positioning(CustomData* data)
 
 static void perform_rate_change(CustomData* data)
 {
-	GstEvent* event;
 	GstBus *bus;
 	GstMessage *msg;
 	GstFormat format = GST_FORMAT_TIME;
 	//GstFormat format = GST_FORMAT_BYTES;
 	//GstFormat format = GST_FORMAT_DEFAULT;
-	GstElement* video_sink = NULL;
 
 	// Wait for 10 seconds for playback to start up
 	long secs = waitSecs;
-	g_print("Waiting %ld secs for startup prior to rate change\n", secs);
+	g_print("%s - Waiting %ld secs for startup prior to rate change\n",
+			__FUNCTION__, secs);
 	g_usleep(secs * 1000000L);
 
 	// If requested, send rate change
 	if (requested_rate != 0)
 	{
-		g_print("Requesting rate change to %4.1f\n", requested_rate);
+		g_print("%s - Requesting rate change to %4.1f\n",
+				__FUNCTION__, requested_rate);
 
 		gint64 position = -1;
 
-		// Obtain the current position, needed for the seek event
-		if (0)
-		{
-			g_print("Get video sink in order to send event\n");
-			g_object_get (data->pipeline, "video-sink", &video_sink, NULL);
-			if (video_sink != NULL)
-			{
+		g_print("%s - Query position in format: %s\n",
+				__FUNCTION__, gst_format_get_name(format));
+		format = GST_FORMAT_TIME;
 #ifdef GSTREAMER_010
-				if (!gst_element_query_position(video_sink, &format, &position))
+		if (!gst_element_query_position(data->pipeline, &format, &position))
 #else
-				if (!gst_element_query_position(video_sink, format, &position))
+		if (!gst_element_query_position(data->pipeline, format, &position))
 #endif
-				{
-					g_printerr("Unable to retrieve current position.\n");
-					return;
-				}
-			}
-			else
-			{
-				g_printerr("Not ending seek event due to NULL video sink\n");
-				return;
-			}
-
-			// Create the seek event
-			g_print("Creating seek event\n");
-			event = gst_event_new_seek(requested_rate, format,
-					//GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE, // see flush stop err
-					//GST_SEEK_FLAG_NONE, // don't see error but playback stalls
-					GST_SEEK_FLAG_FLUSH,
-					GST_SEEK_TYPE_SET, position, GST_SEEK_TYPE_NONE, -1);
-			if (event == NULL)
-			{
-				g_printerr("Unable to create SEEK event\n");
-				return;
-			}
-
-			// Send the event
-			g_print("Sending seek event to video sink\n");
-			if (!gst_element_send_event(video_sink, event))
-			{
-				g_printerr("Unable to send seek event via video sink\n");
-				return;
-			}
-			else
-			{
-				g_print("Seek event sent via video sink\n");
-			}
-		}
-		else
 		{
-			g_print("Query position in format: %s\n", gst_format_get_name(format));
-			format = GST_FORMAT_TIME;
-#ifdef GSTREAMER_010
-			if (!gst_element_query_position(data->pipeline, &format, &position))
-#else
-			if (!gst_element_query_position(data->pipeline, format, &position))
-#endif
-			{
-				g_printerr("Unable to retrieve current position.\n");
-				return;
-			}
-			g_print("Got current position in format %s: %llu\n",
-					gst_format_get_name(format), position);
-
-			if (0)
-			{
-				// Create the EOS event
-				g_print("Creating EOS event\n");
-				event = gst_event_new_eos();
-				if (event == NULL)
-				{
-					g_printerr("Unable to create EOS event\n");
-					return;
-				}
-
-				// Send the event
-				g_print("Sending EOS to video sink\n");
-				if (!gst_element_send_event(data->pipeline, event))
-				{
-					g_printerr("Unable to send EOS event via video sink\n");
-					return;
-				}
-				else
-				{
-					g_print("EOS event sent via video sink\n");
-				}
-			}
-			g_print("Seeking on pipeline element\n");
-			if (!gst_element_seek (data->pipeline, requested_rate,
-					GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH,
-					//GST_SEEK_TYPE_SET, position,
-					GST_SEEK_TYPE_SET, 0,
-						GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE))
-			{
-				g_printerr("Problems changing rate.\n");
-				return;
-			}
-			g_print("Seeking on pipeline element complete\n");
+			g_printerr("%s - Unable to retrieve current position.\n",
+					__FUNCTION__);
+			return;
 		}
+		g_print("%s - Got current position in format %s: %llu\n",
+				__FUNCTION__, gst_format_get_name(format), position);
+
+		g_print("%s - Seeking on pipeline element\n", __FUNCTION__);
+		if (!gst_element_seek (data->pipeline, requested_rate,
+				GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH,
+				//GST_SEEK_TYPE_SET, position,
+				GST_SEEK_TYPE_SET, 0,
+				GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE))
+		{
+			g_printerr("%s - Problems changing rate.\n", __FUNCTION__);
+			return;
+		}
+		g_print("%s - Seeking on pipeline element complete\n", __FUNCTION__);
 	}
 	else
 	{
-		g_print("Not requesting rate change\n");
+		g_print("%s - Not requesting rate change due to rate = 0\n",
+				__FUNCTION__);
 	}
 
 	// Initiate pause if rate was set to zero but wait time was not zero
 	if ((requested_rate == 0) && (waitSecs != 0))
 	{
-		g_print("Pausing pipeline for %d secs due to rate=0 & wait!=0\n", waitSecs);
+		g_print("%s - Pausing pipeline for %d secs due to rate=0 & wait!=0\n",
+				__FUNCTION__, waitSecs);
 		set_pipeline_state (data, GST_STATE_PAUSED, state_change_timeout_secs);
 
 		g_usleep(secs * 1000000L);
 
-		g_print("Resuming pipeline after %d sec pause\n", waitSecs);
+		g_print("%s - Resuming pipeline after %d sec pause\n", __FUNCTION__, waitSecs);
 		set_pipeline_state (data, GST_STATE_PLAYING, state_change_timeout_secs);
 	}
-	gboolean done = FALSE;
 
 	// Wait until error or EOS
 	bus = gst_element_get_bus (data->pipeline);
-
-	g_print("Waiting for EOS or ERROR\n");
+	g_print("%s - Waiting for EOS or ERROR\n", __FUNCTION__);
+	gboolean done = FALSE;
 	while (!done)
 	{
-		msg = gst_bus_timed_pop_filtered (bus, GST_CLOCK_TIME_NONE, GST_MESSAGE_ERROR | GST_MESSAGE_EOS);
+		msg = gst_bus_timed_pop_filtered (bus, GST_CLOCK_TIME_NONE,
+											GST_MESSAGE_ERROR | GST_MESSAGE_EOS);
 		if (msg != NULL)
 		{
-			g_print("Received msg type: %s\n", GST_MESSAGE_TYPE_NAME(msg));
+			g_print("%s - Received msg type: %s\n", __FUNCTION__, GST_MESSAGE_TYPE_NAME(msg));
 
 			if (GST_MESSAGE_TYPE(msg) == GST_MESSAGE_ERROR)
 			{
 				GError *err = NULL;
 				gchar *dbg_info = NULL;
 				gst_message_parse_error (msg, &err, &dbg_info);
-				g_print("ERROR from element %s: %s\n",
-						GST_OBJECT_NAME (msg->src), err->message);
-				g_print("Debugging info: %s\n", (dbg_info) ? dbg_info : "none");
+				g_print("%s - ERROR from element %s: %s\n",
+						__FUNCTION__, GST_OBJECT_NAME (msg->src), err->message);
+				g_print("%s - Debugging info: %s\n", __FUNCTION__, (dbg_info) ? dbg_info : "none");
 				g_error_free(err);
 				g_free(dbg_info);
 			}
@@ -905,10 +840,8 @@ static GstElement* create_playbin_pipeline()
     g_signal_connect(pipeline, "notify::source", G_CALLBACK(on_source_changed), pipeline);
 
     // Uncomment this line to limit the amount of downloaded data
-    //g_object_set (pipeline, "ring-buffer-max-size", (guint64)4000000, NULL);
-    //g_object_set (pipeline, "ring-buffer-max-size", (guint64)400000, NULL);
-    //g_object_set (pipeline, "ring-buffer-max-size", (guint64)400, NULL); - seg faults?
-    g_object_set (pipeline, "ring-buffer-max-size", (guint64)4000, NULL);
+    // NOTE: Can't set ring buffer to anything besides zero otherwise queue will not forward events
+    //g_object_set (pipeline, "ring-buffer-max-size", (guint64)4000, NULL);
 
     // Tried to force audio to fake sink since it complained about audio decoder
     // when trying to change URIs
@@ -1167,8 +1100,6 @@ static void on_source_changed(GstElement* element, GParamSpec* param, gpointer d
 
 static void log_bin_elements(GstBin* bin)
 {
-	g_print("Playbin elements:\n");
-
 	GstIterator* it = gst_bin_iterate_elements(bin);
 	gboolean done = FALSE;
 	GstElement *elem = NULL;
@@ -1197,6 +1128,11 @@ static void log_bin_elements(GstBin* bin)
 			{
 				log_bin_elements(GST_BIN(elem));
 			}
+			else
+			{
+				g_print("Element: %s is linked to: ", GST_ELEMENT_NAME(elem));
+				elem = log_element_links(elem);
+			}
 #ifndef GSTREAMER_010
 			g_value_unset (&value);
 #endif
@@ -1214,6 +1150,79 @@ static void log_bin_elements(GstBin* bin)
 		}
 	}
 	gst_iterator_free (it);
+}
+
+static GstElement* log_element_links(GstElement* elem)
+{
+	// Get sink pads of this element
+	GstIterator* it = gst_element_iterate_src_pads(elem);
+	gboolean done = FALSE;
+	GstPad *pad = NULL;
+	GstPad* peer = NULL;
+	GstElement* ds_elem = NULL;
+	int cnt = 0;
+#ifdef GSTREAMER_010
+	gpointer value;
+#else
+	GValue value = { 0 };
+#endif
+	while (!done)
+	{
+		switch (gst_iterator_next (it, &value))
+		{
+		case GST_ITERATOR_OK:
+#ifdef GSTREAMER_010
+			pad = GST_PAD(value);
+#else
+			pad = (GstPad *) g_value_get_object (&value);
+#endif
+			// Got a pad, check if its linked
+			if (gst_pad_is_linked(pad))
+			{
+				cnt++;
+
+				// Get peer of linkage
+				peer = gst_pad_get_peer(pad);
+				if (peer)
+				{
+					// Get parent element
+					ds_elem = gst_pad_get_parent_element(peer);
+					if (ds_elem)
+					{
+						g_print(" %s\n", GST_ELEMENT_NAME(ds_elem));
+					}
+					else
+					{
+						g_print(" NULL Parent\n");
+					}
+				}
+			}
+#ifndef GSTREAMER_010
+			g_value_unset (&value);
+#endif
+			break;
+		case GST_ITERATOR_RESYNC:
+			gst_iterator_resync (it);
+			break;
+		case GST_ITERATOR_ERROR:
+			g_printerr("Unable to iterate through elements\n");
+			done = TRUE;
+			break;
+		case GST_ITERATOR_DONE:
+			done = TRUE;
+			break;
+		default:
+			done = TRUE;
+			break;
+		}
+	}
+	gst_iterator_free (it);
+	if (cnt == 0)
+	{
+		g_print(" Nothing\n");
+	}
+
+	return ds_elem;
 }
 
 static gboolean set_pipeline_state(CustomData* data, GstState desired_state, gint timeoutSecs)

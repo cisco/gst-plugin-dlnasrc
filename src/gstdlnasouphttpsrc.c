@@ -36,12 +36,12 @@
  * <refsect2>
  * <title>Example launch line</title>
  * |[
- * gst-launch -v souphttpsrc location=https://some.server.org/index.html
+ * gst-launch-1.0 -v souphttpsrc location=https://some.server.org/index.html
  *     ! filesink location=/home/joe/server.html
  * ]| The above pipeline reads a web page from a server using the HTTPS protocol
  * and writes it to a local file.
  * |[
- * gst-launch -v souphttpsrc user-agent="FooPlayer 0.99 beta"
+ * gst-launch-1.0 -v souphttpsrc user-agent="FooPlayer 0.99 beta"
  *     automatic-redirect=false proxy=http://proxy.intranet.local:8080
  *     location=http://music.foobar.com/demo.mp3 ! mad ! audioconvert
  *     ! audioresample ! alsasink
@@ -51,7 +51,7 @@
  * HTTP proxy server is used. The User-Agent HTTP request header
  * is set to a custom string instead of "GStreamer souphttpsrc."
  * |[
- * gst-launch -v souphttpsrc location=http://10.11.12.13/mjpeg
+ * gst-launch-1.0 -v souphttpsrc location=http://10.11.12.13/mjpeg
  *     do-timestamp=true ! multipartdemux
  *     ! image/jpeg,width=640,height=480 ! matroskamux
  *     ! filesink location=mjpeg.mkv
@@ -76,16 +76,20 @@
 #include <stdlib.h>             /* atoi() */
 #endif
 #include <gst/gstelement.h>
-//#include <gst/gst-i18n-plugin.h>
+// *TODO*- see if you can uncomment for 1.0
+#ifdef HAVE_I18
+#include <gst/gst-i18n-plugin.h>
+#include <gst/tag/tag.h>
+#endif
+
 #ifdef HAVE_LIBSOUP_GNOME
 #include <libsoup/soup-gnome.h>
 #else
 #include <libsoup/soup.h>
 #endif
 #include "gstdlnasouphttpsrc.h"
-//#include <gst/tag/tag.h>
 
-#define GSTREAMER_010
+//#define GSTREAMER_010
 
 GST_DEBUG_CATEGORY_STATIC (gst_dlna_soup_http_src_debug);
 #define GST_CAT_DEFAULT gst_dlna_soup_http_src_debug
@@ -110,6 +114,7 @@ enum
   PROP_COOKIES,
   PROP_TIMEOUT,
   PROP_EXTRA_HEADERS,
+  // *TODO*- diff w/ org - do we really need these
   PROP_DLNA_SEEKABLE,
   PROP_DLNA_SIZE,
   PROP_DLNA_DURATION
@@ -135,7 +140,7 @@ static gboolean gst_dlna_soup_http_src_is_seekable (GstBaseSrc * bsrc);
 static gboolean gst_dlna_soup_http_src_do_seek (GstBaseSrc * bsrc,
     GstSegment * segment);
 static gboolean gst_dlna_soup_http_src_query (GstBaseSrc * bsrc, GstQuery * query);
-
+// *TODO*- diff w/ org - handling 
 static gboolean gst_dlna_soup_http_src_event (GstBaseSrc * bsrc, GstEvent * event);
 static gboolean gst_dlna_soup_http_src_unlock (GstBaseSrc * bsrc);
 static gboolean gst_dlna_soup_http_src_unlock_stop (GstBaseSrc * bsrc);
@@ -345,6 +350,7 @@ gst_dlna_soup_http_src_reset (GstDlnaSoupHTTPSrc * src)
   src->read_position = 0;
   src->request_position = 0;
   src->content_size = 0;
+  // *TODO*- diff w/ org - is this needed?
   src->request_rate = 1.0;
   src->current_rate = 1.0;
 
@@ -375,7 +381,6 @@ gst_dlna_soup_http_src_init (GstDlnaSoupHTTPSrc * src)
   src->proxy_id = NULL;
   src->proxy_pw = NULL;
   src->cookies = NULL;
-  src->iradio_mode = FALSE;
   src->loop = NULL;
   src->context = NULL;
   src->session = NULL;
@@ -516,7 +521,7 @@ gst_dlna_soup_http_src_set_property (GObject * object, guint prop_id,
       // Print out extra headers that were set
       if (src->extra_headers)
       {
-          GST_LOG_OBJECT(src, "Printing out extra headers");
+          GST_LOG_OBJECT(src, "Printing extra headers");
     	  _print_extra_headers(src);
       }
       else
@@ -625,6 +630,7 @@ gst_dlna_soup_http_src_get_property (GObject * object, guint prop_id,
   }
 }
 
+// *TODO*- diff w/ org - can this be uncommented w/ 1.0? 
 /*
 static gchar *
 gst_dlna_soup_http_src_unicodify (const gchar * str)
@@ -763,7 +769,7 @@ _append_extra_headers (GQuark field_id, const GValue * value, gpointer user_data
 	return TRUE;
 }
 
-
+// *TODO*- diff w/ org - can we get rid of this???
 static gboolean
 _print_extra_headers (GstDlnaSoupHTTPSrc* src)
 {
@@ -878,6 +884,7 @@ static void
 gst_dlna_soup_http_src_got_headers_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * src)
 {
   const char *value;
+  // *TODO*- diff w/ org - can this be uncommented?
   //GstTagList *tag_list = NULL;
   GstBaseSrc *basesrc;
   guint64 newsize;
@@ -934,11 +941,17 @@ gst_dlna_soup_http_src_got_headers_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * s
     }
   }
 
+  // *TODO*- diff w/ org - can we uncomment?
   // Icecast stuff
   //tag_list = gst_tag_list_new ();
 
+  
   if ((value =
+#ifdef GSTREAMER_010
           soup_message_headers_get (msg->response_headers,
+#else
+          soup_message_headers_get_one (msg->response_headers,
+#endif
               "icy-metaint")) != NULL)
   {
     gint icy_metaint = atoi (value);
@@ -991,6 +1004,8 @@ gst_dlna_soup_http_src_got_headers_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * s
           "format", G_TYPE_STRING, "S16BE",
           "layout", G_TYPE_STRING, "interleaved",
           "channels", G_TYPE_INT, channels, "rate", G_TYPE_INT, rate, NULL);
+
+      gst_base_src_set_caps (GST_BASE_SRC (src), src->src_caps);
 #endif
     }
     else
@@ -1013,7 +1028,7 @@ gst_dlna_soup_http_src_got_headers_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * s
 
   if (params != NULL)
     g_hash_table_destroy (params);
-/*
+
   if ((value =
 #ifdef GSTREAMER_010
          soup_message_headers_get (msg->response_headers,
@@ -1023,14 +1038,18 @@ gst_dlna_soup_http_src_got_headers_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * s
               "icy-name")) != NULL)
   {
     g_free (src->iradio_name);
+#ifdef HAVE_I18
     src->iradio_name = gst_dlna_soup_http_src_unicodify (value);
+#endif
     if (src->iradio_name)
     {
 #ifdef GSTREAMER_010
       g_object_notify (G_OBJECT (src), "iradio-name");
 #endif
+#ifdef HAVE_I18
       gst_tag_list_add (tag_list, GST_TAG_MERGE_REPLACE, GST_TAG_ORGANIZATION,
           src->iradio_name, NULL);
+#endif
     }
   }
 
@@ -1043,14 +1062,18 @@ gst_dlna_soup_http_src_got_headers_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * s
               "icy-genre")) != NULL)
   {
     g_free (src->iradio_genre);
+#ifdef HAVE_I18
     src->iradio_genre = gst_dlna_soup_http_src_unicodify (value);
+#endif
     if (src->iradio_genre)
     {
 #ifdef GSTREAMER_010
       g_object_notify (G_OBJECT (src), "iradio-genre");
 #endif
+#ifdef HAVE_I18
       gst_tag_list_add (tag_list, GST_TAG_MERGE_REPLACE, GST_TAG_GENRE,
           src->iradio_genre, NULL);
+#endif
     }
   }
   #ifdef GSTREAMER_010
@@ -1061,16 +1084,21 @@ gst_dlna_soup_http_src_got_headers_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * s
       != NULL)
   {
     g_free (src->iradio_url);
+#ifdef HAVE_I18
     src->iradio_url = gst_dlna_soup_http_src_unicodify (value);
+#endif
     if (src->iradio_url)
     {
  #ifdef GSTREAMER_010
       g_object_notify (G_OBJECT (src), "iradio-url");
  #endif
+#ifdef HAVE_I18
       gst_tag_list_add (tag_list, GST_TAG_MERGE_REPLACE, GST_TAG_LOCATION,
           src->iradio_url, NULL);
+#endif
     }
   }
+#ifdef HAVE_I18
   if (!gst_tag_list_is_empty (tag_list))
   {
     GST_DEBUG_OBJECT (src,
@@ -1089,14 +1117,15 @@ gst_dlna_soup_http_src_got_headers_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * s
      gst_tag_list_unref (tag_list);
  #endif
   }
-  */
+#endif
 
   // Handle HTTP errors.
   gst_dlna_soup_http_src_parse_status (msg, src);
 
   // Check if Range header was respected.
   // *TODO* - fix this up since can't include range when playspeed is included
-  /*
+  // Included in org - was this preventing something from working?
+
   if (src->ret == GST_FLOW_CUSTOM_ERROR &&
       src->read_position && msg->status_code != SOUP_STATUS_PARTIAL_CONTENT)
   {
@@ -1105,7 +1134,6 @@ gst_dlna_soup_http_src_got_headers_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * s
     		src->location);
     src->ret = GST_FLOW_ERROR;
   }
-  */
 }
 
 /* Have body. Signal EOS. */
@@ -1164,9 +1192,9 @@ gst_dlna_soup_http_src_finished_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * src)
   } else if (G_UNLIKELY (src->session_io_status !=
           GST_DLNA_SOUP_HTTP_SRC_SESSION_IO_STATUS_RUNNING)) {
     /* FIXME: reason_phrase is not translated, add proper error message */
-    //GST_ELEMENT_ERROR (src, RESOURCE, NOT_FOUND,
-    //    ("%s", msg->reason_phrase),
-    //    ("libsoup status code %d", msg->status_code));
+    GST_ELEMENT_ERROR (src, RESOURCE, NOT_FOUND,
+        ("%s", msg->reason_phrase),
+       ("libsoup status code %d", msg->status_code));
   }
   if (src->loop)
     g_main_loop_quit (src->loop);
@@ -1276,6 +1304,9 @@ gst_dlna_soup_http_src_got_chunk_cb (SoupMessage * msg, SoupBuffer * chunk,
 {
   GstBaseSrc *basesrc;
   guint64 new_position;
+#ifndef GSTREAMER_010
+  SoupGstChunk *gchunk;
+#endif
 
   if (G_UNLIKELY (msg != src->msg)) {
     GST_DEBUG_OBJECT (src, "got chunk, but not for current message");
@@ -1291,7 +1322,13 @@ gst_dlna_soup_http_src_got_chunk_cb (SoupMessage * msg, SoupBuffer * chunk,
       chunk->length);
 
   /* Extract the GstBuffer from the SoupBuffer and set its fields. */
+#ifdef GSTREAMER_010
   *src->outbuf = GST_BUFFER_CAST (soup_buffer_get_owner (chunk));
+#else
+  gchunk = (SoupGstChunk *)soup_buffer_get_owner(chunk);
+  *src->outbuf = gchunk->buffer;
+#endif
+
 #ifdef GSTREAMER_010
   GST_BUFFER_SIZE (*src->outbuf) = chunk->length;
   GST_BUFFER_OFFSET (*src->outbuf) = basesrc->segment.last_stop;
@@ -1362,30 +1399,51 @@ gst_dlna_soup_http_src_parse_status (SoupMessage * msg, GstDlnaSoupHTTPSrc * src
     switch (msg->status_code) {
       case SOUP_STATUS_CANT_RESOLVE:
       case SOUP_STATUS_CANT_RESOLVE_PROXY:
-        //SOUP_HTTP_SRC_ERROR (src, msg, RESOURCE, NOT_FOUND,
-        //    ("Could not resolve server name."));
+#ifdef HAVE_I18
+        SOUP_HTTP_SRC_ERROR (src, msg, RESOURCE, NOT_FOUND,
+            ("Could not resolve server name."));
+#else
+        GST_ERROR_OBJECT(src, "Could not resolve server name.");
+#endif
         src->ret = GST_FLOW_ERROR;
         break;
       case SOUP_STATUS_CANT_CONNECT:
       case SOUP_STATUS_CANT_CONNECT_PROXY:
-        //SOUP_HTTP_SRC_ERROR (src, msg, RESOURCE, OPEN_READ,
-        //    ("Could not establish connection to server."));
+#ifdef HAVE_I18
+        SOUP_HTTP_SRC_ERROR (src, msg, RESOURCE, OPEN_READ,
+            ("Could not establish connection to server."));
+#else
+        GST_ERROR_OBJECT(src, "Could not establish connection to server.");
+#endif
         src->ret = GST_FLOW_ERROR;
         break;
       case SOUP_STATUS_SSL_FAILED:
-        //SOUP_HTTP_SRC_ERROR (src, msg, RESOURCE, OPEN_READ,
-        //    ("Secure connection setup failed."));
+#ifdef HAVE_I18
+        SOUP_HTTP_SRC_ERROR (src, msg, RESOURCE, OPEN_READ,
+            ("Secure connection setup failed."));
+#else
+        GST_ERROR_OBJECT(src, "Secure connection setup failed.");
+#endif
         src->ret = GST_FLOW_ERROR;
         break;
       case SOUP_STATUS_IO_ERROR:
-        //SOUP_HTTP_SRC_ERROR (src, msg, RESOURCE, READ,
-        //    ("A network error occured, or the server closed the connection "
-        //        "unexpectedly."));
+#ifdef HAVE_I18
+        SOUP_HTTP_SRC_ERROR (src, msg, RESOURCE, READ,
+            ("A network error occured, or the server closed the connection "
+                "unexpectedly."));
+#else
+        GST_ERROR_OBJECT(src, "A network error occured, or the server closed the connection "
+                "unexpectedly.");
+#endif
         src->ret = GST_FLOW_ERROR;
         break;
       case SOUP_STATUS_MALFORMED:
-        //SOUP_HTTP_SRC_ERROR (src, msg, RESOURCE, READ,
-        //    ("Server sent bad data."));
+#ifdef HAVE_I18
+        SOUP_HTTP_SRC_ERROR (src, msg, RESOURCE, READ,
+            ("Server sent bad data."));
+#else
+        GST_ERROR_OBJECT(src, "Server sent bad data.");
+#endif
         src->ret = GST_FLOW_ERROR;
         break;
       case SOUP_STATUS_CANCELLED:
@@ -1399,10 +1457,10 @@ gst_dlna_soup_http_src_parse_status (SoupMessage * msg, GstDlnaSoupHTTPSrc * src
     /* FIXME: reason_phrase is not translated and not suitable for user
      * error dialog according to libsoup documentation.
      * FIXME: error code (OPEN_READ vs. READ) should depend on http status? */
-    //GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ,
-    //    ("%s", msg->reason_phrase),
-    //    ("%s (%d), URL: %s", msg->reason_phrase, msg->status_code,
-    //        src->location));
+    GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ,
+        ("%s", msg->reason_phrase),
+        ("%s (%d), URL: %s", msg->reason_phrase, msg->status_code,
+            src->location));
     src->ret = GST_FLOW_ERROR;
   }
 }
@@ -1417,8 +1475,8 @@ gst_dlna_soup_http_src_build_message (GstDlnaSoupHTTPSrc * src)
 
   src->msg = soup_message_new (SOUP_METHOD_GET, src->location);
   if (!src->msg) {
-    //GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ,
-    //    ("Error parsing URL."), ("URL: %s", src->location));
+    GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ,
+        ("Error parsing URL."), ("URL: %s", src->location));
     return FALSE;
   }
   src->session_io_status = GST_DLNA_SOUP_HTTP_SRC_SESSION_IO_STATUS_IDLE;
@@ -1443,6 +1501,7 @@ gst_dlna_soup_http_src_build_message (GstDlnaSoupHTTPSrc * src)
   }
 
   // *TODO* - don't we want this for 1.0?  Need better logic here
+  // *TODO*- can we do this through extra headers?
   #ifdef GSTREAMER_010
   soup_message_headers_append (src->msg->request_headers,
       "transferMode.dlna.org", "Streaming");
@@ -1467,6 +1526,7 @@ gst_dlna_soup_http_src_build_message (GstDlnaSoupHTTPSrc * src)
       gst_dlna_soup_http_src_chunk_allocator, src, NULL);
 
   // DLNA server's don't like range header with playspeed
+  // *TODO* - need better handling here - reason to extend soup src?
   if (0)
   {
 	  gst_dlna_soup_http_src_add_range_header (src, src->request_position);
@@ -1625,8 +1685,8 @@ gst_dlna_soup_http_src_start (GstBaseSrc * bsrc)
   GST_INFO_OBJECT (src, "start(\"%s\")", src->location);
 
   if (!src->location) {
-    //GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ, (("No URL set.")),
-    //    ("Missing location property"));
+    GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ, (("No URL set.")),
+        ("Missing location property"));
     return FALSE;
   }
 
@@ -1634,8 +1694,8 @@ gst_dlna_soup_http_src_start (GstBaseSrc * bsrc)
 
   src->loop = g_main_loop_new (src->context, TRUE);
   if (!src->loop) {
-    //GST_ELEMENT_ERROR (src, LIBRARY, INIT,
-    //    (NULL), ("Failed to start GMainLoop"));
+    GST_ELEMENT_ERROR (src, LIBRARY, INIT,
+        (NULL), ("Failed to start GMainLoop"));
     g_main_context_unref (src->context);
     return FALSE;
   }
@@ -1658,8 +1718,8 @@ gst_dlna_soup_http_src_start (GstBaseSrc * bsrc)
   }
 
   if (!src->session) {
-    //GST_ELEMENT_ERROR (src, LIBRARY, INIT,
-    //    (NULL), ("Failed to create async session"));
+    GST_ELEMENT_ERROR (src, LIBRARY, INIT,
+        (NULL), ("Failed to create async session"));
     return FALSE;
   }
 
@@ -1778,41 +1838,7 @@ gst_dlna_soup_http_src_do_seek (GstBaseSrc * bsrc, GstSegment * segment)
 	  return FALSE;
   }
 
-  // Assuming dlnasrc verified request is valid so no verifications is needed here
-  if (0)
-  {
-	  if ((src->read_position == segment->start) && (segment->format == GST_FORMAT_BYTES)) {
-	    GST_INFO_OBJECT (src, "Seeking to current read position");
-	    return TRUE;
-	  }
-
-	  /*
-	  if (segment->rate < 0.0 || segment->format != GST_FORMAT_BYTES) {
-	    GST_WARNING_OBJECT (src, "Invalid seek segment");
-	    return FALSE;
-	  }
-	  */
-
-	  if (src->content_size != 0 && segment->start >= src->content_size &&
-			  segment->format == GST_FORMAT_BYTES) {
-	    GST_WARNING_OBJECT (src, "Seeking behind end of file, will go to EOS soon");
-	  }
-	  // *TODO* - need something similar for time
-
-	  /* Wait for create() to handle the jump in offset. */
-	  if (segment->format == GST_FORMAT_BYTES)
-	  {
-		  src->request_position = segment->start;
-	  }
-	  else if (segment->format == GST_FORMAT_TIME)
-	  {
-		  // *TODO* - something with time
-		  // Need to reopen new connection & issue new get request
-		  // Set rate to 1.0 so client side trick mode is not enabled
-		  src->request_position = segment->start;
-	  }
-  }
-
+  // *TODO*- clean up here
   // Current request will be canceled in _create() since rate change will be detected
   // *TODO* - is this really right?  Or should we be modifying state & let it cancel???
   if (src->current_rate != segment->rate)
@@ -1839,13 +1865,14 @@ gst_dlna_soup_http_src_do_seek (GstBaseSrc * bsrc, GstSegment * segment)
 	  segment->applied_rate = src->request_rate;
  	  GST_INFO_OBJECT (src, "Set segment rate %3.1f back to 1.0 to inhibit client-side trick modes",
 			  segment->rate);
-	  segment->rate = 1.0;
+	  //segment->rate = 1.0;
  }
 
   GST_WARNING_OBJECT (src, "Performed actions necessary for seek");
   return TRUE;
 }
 
+// *TODO*- orig doesn't have this but all we are doing is passing to base so maybe it isn't needed???
 gboolean
 gst_dlna_soup_http_src_event(GstBaseSrc * src,
 					   GstEvent  *event)
@@ -1871,6 +1898,7 @@ gst_dlna_soup_http_src_event(GstBaseSrc * src,
 	return ret;
 }
 
+// *TODO* - not really that different from orig, should it be removed?
 static gboolean
 gst_dlna_soup_http_src_query (GstBaseSrc * bsrc, GstQuery * query)
 {
@@ -1902,35 +1930,44 @@ gst_dlna_soup_http_src_query (GstBaseSrc * bsrc, GstQuery * query)
 
 	case GST_QUERY_CONVERT:
 
-		gst_query_parse_convert (query, &src_fmt, &src_val, &dest_fmt, &dest_val);
-
-		// Print out info about conversion that has been requested
-		GST_INFO_OBJECT(src, "Got conversion query: src fmt %s, dest fmt %s, src val %lld, dest val %lld",
-				gst_format_get_name(src_fmt), gst_format_get_name(dest_fmt), src_val, dest_val);
-
-		if (src_fmt == dest_fmt)
+		// *TODO* - with this inplace, we get reset/flush of pipeline, but bunch of errors
+		// about start greater than stop???
+		if (0)
 		{
-			dest_val = src_val;
-			GST_INFO_OBJECT(src, "Setting dest to src");
-			ret = TRUE;
-		}
-		else
-		{
-			// Handle simple case
-			if (src_val == 0)
+			gst_query_parse_convert (query, &src_fmt, &src_val, &dest_fmt, &dest_val);
+
+			// Print out info about conversion that has been requested
+			GST_INFO_OBJECT(src, "Got conversion query: src fmt %s, dest fmt %s, src val %lld, dest val %lld",
+					gst_format_get_name(src_fmt), gst_format_get_name(dest_fmt), src_val, dest_val);
+
+			if (src_fmt == dest_fmt)
 			{
-				dest_val = 1;
-				GST_INFO_OBJECT(src, "Setting dest to zero");
+				dest_val = src_val;
+				GST_INFO_OBJECT(src, "Setting dest to src");
 				ret = TRUE;
 			}
 			else
 			{
-				// *TODO* - Figure out conversion here, do a head & get response
-				GST_INFO_OBJECT(src, "Doing nothing");
-				ret = FALSE;
+				// Handle simple case
+				if (src_val == 0)
+				{
+					dest_val = 1;
+					GST_INFO_OBJECT(src, "Setting dest to zero");
+					ret = TRUE;
+				}
+				else
+				{
+					// *TODO* - Figure out conversion here, do a head & get response
+					GST_INFO_OBJECT(src, "Doing nothing");
+					ret = FALSE;
+				}
 			}
+			gst_query_set_convert (query, src_fmt, src_val, dest_fmt, dest_val);
 		}
-		gst_query_set_convert (query, src_fmt, src_val, dest_fmt, dest_val);
+		else
+		{
+			GST_INFO_OBJECT(src, "Doing nothing");
+		}
 		break;
 
 	default:
@@ -2178,7 +2215,9 @@ dlna_soup_http_src_init (GstPlugin * dlna_soup_http_src)
 	GST_DEBUG_CATEGORY_INIT(gst_dlna_soup_http_src_debug, "dlnasouphttpsrc", 0, "MPEG+DLNA SOUP HTTP Player");
 
 	return gst_element_register ((GstPlugin *)dlna_soup_http_src, "dlnasouphttpsrc",
-				GST_RANK_NONE, GST_TYPE_DLNA_SOUP_HTTP_SRC);
+				GST_RANK_NONE,
+				//GST_RANK_PRIMARY+1,
+				GST_TYPE_DLNA_SOUP_HTTP_SRC);
 }
 
 /* PACKAGE: this is usually set by autotools depending on some _INIT macro
