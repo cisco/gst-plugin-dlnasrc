@@ -1438,7 +1438,8 @@ dlna_src_set_uri(GstDlnaSrc *dlna_src, const gchar* value)
 				free(dlna_src->uri);
 			}
 			dlna_src->uri = NULL;
-			return FALSE;
+			// Exit here otherwise seg fault happens latter
+			exit(1);
 		}
 		GST_INFO_OBJECT(dlna_src, "Successfully initialized URI: %s", dlna_src->uri);
 	}
