@@ -3,34 +3,33 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+
 // Uncomment to compile under GStreamer-0.10 instead of GStreamer-1.0
 //#define GSTREAMER_010
 
 // Global vars for cmd line args
 //
-static int waitSecs = 0;
-static int state_change_timeout_secs = 45;
-static gfloat requested_rate = 0;
-static int rrid = 2;
-static char host[256];
-static char uri[256];
-static gboolean usePlaybin = TRUE;    //g_object_set (pipeline, "ring-buffer-max-size", (guint64)4000000, NULL);
-//g_object_set (pipeline, "ring-buffer-max-size", (guint64)400000, NULL);
-//g_object_set (pipeline, "ring-buffer-max-size", (guint64)400, NULL); - seg faults?
+static int g_wait_secs = 0;
+static int g_state_change_timeout_secs = 45;
+static gfloat g_requested_rate = 0;
+static int g_rrid = 2;
+static char g_host[256];
+static char g_uri[256];
+static gboolean g_use_playbin = TRUE;
+static gboolean g_use_dtcp = FALSE;
+static gboolean g_seek_format_time = TRUE;
 
-static gboolean use_dtcp = FALSE;
+static gboolean g_test_positioning = FALSE;
+static gboolean g_test_uri_switch = FALSE;
+static gboolean g_test_rate_change = FALSE;
+static gboolean g_test_seeking = FALSE;
 
-static gboolean test_positioning = FALSE;
-static gboolean test_uri_switch = FALSE;
-static gboolean test_rate_change = FALSE;
-static gboolean test_seeking = FALSE;
-
-static gboolean use_file = FALSE;
-static char file_name[256];
-// *TODO* - change this to env var
-//static gchar* file_path = "file:///home/landerson/RUIHRI/git-dlnaplugin/gst-plugin-la/";
-static gchar* file_path = NULL;
+static gboolean g_use_file = FALSE;
+static char g_file_name[256];
+static gchar* g_file_path = NULL;
 static gchar* TEST_FILE_URL_PREFIX_ENV = "TEST_FILE_URL_PREFIX";
+
+static GstElement* g_sink = NULL;
 
 
 /* Structure to contain all our information, so we can pass it around */
@@ -48,8 +47,10 @@ typedef struct _CustomData {
 //
 static gboolean process_cmd_line_args(int argc, char*argv[]);
 static GstElement* create_playbin_pipeline();
-static GstElement* create_manual_playbin_pipeline();
+static GstElement* create_manual_pipeline();
+static void manual_pipeline_cb_pad_added (GstElement *dec, GstPad *pad, gpointer data);
 static GstElement* create_fancy_pipeline();
+static GstElement* create_simple_pipeline();
 static void on_source_changed(GstElement* element, GParamSpec* param, gpointer data);
 static void handle_message (CustomData *data, GstMessage *msg);
 
@@ -79,9 +80,9 @@ int main(int argc, char *argv[])
 	data.duration = GST_CLOCK_TIME_NONE;
 
 	// Assign default values
-	strcpy(host, "192.168.2.2");
-	uri[0] = '\0';
-	file_name[0] = '\0';
+	strcpy(g_host, "192.168.2.2");
+	g_uri[0] = '\0';
+	g_file_name[0] = '\0';
 	if (!process_cmd_line_args(argc, argv))
 	{
 		g_printerr("Exit due to problems with cmd line args\n");
@@ -89,23 +90,23 @@ int main(int argc, char *argv[])
 	}
 
 	// Build default URI if one was not specified
-	if (uri[0] == '\0')
+	if (g_uri[0] == '\0')
 	{
 		char* line2 = "http://";
 		char* line3 = ":8008/ocaphn/recording?rrid=";
 		char* line4 = "&profile=MPEG_TS_SD_NA_ISO&mime=video/mpeg";
-		if (use_dtcp)
+		if (g_use_dtcp)
 		{
 			line4 = "&profile=DTCP_MPEG_TS_SD_NA_ISO&mime=video/mpeg";
 		}
-		sprintf(uri, "%s%s%s%d%s", line2, host, line3, rrid, line4);
+		sprintf(g_uri, "%s%s%s%d%s", line2, g_host, line3, g_rrid, line4);
 	}
 
 	// Initialize GStreamer
 	gst_init (&argc, &argv);
 
 	// Build the pipeline
-	if (usePlaybin)
+	if (g_use_playbin)
 	{
 		g_print("Creating pipeline using playbin\n");
 		data.pipeline = create_playbin_pipeline();
@@ -115,10 +116,13 @@ int main(int argc, char *argv[])
 		if (1)
 		{
 			g_print("Creating pipeline by assembling elements\n");
-			data.pipeline = create_manual_playbin_pipeline();
+			data.pipeline = create_manual_pipeline();
 		}
 		else
 		{
+			g_print("Creating simplest pipeline\n");
+			data.pipeline = create_simple_pipeline();
+
 			g_print("Creating pipeline used by Fancy\n");
 			data.pipeline = create_fancy_pipeline();
 		}
@@ -133,7 +137,7 @@ int main(int argc, char *argv[])
 
 	// Start playing
 	g_print("Pipeline created, start playing\n");
-	if (!set_pipeline_state(&data, GST_STATE_PLAYING, state_change_timeout_secs))
+	if (!set_pipeline_state(&data, GST_STATE_PLAYING, g_state_change_timeout_secs))
 	{
 		g_printerr ("Unable to set the pipeline to the playing state.\n");
 		return -1;
@@ -148,19 +152,19 @@ int main(int argc, char *argv[])
 
 	// Perform requested testing
 	g_print("Begin pipeline test\n");
-	if (test_positioning)
+	if (g_test_positioning)
 	{
 		perform_positioning(&data);
 	}
-	else if (test_rate_change)
+	else if (g_test_rate_change)
 	{
 		perform_rate_change(&data);
 	}
-	else if (test_uri_switch)
+	else if (g_test_uri_switch)
 	{
 		perform_uri_switch(&data);
 	}
-	else if (test_seeking)
+	else if (g_test_seeking)
 	{
 		perform_seek(&data);
 	}
@@ -214,12 +218,12 @@ static void perform_positioning(CustomData* data)
 #ifdef GSTREAMER_010
 				if (!gst_element_query_position (data->pipeline, &fmt, &current))
 #else
-				if (!gst_element_query_position (data->pipeline, GST_FORMAT_TIME, &current))
+					if (!gst_element_query_position (data->pipeline, GST_FORMAT_TIME, &current))
 #endif
-				{
-					g_printerr ("Could not query current position.\n");
-					return;
-				}
+					{
+						g_printerr ("Could not query current position.\n");
+						return;
+					}
 
 				// If we didn't know it yet, query the stream duration
 				if (!GST_CLOCK_TIME_IS_VALID (data->duration))
@@ -228,16 +232,16 @@ static void perform_positioning(CustomData* data)
 #ifdef GSTREAMER_010
 					if (!gst_element_query_duration (data->pipeline, &fmt, &data->duration))
 #else
-					if (!gst_element_query_duration (data->pipeline, GST_FORMAT_TIME, &data->duration))
+						if (!gst_element_query_duration (data->pipeline, GST_FORMAT_TIME, &data->duration))
 #endif
-					{
-						g_printerr ("Could not query current duration.\n");
-						return;
-					}
-					else
-					{
-						g_print ("Current duration is: %llu\n", data->duration);
-					}
+						{
+							g_printerr ("Could not query current duration.\n");
+							return;
+						}
+						else
+						{
+							g_print ("Current duration is: %llu\n", data->duration);
+						}
 				}
 
 				// Get the current playback rate
@@ -266,10 +270,10 @@ static void perform_positioning(CustomData* data)
 				// If seeking is enabled, we have not done it yet, and the time is right, seek
 				if (data->seek_enabled && !data->seek_done && current > 10 * GST_SECOND)
 				{
-					g_print ("\nReached 10s, performing seek with requested rate %3.1f...\n", requested_rate);
+					g_print ("\nReached 10s, performing seek with requested rate %3.1f...\n", g_requested_rate);
 
 					// If not changing rate, use seek simple
-					if (requested_rate == 0.0)
+					if (g_requested_rate == 0.0)
 					{
 						// Seek simple will send rate of 0 which will be ignored
 						if (!gst_element_seek_simple (data->pipeline, GST_FORMAT_TIME,
@@ -285,74 +289,40 @@ static void perform_positioning(CustomData* data)
 					}
 					else
 					{
-						if (1)
-						{
-							GstEvent* seek_event = gst_event_new_seek (requested_rate, 		// rate
-																	   GST_FORMAT_TIME, 	// format
-																	   GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE, // flags
-																	   GST_SEEK_TYPE_NONE, 	// start type?
-																	   current,				// start
-																	   GST_SEEK_TYPE_NONE, 	// stop type
-																	   -1);					// stop
+						GstEvent* seek_event = gst_event_new_seek (g_requested_rate, 		// rate
+								GST_FORMAT_TIME, 	// format
+								GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE, // flags
+								GST_SEEK_TYPE_NONE, 	// start type?
+								current,				// start
+								GST_SEEK_TYPE_NONE, 	// stop type
+								-1);					// stop
 
-							if (seek_event != NULL)
+						if (seek_event != NULL)
+						{
+							g_print("Created seek event for rate change, sending through video sink\n");
+							g_object_get (data->pipeline, "video-sink", &video_sink, NULL);
+							if (video_sink != NULL)
 							{
-								if (1)
+								if (!gst_element_send_event(video_sink, seek_event))
 								{
-									g_print("Created seek event for rate change, sending through video sink\n");
-									g_object_get (data->pipeline, "video-sink", &video_sink, NULL);
-									if (video_sink != NULL)
-									{
-										if (!gst_element_send_event(video_sink, seek_event))
-										{
-											g_printerr ("Problems sending seek event through video sink for rate change\n");
-											return;
-										}
-										else
-										{
-											g_print("Sent seek event through video sink for rate change\n");
-										}
-									}
-									else
-									{
-										g_printerr("Not ending seek event due to NULL video sink\n");
-										return;
-									}
+									g_printerr ("Problems sending seek event through video sink for rate change\n");
+									return;
 								}
 								else
 								{
-									if (!gst_element_send_event (data->pipeline, seek_event))
-									{
-										g_printerr ("Problems sending seek event through playbin for rate change\n");
-										return;
-									}
-									else
-									{
-										g_print("Sent seek event through playbin for rate change\n");
-									}
+									g_print("Sent seek event through video sink for rate change\n");
 								}
 							}
 							else
 							{
-								g_printerr ("Unable to create seek event for rate change\n");
+								g_printerr("Not ending seek event due to NULL video sink\n");
 								return;
 							}
 						}
 						else
 						{
-							if (!gst_element_seek(data->pipeline, requested_rate, GST_FORMAT_TIME,
-									GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT,
-									GST_SEEK_TYPE_END, 30 * GST_SECOND, GST_SEEK_TYPE_NONE, 0))
-							{
-								g_printerr ("Problems doing a seek with rate change to %3.1f\n",
-										requested_rate);
-								return;
-							}
-							else
-							{
-								g_print("Completed seek with rate change to %3.1f\n",
-										requested_rate);
-							}
+							g_printerr ("Unable to create seek event for rate change\n");
+							return;
 						}
 					}
 					data->seek_done = TRUE;
@@ -371,16 +341,16 @@ static void perform_rate_change(CustomData* data)
 	//GstFormat format = GST_FORMAT_DEFAULT;
 
 	// Wait for 10 seconds for playback to start up
-	long secs = waitSecs;
+	long secs = g_wait_secs;
 	g_print("%s - Waiting %ld secs for startup prior to rate change\n",
 			__FUNCTION__, secs);
 	g_usleep(secs * 1000000L);
 
 	// If requested, send rate change
-	if (requested_rate != 0)
+	if (g_requested_rate != 0)
 	{
 		g_print("%s - Requesting rate change to %4.1f\n",
-				__FUNCTION__, requested_rate);
+				__FUNCTION__, g_requested_rate);
 
 		gint64 position = -1;
 
@@ -400,9 +370,18 @@ static void perform_rate_change(CustomData* data)
 		g_print("%s - Got current position in format %s: %llu\n",
 				__FUNCTION__, gst_format_get_name(format), position);
 
-		g_print("%s - Seeking on pipeline element\n", __FUNCTION__);
-		if (!gst_element_seek (data->pipeline, requested_rate,
-				GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH,
+		if (g_seek_format_time)
+		{
+			format = GST_FORMAT_TIME;
+		}
+		else
+		{
+			format = GST_FORMAT_BYTES;
+		}
+		g_print("%s - Seeking on pipeline element using format: %s\n",
+				__FUNCTION__, gst_format_get_name(format));
+		if (!gst_element_seek (data->pipeline, g_requested_rate,
+				format, GST_SEEK_FLAG_FLUSH,
 				//GST_SEEK_TYPE_SET, position,
 				GST_SEEK_TYPE_SET, 0,
 				GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE))
@@ -419,16 +398,16 @@ static void perform_rate_change(CustomData* data)
 	}
 
 	// Initiate pause if rate was set to zero but wait time was not zero
-	if ((requested_rate == 0) && (waitSecs != 0))
+	if ((g_requested_rate == 0) && (g_wait_secs != 0))
 	{
 		g_print("%s - Pausing pipeline for %d secs due to rate=0 & wait!=0\n",
-				__FUNCTION__, waitSecs);
-		set_pipeline_state (data, GST_STATE_PAUSED, state_change_timeout_secs);
+				__FUNCTION__, g_wait_secs);
+		set_pipeline_state (data, GST_STATE_PAUSED, g_state_change_timeout_secs);
 
 		g_usleep(secs * 1000000L);
 
-		g_print("%s - Resuming pipeline after %d sec pause\n", __FUNCTION__, waitSecs);
-		set_pipeline_state (data, GST_STATE_PLAYING, state_change_timeout_secs);
+		g_print("%s - Resuming pipeline after %d sec pause\n", __FUNCTION__, g_wait_secs);
+		set_pipeline_state (data, GST_STATE_PLAYING, g_state_change_timeout_secs);
 	}
 
 	// Wait until error or EOS
@@ -466,7 +445,7 @@ static void perform_uri_switch(CustomData* data)
 	GstMessage *msg;
 
 	// Wait for 10 seconds for playback to start up
-	long secs = waitSecs;
+	long secs = g_wait_secs;
 	g_print("Waiting %ld secs for startup prior to switching uri\n", secs);
 	g_usleep(secs * 1000000L);
 
@@ -523,7 +502,7 @@ static void perform_seek(CustomData* data)
 	GstMessage *msg;
 
 	// Wait for 10 seconds for playback to start up
-	long secs = waitSecs;
+	long secs = g_wait_secs;
 	g_print("Waiting %ld secs for startup prior to sending seek event\n", secs);
 	g_usleep(secs * 1000000L);
 
@@ -692,32 +671,32 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 	{
 		if (strstr(argv[i], "rate=") != NULL)
 		{
-			if (sscanf(argv[i], "rate=%f", &requested_rate) != 1)
+			if (sscanf(argv[i], "rate=%f", &g_requested_rate) != 1)
 			{
 				g_printerr("Invalid rate arg specified: %s\n", argv[i]);
 				return FALSE;
 			}
 			else
 			{
-				g_print("Set requested rate change to %4.1f\n", requested_rate);
-				test_rate_change = TRUE;
+				g_print("Set requested rate change to %4.1f\n", g_requested_rate);
+				g_test_rate_change = TRUE;
 			}
 		}
 		else if (strstr(argv[i], "wait=") != NULL)
 		{
-			if (sscanf(argv[i], "wait=%d", &waitSecs) != 1)
+			if (sscanf(argv[i], "wait=%d", &g_wait_secs) != 1)
 			{
 				g_printerr("Invalid wait arg specified: %s\n", argv[i]);
 				return FALSE;
 			}
 			else
 			{
-				g_print("Set requested wait secs to %d\n", waitSecs);
+				g_print("Set requested wait secs to %d\n", g_wait_secs);
 			}
 		}
 		else if (strstr(argv[i], "uri=") != NULL)
 		{
-			if (sscanf(argv[i], "uri=%s\n", &uri[0]) != 1)
+			if (sscanf(argv[i], "uri=%s\n", &g_uri[0]) != 1)
 			{
 				g_printerr("Invalid uri arg specified: %s\n", argv[i]);
 				return FALSE;
@@ -725,69 +704,69 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 			}
 			else
 			{
-				g_print("Set requested URI to %s\n", uri);
+				g_print("Set requested URI to %s\n", g_uri);
 			}
 		}
 		else if (strstr(argv[i], "rrid=") != NULL)
 		{
-			if (sscanf(argv[i], "rrid=%d", &rrid) != 1)
+			if (sscanf(argv[i], "rrid=%d", &g_rrid) != 1)
 			{
 				g_printerr("Invalid rrid specified: %s\n", argv[i]);
 				return FALSE;
 			}
 			else
 			{
-				g_print("Set requested rrid to %d\n", rrid);
+				g_print("Set requested rrid to %d\n", g_rrid);
 			}
 		}
 		else if (strstr(argv[i], "host=") != NULL)
 		{
-			if (sscanf(argv[i], "host=%s\n", &host[0]) != 1)
+			if (sscanf(argv[i], "host=%s\n", &g_host[0]) != 1)
 			{
 				g_printerr("Invalid host arg specified: %s\n", argv[i]);
 				return FALSE;
 			}
 			else
 			{
-				g_print("Set requested host ip to %s\n", host);
+				g_print("Set requested host ip to %s\n", g_host);
 			}
 		}
 		else if (strstr(argv[i], "pipeline") != NULL)
 		{
-			usePlaybin = FALSE;
+			g_use_playbin = FALSE;
 			g_print("Set to manually build pipeline\n");
 		}
 		else if (strstr(argv[i], "switch") != NULL)
 		{
-			test_uri_switch = TRUE;
+			g_test_uri_switch = TRUE;
 			g_print("Set to test uri switching\n");
 		}
 		else if (strstr(argv[i], "position") != NULL)
 		{
-			test_positioning = TRUE;
+			g_test_positioning = TRUE;
 			g_print("Set to test positioning\n");
 		}
 		else if (strstr(argv[i], "seek") != NULL)
 		{
-			test_seeking = TRUE;
+			g_test_seeking = TRUE;
 			g_print("Set to test seeking\n");
 		}
 		else if (strstr(argv[i], "file=") != NULL)
 		{
-			if (sscanf(argv[i], "file=%s\n", &file_name[0]) != 1)
+			if (sscanf(argv[i], "file=%s\n", &g_file_name[0]) != 1)
 			{
 				g_printerr("Invalid file name specified: %s\n", argv[i]);
 				return FALSE;
 			}
 			else
 			{
-				use_file = TRUE;
-				g_print("Test using local file %s rather than URI\n", file_name);
+				g_use_file = TRUE;
+				g_print("Test using local file %s rather than URI\n", g_file_name);
 			}
 		}
 		else if (strstr(argv[i], "dtcp") != NULL)
 		{
-			use_dtcp = TRUE;
+			g_use_dtcp = TRUE;
 			g_print("Set to use dtcp URI\n");
 		}
 		else
@@ -814,21 +793,21 @@ static GstElement* create_playbin_pipeline()
 #else
 	char* line1 = "playbin uri=";
 #endif
-	if (!use_file)
+	if (!g_use_file)
 	{
-		sprintf(launchLine, "%s%s", line1, uri);
+		sprintf(launchLine, "%s%s", line1, g_uri);
 	}
 	else
 	{
-		file_path = getenv(TEST_FILE_URL_PREFIX_ENV);
-		if (file_path == NULL)
+		g_file_path = getenv(TEST_FILE_URL_PREFIX_ENV);
+		if (g_file_path == NULL)
 		{
 			g_printerr ("Could not get env var %s value\n", TEST_FILE_URL_PREFIX_ENV);
 			return NULL;
 		}
 		else
 		{
-			sprintf(launchLine, "%s%s%s", line1, file_path, file_name);
+			sprintf(launchLine, "%s%s%s", line1, g_file_path, g_file_name);
 		}
 	}
 
@@ -852,96 +831,265 @@ static GstElement* create_playbin_pipeline()
 }
 
 /**
- * Create pipeline manually based on pipeline which
- * playbin creates which is:
- *
- * Bin playbin20 has element: inputselector0
- * Bin playbin20 has element: uridecodebin0
- * Bin playbin20 has element: playsink0
- * Bin playsink0 has element: vbin
- *
- * Bin uridecodebin0 has element: queue20
- * Bin uridecodebin0 has element: decodebin20
- * Bin uridecodebin0 has element: typefindelement0
- * Bin uridecodebin0 has element: source
- *
- * Bin decodebin20 has element: mpeg2dec0
- * Bin decodebin20 has element: mpegvparse0
- * Bin decodebin20 has element: multiqueue0
- * Bin decodebin20 has element: mpegtsdemux0
- * Bin decodebin20 has element: typefind
- *
- * Bin source has element: dlna-soup-http-source
- *
- * Bin vbin has element: vconv
- *
- * Bin vconv has element: scale
- * Bin vconv has element: conv
- * Bin vconv has element: identity
- *
- * Bin vbin has element: vqueue
- * Bin vbin has element: videosink
- * Create pipeline which is built from manual assembly of components
+ * Create really simple pipeline with just src and sink
  */
-static GstElement* create_manual_playbin_pipeline()
+static GstElement* create_simple_pipeline()
 {
 	// Create gstreamer elements
-	GstElement* pipeline = gst_pipeline_new("manual-playbin");
+	GstElement* pipeline = gst_pipeline_new("simple-pipeline");
 	if (!pipeline)
 	{
 		g_printerr ("Pipeline element could not be created.\n");
 		return NULL;
 	}
-	GstElement* dlnasrc  = gst_element_factory_make ("dlnasrc", "http-source");
-	if (!dlnasrc)
-	{
-		g_printerr ("Dlnasrc element could not be created.\n");
-		return NULL;
-	}
-	g_object_set(G_OBJECT(dlnasrc), "uri", uri, NULL);
 
-	GstElement* mpegtsdemux = gst_element_factory_make ("mpegtsdemux", "mpeg ts demux");
-	if (!mpegtsdemux)
+	GstElement* src  = NULL;
+	if (1)
 	{
-		g_printerr ("mpegvideoparse element could not be created.\n");
+		src  = gst_element_factory_make ("souphttpsrc", "souphttpsrc");
+		if (!src)
+		{
+			g_printerr ("souphttpsrc element could not be created.\n");
+			return NULL;
+		}
+		g_object_set(G_OBJECT(src), "location", g_uri, NULL);
+	}
+	else
+	{
+		src = gst_element_factory_make ("filesrc", "file-source");
+		if (!src)
+		{
+			g_printerr ("Filesrc element could not be created.\n");
+			return NULL;
+		}
+		g_object_set(G_OBJECT(src), "location", "clock.mpg", NULL);
+
+		src  = gst_element_factory_make ("dlnasrc", "dlnasrc");
+		if (!src)
+		{
+			g_printerr ("dlnasrc element could not be created.\n");
+			return NULL;
+		}
+		g_object_set(G_OBJECT(src), "uri", g_uri, NULL);
+
+		src  = gst_element_factory_make ("dlnasouphttpsrc", "dlnasouphttpsrc");
+		if (!src)
+		{
+			g_printerr ("dlnasouphttpsrc element could not be created.\n");
+			return NULL;
+		}
+		g_object_set(G_OBJECT(src), "location", g_uri, NULL);
+	}
+
+	GstElement* mqueue = gst_element_factory_make ("multiqueue", "multiqueue");
+	if (!mqueue)
+	{
+		g_printerr ("Multiqueue element could not be created.\n");
 		return NULL;
 	}
 
-	GstElement* mpegvideoparse = gst_element_factory_make ("mpegvideoparse", "mpeg parser");
-	if (!mpegvideoparse)
+	GstElement* sink  = NULL;
+	if (1)
 	{
-		g_printerr ("mpegvideoparse element could not be created.\n");
-		return NULL;
+		sink = gst_element_factory_make ("filesink", "file-sink");
+		if (!sink)
+		{
+			g_printerr ("Filesink element could not be created.\n");
+			return NULL;
+		}
+		g_object_set(G_OBJECT(sink), "location", "clock.out", NULL);
 	}
-
-	GstElement* mpeg2dec = gst_element_factory_make ("mpeg2dec",  "mpeg decoder");
-	if (!mpeg2dec)
+	else
 	{
-		g_printerr ("mpeg2dec element could not be created.\n");
-		return NULL;
+		sink  = gst_element_factory_make ("fakesink", "fakesink");
+		if (!sink)
+		{
+			g_printerr ("Fakesink element could not be created.\n");
+			return NULL;
+		}
 	}
-
-	// Create a file sink to dump output to verify results
-	GstElement* filesink = gst_element_factory_make ("filesink", "output_sink");
-	if (!filesink)
-	{
-		g_printerr ("Filesink element could not be created.\n");
-		return NULL;
-	}
-	g_object_set(G_OBJECT(filesink), "location", "file.output", NULL);
 
 	// Add all elements into the pipeline
 	gst_bin_add_many (GST_BIN (pipeline),
-			dlnasrc, mpegtsdemux, mpegvideoparse, mpeg2dec, filesink, NULL);
+			src, mqueue, sink,
+			NULL);
 
 	// Link the elements together
-	if (!gst_element_link_many (dlnasrc, mpegtsdemux, mpegvideoparse, mpeg2dec, filesink, NULL))
+	if (!gst_element_link_many (src, sink,
+			NULL))
 	{
 		g_printerr ("Problems linking elements together\n");
 		return NULL;
 	}
 
 	return pipeline;
+}
+
+/**
+ * Create pipeline manually based on pipeline which
+ * playbin creates.
+ */
+static GstElement* create_manual_pipeline()
+{
+	// Create gstreamer elements
+	GstElement* pipeline = gst_pipeline_new("manual-pipeline");
+	if (!pipeline)
+	{
+		g_printerr ("Pipeline element could not be created.\n");
+		return NULL;
+	}
+
+	GstElement* udbin  = gst_element_factory_make ("uridecodebin", "uridecodebin");
+	if (!udbin)
+	{
+		g_printerr ("uridecodebin element could not be created.\n");
+		return NULL;
+	}
+
+	char file_uri[256];
+	memset(file_uri,'\0', 256);
+	g_file_path = getenv(TEST_FILE_URL_PREFIX_ENV);
+	if (g_file_path == NULL)
+	{
+		g_printerr ("Could not get env var %s value\n", TEST_FILE_URL_PREFIX_ENV);
+		return NULL;
+	}
+	else
+	{
+		sprintf(file_uri, "%s%s", g_file_path, g_file_name);
+	}
+	g_object_set(G_OBJECT(udbin), "uri", file_uri, NULL);
+	g_signal_connect (udbin, "pad-added", G_CALLBACK (manual_pipeline_cb_pad_added), NULL);
+
+	/*
+	GstElement* filesrc  = gst_element_factory_make ("filesrc", "file-source");
+	if (!filesrc)
+	{
+		g_printerr ("Filesrc element could not be created.\n");
+		return NULL;
+	}
+	g_object_set(G_OBJECT(filesrc), "location", "clock.mpg", NULL);
+
+	GstElement* tfind  = gst_element_factory_make ("typefind", "typefind");
+	if (!tfind)
+	{
+		g_printerr ("typefind element could not be created.\n");
+		return NULL;
+	}
+
+	GstElement* tsdemux = gst_element_factory_make ("tsdemux", "tsdemux");
+	if (!tsdemux)
+	{
+		g_printerr ("tsdemux element could not be created.\n");
+		return NULL;
+	}
+
+	GstElement* mqueue  = gst_element_factory_make ("multiqueue", "multiqueue");
+	if (!mqueue)
+	{
+		g_printerr ("mqueue element could not be created.\n");
+		return NULL;
+	}
+
+	GstElement* vparse  = gst_element_factory_make ("mpegvideoparse", "mpegvideoparse");
+	if (!vparse)
+	{
+		g_printerr ("mpegvideoparse element could not be created.\n");
+		return NULL;
+	}
+
+	GstElement* avdec  = gst_element_factory_make ("avdec_mpeg2video", "avdec_mpeg2video");
+	if (!avdec)
+	{
+		g_printerr ("avdec_mpeg2video element could not be created.\n");
+		return NULL;
+	}
+
+	GstElement* decodebin = gst_element_factory_make ("decodebin", "decodebin");
+	if (!decodebin)
+	{
+		g_printerr ("decode element could not be created.\n");
+		return NULL;
+	}
+
+	GstElement* iselect  = gst_element_factory_make ("input-selector", "input-selector");
+	if (!iselect)
+	{
+		g_printerr ("iselect element could not be created.\n");
+		return NULL;
+	}
+*/
+	g_sink  = gst_element_factory_make ("playsink", "playsink");
+	if (!g_sink)
+	{
+		g_printerr ("playsink element could not be created.\n");
+		return NULL;
+	}
+	gst_util_set_object_arg (G_OBJECT(g_sink), "flags",
+	      "soft-colorbalance+soft-volume+vis+text+audio+video");
+
+	// Add all elements into the pipeline
+	gst_bin_add_many (GST_BIN (pipeline),
+			//udbin, iselect, psink,
+			udbin, g_sink,
+			NULL);
+
+	// Link the elements together
+	/*
+	if (!gst_element_link_many (
+			// udbin, iselect, psink, 	// no link possible from uridecodebin to input-selector
+			udbin, g_sink, 				// no link possible from uridecodebin to playsink
+			NULL))
+	{
+		g_printerr ("Problems linking elements together\n");
+		return NULL;
+	}
+	*/
+	return pipeline;
+}
+
+static void
+manual_pipeline_cb_pad_added (GstElement *dec,
+		GstPad     *pad,
+		gpointer    data)
+{
+	g_print("%s() - called\n", __FUNCTION__);
+
+	GstCaps *caps;
+	GstStructure *str;
+	const gchar *name;
+	GstPadTemplate *templ;
+	GstElementClass *klass;
+
+	/* check media type */
+	caps = gst_pad_query_caps (pad, NULL);
+	str = gst_caps_get_structure (caps, 0);
+	name = gst_structure_get_name (str);
+
+	klass = GST_ELEMENT_GET_CLASS (g_sink);
+
+	if (g_str_has_prefix (name, "audio")) {
+		templ = gst_element_class_get_pad_template (klass, "audio_sink");
+	} else if (g_str_has_prefix (name, "video")) {
+		templ = gst_element_class_get_pad_template (klass, "video_sink");
+	} else if (g_str_has_prefix (name, "text")) {
+		templ = gst_element_class_get_pad_template (klass, "text_sink");
+	} else {
+		templ = NULL;
+	}
+
+	if (templ)
+	{
+		GstPad *sinkpad;
+
+		sinkpad = gst_element_request_pad (g_sink, templ, NULL, NULL);
+
+		if (!gst_pad_is_linked (sinkpad))
+		{
+			gst_pad_link (pad, sinkpad);
+		}
+		gst_object_unref (sinkpad);
+	}
 }
 
 /**
@@ -957,6 +1105,7 @@ static GstElement* create_fancy_pipeline()
 		g_printerr ("Pipeline element could not be created.\n");
 		return NULL;
 	}
+	/*
 	GstElement* dlnasrc  = gst_element_factory_make ("dlnasrc", "http-source");
 	if (!dlnasrc)
 	{
@@ -969,12 +1118,22 @@ static GstElement* create_fancy_pipeline()
 		g_printerr ("dlnabin element could not be created.\n");
 		return NULL;
 	}
+	*/
+	GstElement* filesrc  = gst_element_factory_make ("filesrc", "file-source");
+	if (!filesrc)
+	{
+		g_printerr ("Filesrc element could not be created.\n");
+		return NULL;
+	}
+	g_object_set(G_OBJECT(filesrc), "location", "clock.mpg", NULL);
+
 	GstElement* mpegvideoparse = gst_element_factory_make ("mpegvideoparse", "mpeg parser");
 	if (!mpegvideoparse)
 	{
 		g_printerr ("mpegvideoparse element could not be created.\n");
 		return NULL;
 	}
+
 	GstElement* mpeg2dec = gst_element_factory_make ("mpeg2dec",  "mpeg decoder");
 	if (!mpeg2dec)
 	{
@@ -994,12 +1153,14 @@ static GstElement* create_fancy_pipeline()
 		g_printerr ("videoscale element could not be created.\n");
 		return NULL;
 	}
+
 	GstElement* autovideosink = gst_element_factory_make ("autovideosink", "video-output");
 	if (!autovideosink)
 	{
 		g_printerr ("autovideosink element could not be created.\n");
 		return NULL;
 	}
+
 	GstElement* queue1 =  gst_element_factory_make ("queue", "queue1");
 	GstElement* queue2 =  gst_element_factory_make ("queue", "queue2");
 	if (!queue1 || !queue2)
@@ -1007,41 +1168,46 @@ static GstElement* create_fancy_pipeline()
 		g_printerr ("One of queue elements could not be created.\n");
 		return NULL;
 	}
+
 	GstElement* textsink = gst_element_factory_make ("filesink", "text file");
 	GstElement* captionsink = gst_element_factory_make ("filesink", "caption file");
 	if (!textsink || !captionsink)
 	{
-		g_printerr ("One of filesink elements could not be created.\n");
+		g_printerr ("One of file sink elements could not be created.\n");
 		return NULL;
 	}
 
 	// Set properties as necessary on elements
-	g_object_set(G_OBJECT(dlnasrc), "uri", uri, NULL);
+	/*
+	g_object_set(G_OBJECT(dlnasrc), "uri", g_uri, NULL);
 
 	// Verify URI was properly set
 	gchar* tmpUri = NULL;
-	g_object_get(G_OBJECT(dlnasrc), "uri", &tmpUri, NULL);
-	if ((tmpUri == NULL) || (strcmp(uri, tmpUri) != 0))
+	g_object_get(G_OBJECT(dlnasrc), "uri", &tmpUri, NULL);	GstElement* ffmpegcolorspace = gst_element_factory_make ("ffmpegcolorspace",  "RGB YUV converter");
+
+	if ((tmpUri == NULL) || (strcmp(g_uri, tmpUri) != 0))
 	{
-		g_printerr ("Problems setting URI to: %s. Exiting.\n", uri);
+		g_printerr ("Problems setting URI to: %s. Exiting.\n", g_uri);
 		return NULL;
 	}
 	else
 	{
 		g_free(tmpUri);
 	}
-
+	*/
 	g_object_set(G_OBJECT(textsink), "location", "demuxTextOutput", NULL);
 
 	g_object_set(G_OBJECT(captionsink), "location", "captionsTextOutput", NULL);
 
 	// Add all elements into the pipeline
 	gst_bin_add_many (GST_BIN (pipeline),
-			dlnasrc, dlnabin, queue1, mpegvideoparse, queue2, mpeg2dec, ffmpegcolorspace,
+			//dlnasrc, dlnabin, queue1,
+			filesrc, mpegvideoparse, queue2, mpeg2dec, ffmpegcolorspace,
 			videoscale, autovideosink, textsink, captionsink, NULL);
 
 	// Link the elements together
-	if (!gst_element_link_many (dlnasrc, dlnabin, queue1, mpegvideoparse, queue2, mpeg2dec, ffmpegcolorspace,
+//	if (!gst_element_link_many (dlnasrc, dlnabin, queue1, mpegvideoparse, queue2, mpeg2dec, ffmpegcolorspace,
+	if (!gst_element_link_many (filesrc, mpegvideoparse, queue2, mpeg2dec, ffmpegcolorspace,
 			videoscale, autovideosink, textsink, captionsink, NULL))
 	{
 		g_printerr ("Problems linking elements together\n");
@@ -1290,7 +1456,7 @@ static gboolean set_new_uri(CustomData* data)
 	char* line2 = "http://";
 	char* line3 = ":8008/ocaphn/recording?rrid=";
 	char* line4 = "&profile=MPEG_TS_SD_NA_ISO&mime=video/mpeg";
-	sprintf(new_uri, "%s%s%s%d%s", line2, host, line3, 7, line4);
+	sprintf(new_uri, "%s%s%s%d%s", line2, g_host, line3, 7, line4);
 
 	// Get source of pipeline which is a playbin
 	g_print("Getting source of playbin\n");

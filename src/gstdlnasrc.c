@@ -584,7 +584,7 @@ gst_dlna_src_event(GstPad    *pad,
 		break;
 	}
 
-	// If not handled, pass on to default handler
+	// If not handled, pass on to default pad handler
 	if (!ret)
 	{
 #ifdef GSTREAMER_010
