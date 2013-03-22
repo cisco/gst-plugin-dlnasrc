@@ -11,18 +11,24 @@
 //
 static int g_wait_secs = 0;
 static int g_state_change_timeout_secs = 45;
-static gfloat g_requested_rate = 0;
+static gfloat g_requested_rate = 1;
 static int g_rrid = 2;
 static char g_host[256];
 static char g_uri[256];
-static gboolean g_use_playbin = TRUE;
+
+static gboolean g_use_manual_pipeline = FALSE;
+static gboolean g_use_simple_pipeline = FALSE;
+static gboolean g_use_fancy_pipeline = FALSE;
+
 static gboolean g_use_dtcp = FALSE;
-static gboolean g_seek_format_time = TRUE;
+static gboolean g_format_bytes = FALSE;
+static gboolean g_do_query = FALSE;
+static gboolean g_do_seek = FALSE;
 
 static gboolean g_test_positioning = FALSE;
 static gboolean g_test_uri_switch = FALSE;
-static gboolean g_test_rate_change = FALSE;
-static gboolean g_test_seeking = FALSE;
+static int g_eos_max_cnt = 1;
+static int g_eos_cnt = 0;
 
 static gboolean g_use_file = FALSE;
 static char g_file_name[256];
@@ -46,32 +52,31 @@ typedef struct _CustomData {
 // Local method declarations
 //
 static gboolean process_cmd_line_args(int argc, char*argv[]);
+
 static GstElement* create_playbin_pipeline();
 static GstElement* create_manual_pipeline();
 static void manual_pipeline_cb_pad_added (GstElement *dec, GstPad *pad, gpointer data);
 static GstElement* create_fancy_pipeline();
 static GstElement* create_simple_pipeline();
-static void on_source_changed(GstElement* element, GParamSpec* param, gpointer data);
-static void handle_message (CustomData *data, GstMessage *msg);
 
-static void perform_positioning(CustomData* data);
-static void perform_rate_change(CustomData* data);
-static void perform_uri_switch(CustomData* data);
-static void perform_seek(CustomData* data);
+static void on_source_changed(GstElement* element, GParamSpec* param, gpointer data);
+
+static void perform_test(CustomData* data);
+static gboolean perform_test_query(CustomData* data, gint64* position, GstFormat format);
+static gboolean perform_test_seek(CustomData* data, gint64 position, GstFormat format);
+static gboolean set_pipeline_state(CustomData* data, GstState desired_state, gint timeoutSecs);
+static gboolean set_new_uri(CustomData* data);
+static void handle_message (CustomData *data, GstMessage *msg);
 
 static void log_bin_elements(GstBin* bin);
 static GstElement* log_element_links(GstElement* elem);
 
-static gboolean set_pipeline_state(CustomData* data, GstState desired_state, gint timeoutSecs);
-static gboolean set_new_uri(CustomData* data);
 
 /**
  * Test program for playspeed testing
  */
 int main(int argc, char *argv[]) 
 {
-	GstBus *bus = NULL;
-
 	CustomData data;
 	data.playing = FALSE;
 	data.terminate = FALSE;
@@ -106,26 +111,25 @@ int main(int argc, char *argv[])
 	gst_init (&argc, &argv);
 
 	// Build the pipeline
-	if (g_use_playbin)
+	if (g_use_manual_pipeline)
 	{
-		g_print("Creating pipeline using playbin\n");
-		data.pipeline = create_playbin_pipeline();
+		g_print("Creating pipeline by manually assembling elements\n");
+		data.pipeline = create_manual_pipeline();
+	}
+	else if (g_use_simple_pipeline)
+	{
+		g_print("Creating simple pipeline\n");
+		data.pipeline = create_simple_pipeline();
+	}
+	else if (g_use_fancy_pipeline)
+	{
+		g_print("Creating pipeline used by Fancy\n");
+		data.pipeline = create_fancy_pipeline();
 	}
 	else
 	{
-		if (1)
-		{
-			g_print("Creating pipeline by assembling elements\n");
-			data.pipeline = create_manual_pipeline();
-		}
-		else
-		{
-			g_print("Creating simplest pipeline\n");
-			data.pipeline = create_simple_pipeline();
-
-			g_print("Creating pipeline used by Fancy\n");
-			data.pipeline = create_fancy_pipeline();
-		}
+		g_print("Creating pipeline using playbin\n");
+		data.pipeline = create_playbin_pipeline();
 	}
 
 	// Check that pipeline was properly created
@@ -152,434 +156,9 @@ int main(int argc, char *argv[])
 
 	// Perform requested testing
 	g_print("Begin pipeline test\n");
-	if (g_test_positioning)
-	{
-		perform_positioning(&data);
-	}
-	else if (g_test_rate_change)
-	{
-		perform_rate_change(&data);
-	}
-	else if (g_test_uri_switch)
-	{
-		perform_uri_switch(&data);
-	}
-	else if (g_test_seeking)
-	{
-		perform_seek(&data);
-	}
-	else
-	{
-		g_print("Testing 1x playback\n");
-		bus = gst_element_get_bus (data.pipeline);
-		if (bus != NULL)
-		{
-			gst_bus_timed_pop_filtered (bus,
-				GST_CLOCK_TIME_NONE, GST_MESSAGE_ERROR | GST_MESSAGE_EOS);
-			gst_object_unref (bus);
-		}
-	}
+	perform_test(&data);
+
 	return 0;
-}
-
-/**
- * Test which queries current position, duration and rate (via new segment).
- * If queries are successful, initiates a rate change.
- */
-static void perform_positioning(CustomData* data)
-{
-	GstBus *bus;
-	GstMessage *msg;
-	GstQuery* query;
-	gint64 start;
-	gint64 stop;
-	GstFormat fmt;
-	GstElement *video_sink = NULL;
-
-	// Wait until error or EOS
-	bus = gst_element_get_bus (data->pipeline);
-	do {
-		msg = gst_bus_timed_pop_filtered (bus, 100 * GST_MSECOND,
-				GST_MESSAGE_STATE_CHANGED | GST_MESSAGE_ERROR | GST_MESSAGE_EOS | GST_MESSAGE_DURATION);
-
-		// Parse message
-		if (msg != NULL)
-		{
-			handle_message(data, msg);
-		}
-		else
-		{
-			// We got no message, this means the timeout expired
-			if (data->playing)
-			{
-				gint64 current = -1;
-
-				// Query the current position of the stream
-#ifdef GSTREAMER_010
-				if (!gst_element_query_position (data->pipeline, &fmt, &current))
-#else
-					if (!gst_element_query_position (data->pipeline, GST_FORMAT_TIME, &current))
-#endif
-					{
-						g_printerr ("Could not query current position.\n");
-						return;
-					}
-
-				// If we didn't know it yet, query the stream duration
-				if (!GST_CLOCK_TIME_IS_VALID (data->duration))
-				{
-					//g_print ("Current duration is invalid, query for duration\n");
-#ifdef GSTREAMER_010
-					if (!gst_element_query_duration (data->pipeline, &fmt, &data->duration))
-#else
-						if (!gst_element_query_duration (data->pipeline, GST_FORMAT_TIME, &data->duration))
-#endif
-						{
-							g_printerr ("Could not query current duration.\n");
-							return;
-						}
-						else
-						{
-							g_print ("Current duration is: %llu\n", data->duration);
-						}
-				}
-
-				// Get the current playback rate
-#ifdef GSTREAMER_010
-				query = gst_query_new_segment(fmt);
-#else
-				query = gst_query_new_segment(GST_FORMAT_TIME);
-#endif
-				if (query != NULL)
-				{
-					gst_element_query(data->pipeline, query);
-					gst_query_parse_segment(query, &data->rate, &fmt, &start, &stop);
-					gst_query_unref(query);
-					//g_print ("\nCurrent playspeed: %3.1f\n\n", data.rate);
-				}
-				else
-				{
-					g_printerr ("Could not query segment to get playback rate\n");
-					return;
-				}
-
-				// Print current position and total duration
-				g_print ("Position %" GST_TIME_FORMAT " / %" GST_TIME_FORMAT "\r",
-						GST_TIME_ARGS (current), GST_TIME_ARGS (data->duration));
-
-				// If seeking is enabled, we have not done it yet, and the time is right, seek
-				if (data->seek_enabled && !data->seek_done && current > 10 * GST_SECOND)
-				{
-					g_print ("\nReached 10s, performing seek with requested rate %3.1f...\n", g_requested_rate);
-
-					// If not changing rate, use seek simple
-					if (g_requested_rate == 0.0)
-					{
-						// Seek simple will send rate of 0 which will be ignored
-						if (!gst_element_seek_simple (data->pipeline, GST_FORMAT_TIME,
-								GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT, 30 * GST_SECOND))
-						{
-							g_printerr ("Problems doing a simple seek with no rate change\n");
-							return;
-						}
-						else
-						{
-							g_print("Completed seek with no rate change\n");
-						}
-					}
-					else
-					{
-						GstEvent* seek_event = gst_event_new_seek (g_requested_rate, 		// rate
-								GST_FORMAT_TIME, 	// format
-								GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE, // flags
-								GST_SEEK_TYPE_NONE, 	// start type?
-								current,				// start
-								GST_SEEK_TYPE_NONE, 	// stop type
-								-1);					// stop
-
-						if (seek_event != NULL)
-						{
-							g_print("Created seek event for rate change, sending through video sink\n");
-							g_object_get (data->pipeline, "video-sink", &video_sink, NULL);
-							if (video_sink != NULL)
-							{
-								if (!gst_element_send_event(video_sink, seek_event))
-								{
-									g_printerr ("Problems sending seek event through video sink for rate change\n");
-									return;
-								}
-								else
-								{
-									g_print("Sent seek event through video sink for rate change\n");
-								}
-							}
-							else
-							{
-								g_printerr("Not ending seek event due to NULL video sink\n");
-								return;
-							}
-						}
-						else
-						{
-							g_printerr ("Unable to create seek event for rate change\n");
-							return;
-						}
-					}
-					data->seek_done = TRUE;
-				}
-			}
-		}
-	} while (!data->terminate);
-}
-
-static void perform_rate_change(CustomData* data)
-{
-	GstBus *bus;
-	GstMessage *msg;
-	GstFormat format = GST_FORMAT_TIME;
-	//GstFormat format = GST_FORMAT_BYTES;
-	//GstFormat format = GST_FORMAT_DEFAULT;
-
-	// Wait for 10 seconds for playback to start up
-	long secs = g_wait_secs;
-	g_print("%s - Waiting %ld secs for startup prior to rate change\n",
-			__FUNCTION__, secs);
-	g_usleep(secs * 1000000L);
-
-	// If requested, send rate change
-	if (g_requested_rate != 0)
-	{
-		g_print("%s - Requesting rate change to %4.1f\n",
-				__FUNCTION__, g_requested_rate);
-
-		gint64 position = -1;
-
-		g_print("%s - Query position in format: %s\n",
-				__FUNCTION__, gst_format_get_name(format));
-		format = GST_FORMAT_TIME;
-#ifdef GSTREAMER_010
-		if (!gst_element_query_position(data->pipeline, &format, &position))
-#else
-		if (!gst_element_query_position(data->pipeline, format, &position))
-#endif
-		{
-			g_printerr("%s - Unable to retrieve current position.\n",
-					__FUNCTION__);
-			return;
-		}
-		g_print("%s - Got current position in format %s: %llu\n",
-				__FUNCTION__, gst_format_get_name(format), position);
-
-		if (g_seek_format_time)
-		{
-			format = GST_FORMAT_TIME;
-		}
-		else
-		{
-			format = GST_FORMAT_BYTES;
-		}
-		g_print("%s - Seeking on pipeline element using format: %s\n",
-				__FUNCTION__, gst_format_get_name(format));
-		if (!gst_element_seek (data->pipeline, g_requested_rate,
-				format, GST_SEEK_FLAG_FLUSH,
-				//GST_SEEK_TYPE_SET, position,
-				GST_SEEK_TYPE_SET, 0,
-				GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE))
-		{
-			g_printerr("%s - Problems changing rate.\n", __FUNCTION__);
-			return;
-		}
-		g_print("%s - Seeking on pipeline element complete\n", __FUNCTION__);
-	}
-	else
-	{
-		g_print("%s - Not requesting rate change due to rate = 0\n",
-				__FUNCTION__);
-	}
-
-	// Initiate pause if rate was set to zero but wait time was not zero
-	if ((g_requested_rate == 0) && (g_wait_secs != 0))
-	{
-		g_print("%s - Pausing pipeline for %d secs due to rate=0 & wait!=0\n",
-				__FUNCTION__, g_wait_secs);
-		set_pipeline_state (data, GST_STATE_PAUSED, g_state_change_timeout_secs);
-
-		g_usleep(secs * 1000000L);
-
-		g_print("%s - Resuming pipeline after %d sec pause\n", __FUNCTION__, g_wait_secs);
-		set_pipeline_state (data, GST_STATE_PLAYING, g_state_change_timeout_secs);
-	}
-
-	// Wait until error or EOS
-	bus = gst_element_get_bus (data->pipeline);
-	g_print("%s - Waiting for EOS or ERROR\n", __FUNCTION__);
-	gboolean done = FALSE;
-	while (!done)
-	{
-		msg = gst_bus_timed_pop_filtered (bus, GST_CLOCK_TIME_NONE,
-											GST_MESSAGE_ERROR | GST_MESSAGE_EOS);
-		if (msg != NULL)
-		{
-			g_print("%s - Received msg type: %s\n", __FUNCTION__, GST_MESSAGE_TYPE_NAME(msg));
-
-			if (GST_MESSAGE_TYPE(msg) == GST_MESSAGE_ERROR)
-			{
-				GError *err = NULL;
-				gchar *dbg_info = NULL;
-				gst_message_parse_error (msg, &err, &dbg_info);
-				g_print("%s - ERROR from element %s: %s\n",
-						__FUNCTION__, GST_OBJECT_NAME (msg->src), err->message);
-				g_print("%s - Debugging info: %s\n", __FUNCTION__, (dbg_info) ? dbg_info : "none");
-				g_error_free(err);
-				g_free(dbg_info);
-			}
-			gst_message_unref (msg);
-			done = TRUE;
-		}
-	}
-}
-
-static void perform_uri_switch(CustomData* data)
-{
-	GstBus *bus;
-	GstMessage *msg;
-
-	// Wait for 10 seconds for playback to start up
-	long secs = g_wait_secs;
-	g_print("Waiting %ld secs for startup prior to switching uri\n", secs);
-	g_usleep(secs * 1000000L);
-
-	if (!set_new_uri(data))
-	{
-		g_print("Problems setting new URI\n");
-		return;
-	}
-
-	// Wait for playback to complete
-	g_print("Wait for playback to complete with new URI\n");
-	gint eosCnt = 0;
-	bus = gst_element_get_bus (data->pipeline);
-	gboolean done = FALSE;
-	while (!done)
-	{
-		msg = gst_bus_timed_pop_filtered (bus, GST_CLOCK_TIME_NONE, GST_MESSAGE_ERROR | GST_MESSAGE_EOS);
-		if (msg != NULL)
-		{
-			g_print("Received msg type: %s\n", GST_MESSAGE_TYPE_NAME(msg));
-
-			if (GST_MESSAGE_TYPE(msg) == GST_MESSAGE_ERROR)
-			{
-				GError *err = NULL;
-				gchar *dbg_info = NULL;
-				gst_message_parse_error (msg, &err, &dbg_info);
-				g_print("ERROR from element %s: %s\n",
-						GST_OBJECT_NAME (msg->src), err->message);
-				g_print("Debugging info: %s\n", (dbg_info) ? dbg_info : "none");
-				g_error_free(err);
-				g_free(dbg_info);
-				done = TRUE;
-			}
-			else if (GST_MESSAGE_TYPE(msg) == GST_MESSAGE_EOS)
-			{
-				eosCnt++;
-				if (eosCnt > 1)
-				{
-					g_print("Got EOS\n");
-					done = TRUE;
-				}
-			}
-			gst_message_unref (msg);
-		}
-	}
-	msg = gst_bus_timed_pop_filtered (bus,
-			GST_CLOCK_TIME_NONE, GST_MESSAGE_ERROR | GST_MESSAGE_EOS);
-}
-
-static void perform_seek(CustomData* data)
-{
-	GstEvent* event;
-	GstBus *bus;
-	GstMessage *msg;
-
-	// Wait for 10 seconds for playback to start up
-	long secs = g_wait_secs;
-	g_print("Waiting %ld secs for startup prior to sending seek event\n", secs);
-	g_usleep(secs * 1000000L);
-
-	// Create the seek event
-	g_print("Creating seek event\n");
-	event = gst_event_new_seek(4.0, // new rate
-			//GST_FORMAT_BYTES,
-			GST_FORMAT_TIME, // souphttpsrc doesn't support time based seeks???
-			GST_SEEK_FLAG_FLUSH, // flags - GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE,
-			GST_SEEK_TYPE_SET,
-			0,
-			GST_SEEK_TYPE_NONE,
-			-1);
-	/*
-	 * basesrc gstbasesrc.c:1747:gst_base_src_default_event:<source> handle event seek
-	 *  event from 'sink' at time 99:99:99.999999999: GstEventSeek, rate=(double)4,
-	 *  format=(GstFormat)GST_FORMAT_TIME, flags=(GstSeekFlags)GST_SEEK_FLAG_FLUSH,
-	 *  cur-type=(GstSeekType)GST_SEEK_TYPE_SET, cur=(gint64)0,
-	 *  stop-type=(GstSeekType)GST_SEEK_TYPE_NONE, stop=(gint64)-1;
-	 *
-	 * basesrc gstbasesrc.c:1785:gst_base_src_default_event:<source> is not seekable
-	 *
-	 * basesrc gstbasesrc.c:1819:gst_base_src_event_handler:<source> subclass refused event
-	 */
-
-	/*
-	g_print("Setting new URI on playbin prior to sending seek event\n");
-	if (!set_new_uri(data))
-	{
-		g_print("Problems setting new URI\n");
-		return;
-	}
-	*/
-
-	// Sending seek event
-	g_print("Sending seek event\n");
-	gst_element_send_event(data->pipeline, event);
-
-	// Wait until error or EOS
-	g_print("Sent seek event, getting bus\n");
-	bus = gst_element_get_bus (data->pipeline);
-
-	g_print("Waiting for EOS or ERROR\n");
-	gboolean done = FALSE;
-	gint eosCnt = 0;
-	while (!done)
-	{
-		msg = gst_bus_timed_pop_filtered (bus, GST_CLOCK_TIME_NONE, GST_MESSAGE_ERROR | GST_MESSAGE_EOS);
-		if (msg != NULL)
-		{
-			g_print("Received msg type: %s\n", GST_MESSAGE_TYPE_NAME(msg));
-
-			if (GST_MESSAGE_TYPE(msg) == GST_MESSAGE_ERROR)
-			{
-				GError *err = NULL;
-				gchar *dbg_info = NULL;
-				gst_message_parse_error (msg, &err, &dbg_info);
-				g_print("ERROR from element %s: %s\n",
-						GST_OBJECT_NAME (msg->src), err->message);
-				g_print("Debugging info: %s\n", (dbg_info) ? dbg_info : "none");
-				g_error_free(err);
-				g_free(dbg_info);
-				done = TRUE;
-			}
-			else if (GST_MESSAGE_TYPE(msg) == GST_MESSAGE_EOS)
-			{
-				eosCnt++;
-				g_print("Got EOS %d\n", eosCnt);
-				if (eosCnt > 1)
-				{
-					g_print("Got final EOS\n");
-					done = TRUE;
-				}
-			}
-			gst_message_unref (msg);
-		}
-	}
 }
 
 /**
@@ -588,14 +167,15 @@ static void perform_seek(CustomData* data)
 static void handle_message (CustomData *data, GstMessage *msg)
 {
 	GError *err;
-
-
 	gchar *debug_info;
-	//g_print("Got message type: %s\n", GST_MESSAGE_TYPE_NAME (msg));
+	GstState old_state, new_state, pending_state;
+	g_print("Got message type: %s\n", GST_MESSAGE_TYPE_NAME (msg));
 
 	switch (GST_MESSAGE_TYPE (msg))
 	{
 	case GST_MESSAGE_ERROR:
+		err = NULL;
+		debug_info = NULL;
 		gst_message_parse_error (msg, &err, &debug_info);
 		g_printerr ("Error received from element %s: %s\n", GST_OBJECT_NAME (msg->src), err->message);
 		g_printerr ("Debugging information: %s\n", debug_info ? debug_info : "none");
@@ -606,7 +186,11 @@ static void handle_message (CustomData *data, GstMessage *msg)
 
 	case GST_MESSAGE_EOS:
 		g_print ("End-Of-Stream reached.\n");
-		data->terminate = TRUE;
+		g_eos_cnt++;
+		if (g_eos_cnt >= g_eos_max_cnt)
+		{
+			data->terminate = TRUE;
+		}
 		break;
 
 	case GST_MESSAGE_DURATION:
@@ -615,8 +199,6 @@ static void handle_message (CustomData *data, GstMessage *msg)
 		break;
 
 	case GST_MESSAGE_STATE_CHANGED:
-	{
-		GstState old_state, new_state, pending_state;
 		gst_message_parse_state_changed (msg, &old_state, &new_state, &pending_state);
 		if (GST_MESSAGE_SRC (msg) == GST_OBJECT (data->pipeline))
 		{
@@ -626,33 +208,9 @@ static void handle_message (CustomData *data, GstMessage *msg)
 			// Remember whether we are in the PLAYING state or not
 			data->playing = (new_state == GST_STATE_PLAYING);
 
-			if (data->playing)
-			{
-				// We just moved to PLAYING. Check if seeking is possible
-				GstQuery *query;
-				gint64 start, end;
-				query = gst_query_new_seeking (GST_FORMAT_TIME);
-				if (gst_element_query (data->pipeline, query))
-				{
-					gst_query_parse_seeking (query, NULL, &data->seek_enabled, &start, &end);
-					if (data->seek_enabled)
-					{
-						g_print ("Seeking is ENABLED from %" GST_TIME_FORMAT " to %" GST_TIME_FORMAT "\n",
-								GST_TIME_ARGS (start), GST_TIME_ARGS (end));
-					}
-					else
-					{
-						g_print ("Seeking is DISABLED for this stream.\n");
-					}
-				}
-				else
-				{
-					g_printerr ("Seeking query failed.");
-				}
-				gst_query_unref (query);
-			}
 		}
-	} break;
+	    break;
+
 	default:
 		// We should not reach here
 		g_printerr ("Unexpected message received.\n");
@@ -679,7 +237,6 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 			else
 			{
 				g_print("Set requested rate change to %4.1f\n", g_requested_rate);
-				g_test_rate_change = TRUE;
 			}
 		}
 		else if (strstr(argv[i], "wait=") != NULL)
@@ -731,10 +288,20 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 				g_print("Set requested host ip to %s\n", g_host);
 			}
 		}
-		else if (strstr(argv[i], "pipeline") != NULL)
+		else if (strstr(argv[i], "manual") != NULL)
 		{
-			g_use_playbin = FALSE;
+			g_use_manual_pipeline = TRUE;
 			g_print("Set to manually build pipeline\n");
+		}
+		else if (strstr(argv[i], "simple") != NULL)
+		{
+			g_use_simple_pipeline = TRUE;
+			g_print("Set to build simplest pipeline\n");
+		}
+		else if (strstr(argv[i], "fancy") != NULL)
+		{
+			g_use_fancy_pipeline = FALSE;
+			g_print("Set to build Fancy's pipeline\n");
 		}
 		else if (strstr(argv[i], "switch") != NULL)
 		{
@@ -745,11 +312,6 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 		{
 			g_test_positioning = TRUE;
 			g_print("Set to test positioning\n");
-		}
-		else if (strstr(argv[i], "seek") != NULL)
-		{
-			g_test_seeking = TRUE;
-			g_print("Set to test seeking\n");
 		}
 		else if (strstr(argv[i], "file=") != NULL)
 		{
@@ -769,12 +331,28 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 			g_use_dtcp = TRUE;
 			g_print("Set to use dtcp URI\n");
 		}
+		else if (strstr(argv[i], "byte") != NULL)
+		{
+			g_format_bytes = TRUE;
+			g_print("Set to use byte format for query and seek\n");
+		}
 		else
 		{
 			g_printerr("Invalid option: %s\n", argv[i]);
-			g_printerr("Usage:\t wait=x where x is secs, rate=y where y is desired rate\n");
-			g_printerr("\t\t rrid=i where i is cds recording id, host=ip addr of server\n");
-			g_printerr("\t\t uri=l where l is uri of desired content\n");
+			g_printerr("Usage:\n");
+			g_printerr("\t byte \t\t use byte format for query and seek\n");
+			g_printerr("\t dtcp \t\t indicates content is dtcp/ip encrypted\n");
+			g_printerr("\t fancy \t\t create Fancy's pipeline rather than playbin\n");
+			g_printerr("\t file=name \t\twhere name indicates file name using path from env var\n");
+			g_printerr("\t host=ip \t\t addr of server\n");
+			g_printerr("\t manual \t\t build manual pipeline rather than using playbin\n");
+			g_printerr("\t position \t\t perform seek using current position + 10\n");
+			g_printerr("\t rate=y \t\t where y is desired rate\n");
+			g_printerr("\t rrid=i \t\t where i is cds recording id\n");
+			g_printerr("\t simple \t\t create simple pipeline rather than playbin\n");
+			g_printerr("\t switch \t\t play for wait secs then switch uri\n");
+			g_printerr("\t uri=l \t\t where l is uri of desired content\n");
+			g_printerr("\t wait=x \t\t where x is secs\n");
 			return FALSE;
 		}
 	}
@@ -842,20 +420,10 @@ static GstElement* create_simple_pipeline()
 		g_printerr ("Pipeline element could not be created.\n");
 		return NULL;
 	}
-
-	GstElement* src  = NULL;
-	if (1)
+	GstElement* src = NULL;
+	if (g_use_file)
 	{
-		src  = gst_element_factory_make ("souphttpsrc", "souphttpsrc");
-		if (!src)
-		{
-			g_printerr ("souphttpsrc element could not be created.\n");
-			return NULL;
-		}
-		g_object_set(G_OBJECT(src), "location", g_uri, NULL);
-	}
-	else
-	{
+		g_print("%s() - using file source\n", __FUNCTION__);
 		src = gst_element_factory_make ("filesrc", "file-source");
 		if (!src)
 		{
@@ -863,55 +431,30 @@ static GstElement* create_simple_pipeline()
 			return NULL;
 		}
 		g_object_set(G_OBJECT(src), "location", "clock.mpg", NULL);
-
-		src  = gst_element_factory_make ("dlnasrc", "dlnasrc");
+	}
+	else
+	{
+		g_print("%s() - using dlnasrc\n", __FUNCTION__);
+		src = gst_element_factory_make ("dlnasrc", "dlna http source");
 		if (!src)
 		{
 			g_printerr ("dlnasrc element could not be created.\n");
 			return NULL;
 		}
 		g_object_set(G_OBJECT(src), "uri", g_uri, NULL);
-
-		src  = gst_element_factory_make ("dlnasouphttpsrc", "dlnasouphttpsrc");
-		if (!src)
-		{
-			g_printerr ("dlnasouphttpsrc element could not be created.\n");
-			return NULL;
-		}
-		g_object_set(G_OBJECT(src), "location", g_uri, NULL);
 	}
 
-	GstElement* mqueue = gst_element_factory_make ("multiqueue", "multiqueue");
-	if (!mqueue)
+	GstElement* sink = gst_element_factory_make ("filesink", "file-sink");
+	if (!sink)
 	{
-		g_printerr ("Multiqueue element could not be created.\n");
+		g_printerr ("Filesink element could not be created.\n");
 		return NULL;
 	}
-
-	GstElement* sink  = NULL;
-	if (1)
-	{
-		sink = gst_element_factory_make ("filesink", "file-sink");
-		if (!sink)
-		{
-			g_printerr ("Filesink element could not be created.\n");
-			return NULL;
-		}
-		g_object_set(G_OBJECT(sink), "location", "clock.out", NULL);
-	}
-	else
-	{
-		sink  = gst_element_factory_make ("fakesink", "fakesink");
-		if (!sink)
-		{
-			g_printerr ("Fakesink element could not be created.\n");
-			return NULL;
-		}
-	}
+	g_object_set(G_OBJECT(sink), "location", "simple.out", NULL);
 
 	// Add all elements into the pipeline
 	gst_bin_add_many (GST_BIN (pipeline),
-			src, mqueue, sink,
+			src, sink,
 			NULL);
 
 	// Link the elements together
@@ -1389,6 +932,199 @@ static GstElement* log_element_links(GstElement* elem)
 	}
 
 	return ds_elem;
+}
+
+static void perform_test(CustomData* data)
+{
+	GstBus *bus;
+	GstMessage *msg;
+
+	// Wait specified seconds for playback to start up
+	long secs = g_wait_secs;
+	g_print("%s - Waiting %ld secs for startup prior to rate change\n",
+			__FUNCTION__, secs);
+	g_usleep(secs * 1000000L);
+
+	// Determine what format to use for query and seek
+	GstFormat format = GST_FORMAT_TIME;
+	if (g_format_bytes)
+	{
+		format = GST_FORMAT_BYTES;
+	}
+	g_print("%s - Query and Seek on pipeline element using format: %s\n",
+			__FUNCTION__, gst_format_get_name(format));
+
+	// Query current position, duration and rate
+	gint64 position = -1;
+	if (g_do_query)
+	{
+		if (!perform_test_query(data, &position, format))
+		{
+			g_printerr("%s - Problems with query associated with test.\n",
+				__FUNCTION__);
+			return;
+		}
+	}
+
+	// Initiate seek to perform test
+	if (g_do_seek)
+	{
+		if (!perform_test_seek(data, position, format))
+		{
+			g_printerr("%s - Problems with seek associated with test.\n",
+					__FUNCTION__);
+			return;
+		}
+	}
+
+	// Initiate pause if rate was set to zero
+	if (g_requested_rate == 0)
+	{
+		g_print("%s - Pausing pipeline for %d secs\n", __FUNCTION__, g_wait_secs);
+		set_pipeline_state (data, GST_STATE_PAUSED, g_state_change_timeout_secs);
+
+		g_usleep(secs * 1000000L);
+
+		g_print("%s - Resuming pipeline after %d sec pause\n", __FUNCTION__, g_wait_secs);
+		set_pipeline_state (data, GST_STATE_PLAYING, g_state_change_timeout_secs);
+	}
+
+	// Switch URI if requested
+	if (g_test_uri_switch)
+	{
+		// Set eos count to two since one will be received for each EOS
+		g_eos_max_cnt = 2;
+		if (!set_new_uri(data))
+		{
+			g_print("Problems setting new URI\n");
+			return;
+		}
+	}
+
+	// Wait until error or EOS
+	bus = gst_element_get_bus (data->pipeline);
+	g_print("%s - Waiting for EOS or ERROR\n", __FUNCTION__);
+	gboolean done = FALSE;
+	while (!done)
+	{
+		msg = gst_bus_timed_pop_filtered (bus, GST_CLOCK_TIME_NONE,
+											GST_MESSAGE_ERROR | GST_MESSAGE_EOS);
+		if (msg != NULL)
+		{
+			g_print("%s - Received msg type: %s\n", __FUNCTION__, GST_MESSAGE_TYPE_NAME(msg));
+			handle_message(data, msg);
+			gst_message_unref (msg);
+
+			if (data->terminate)
+			{
+				done = TRUE;
+			}
+		}
+	}
+}
+
+static gboolean perform_test_query(CustomData* data, gint64* position, GstFormat format)
+{
+	g_print("%s - Query position in format: %s\n",
+			__FUNCTION__, gst_format_get_name(format));
+
+#ifdef GSTREAMER_010
+	if (!gst_element_query_position(data->pipeline, &format, position))
+#else
+	if (!gst_element_query_position(data->pipeline, format, position))
+#endif
+	{
+		g_printerr("%s - Unable to retrieve current position.\n",
+				__FUNCTION__);
+		return FALSE;
+	}
+	g_print("%s - Got current position in format %s: %llu\n",
+			__FUNCTION__, gst_format_get_name(format), *position);
+
+	// Query duration
+	if (!GST_CLOCK_TIME_IS_VALID (data->duration))
+	{
+#ifdef GSTREAMER_010
+		if (!gst_element_query_duration (data->pipeline, &fmt, &data->duration))
+#else
+		if (!gst_element_query_duration (data->pipeline, GST_FORMAT_TIME, &data->duration))
+#endif
+		{
+			g_printerr ("Could not query current duration.\n");
+			return FALSE;
+		}
+		else
+		{
+			g_print ("Current duration is: %llu\n", data->duration);
+		}
+	}
+
+	// Get the current playback rate
+	GstQuery* query = NULL;
+	GstFormat fmt;
+	gint64 start;
+	gint64 stop;
+#ifdef GSTREAMER_010
+	query = gst_query_new_segment(fmt);
+#else
+	query = gst_query_new_segment(GST_FORMAT_TIME);
+#endif
+	if (query != NULL)
+	{
+		gst_element_query(data->pipeline, query);
+		gst_query_parse_segment(query, &data->rate, &fmt, &start, &stop);
+		gst_query_unref(query);
+		//g_print ("\nCurrent playspeed: %3.1f\n\n", data.rate);
+	}
+	else
+	{
+		g_printerr ("Could not query segment to get playback rate\n");
+		return FALSE;
+	}
+
+	// Print current position and total duration
+	if (!g_format_bytes)
+	{
+		g_print ("Position %" GST_TIME_FORMAT " / %" GST_TIME_FORMAT "\r",
+			GST_TIME_ARGS (*position), GST_TIME_ARGS (data->duration));
+	}
+
+	return TRUE;
+}
+
+static gboolean perform_test_seek(CustomData* data, gint64 position, GstFormat format)
+{
+	// Determine if seek is necessary for requested test
+	gfloat rate = 1;
+	if ((g_requested_rate == 0) || (g_test_uri_switch))
+	{
+		g_print("%s - No seeking necessary for requested test\n", __FUNCTION__);
+		return TRUE;
+	}
+	else
+	{
+		rate = g_requested_rate;
+	}
+	g_print("%s - Requesting rate of %4.1f\n", __FUNCTION__, rate);
+
+	// If not testing position, set position to zero
+	if (!g_test_positioning)
+	{
+		position = 0;
+	}
+
+	// Initiate seek
+	if (!gst_element_seek (data->pipeline, rate,
+			format, GST_SEEK_FLAG_FLUSH,
+			GST_SEEK_TYPE_SET, position,
+			GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE))
+	{
+		g_printerr("%s - Problems seeking.\n", __FUNCTION__);
+		return FALSE;
+	}
+	g_print("%s - Seeking on pipeline element complete\n", __FUNCTION__);
+
+	return TRUE;
 }
 
 static gboolean set_pipeline_state(CustomData* data, GstState desired_state, gint timeoutSecs)

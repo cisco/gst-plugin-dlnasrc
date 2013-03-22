@@ -31,8 +31,8 @@ export GST_DEBUG_NO_COLOR
 #
 export GST_DEBUG_DUMP_DOT_DIR=/tmp/
 #
-./test file=clock.mpg wait=10 rate=4
-#./test host=192.168.2.23 rrid=20 wait=10 rate=4
+#./test file=clock.mpg wait=10 rate=4
+./test host=192.168.2.16 rrid=22
 #./test host=192.168.0.106 dtcp rrid=9 pipeline
 #rate=8 wait=15 host=192.168.0.106 or 192.168.2.2 pipeline switch position seek file=clock.mpg file=two_videos.mkv file=scte20_7.mpg dtcp	
 #
