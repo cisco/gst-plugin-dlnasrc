@@ -1129,10 +1129,10 @@ gst_dlna_soup_http_src_got_headers_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * s
   if (src->ret == GST_FLOW_CUSTOM_ERROR &&
       src->read_position && msg->status_code != SOUP_STATUS_PARTIAL_CONTENT)
   {
-    src->seekable = FALSE;
-    GST_ERROR_OBJECT (src, "Server does not accept Range HTTP header, URL: %s",
+    //src->seekable = FALSE;
+    GST_ERROR_OBJECT (src, "TODO - FIX THIS UP- Server does not accept Range HTTP header, URL: %s",
     		src->location);
-    src->ret = GST_FLOW_ERROR;
+    //src->ret = GST_FLOW_ERROR;
   }
 }
 
@@ -1483,14 +1483,12 @@ gst_dlna_soup_http_src_build_message (GstDlnaSoupHTTPSrc * src)
   GST_INFO_OBJECT (src, "STATE: IDLE");
   soup_message_headers_append (src->msg->request_headers, "Connection",
       "close");
-  #ifdef GSTREAMER_010
+
   if (src->iradio_mode) {
-  #endif
     soup_message_headers_append (src->msg->request_headers, "icy-metadata",
         "1");
-  #ifdef GSTREAMER_010
   }
-#endif
+
   if (src->cookies) {
     gchar **cookie;
 
@@ -1862,14 +1860,28 @@ gst_dlna_soup_http_src_do_seek (GstBaseSrc * bsrc, GstSegment * segment)
   // Set rate to 1.0 to prevent client-side trick mode processing
   if (segment->rate != 1.0)
   {
+	  // *TODO* - this doesn't seem to impact things either way
 	  segment->applied_rate = src->request_rate;
  	  GST_INFO_OBJECT (src, "Set segment rate %3.1f back to 1.0 to inhibit client-side trick modes",
-			  segment->rate);
+	  		  segment->rate);
 	  //segment->rate = 1.0;
  }
 
-  GST_WARNING_OBJECT (src, "Performed actions necessary for seek");
-  return TRUE;
+  // Funky stuff going on here, initial seek needs to have true returned
+  // Need to figure out when we should return true vs false
+  // Want some stuff done in mpegtsbase.c - mpegts_base_handle_seek_event()
+  // which is not done??? when true is returned here (just a theory for now)
+  // Although, if we don't return true, initial seek fails (first playback at 1x doesn't start)
+  if (1)
+  {
+	  GST_WARNING_OBJECT (src, "Performed actions necessary for seek, returning true");
+	  return TRUE;
+  }
+  else
+  {
+	  GST_WARNING_OBJECT (src, "Performed actions for seek, returning false so additional actions will be performed");
+	  return FALSE;
+  }
 }
 
 // *TODO*- orig doesn't have this but all we are doing is passing to base so maybe it isn't needed???
@@ -1886,7 +1898,7 @@ gst_dlna_soup_http_src_event(GstBaseSrc * src,
 		GST_INFO_OBJECT(dsrc, "Got src event: %s", GST_EVENT_TYPE_NAME(event));
 		break;
 	case GST_EVENT_NAVIGATION:
-		GST_INFO_OBJECT(dsrc, "Got src event: %s", GST_EVENT_TYPE_NAME(event));
+		GST_LOG_OBJECT(dsrc, "Got src event: %s", GST_EVENT_TYPE_NAME(event));
 		break;
 	default:
 		break;
@@ -1910,6 +1922,8 @@ gst_dlna_soup_http_src_query (GstBaseSrc * bsrc, GstQuery * query)
 	GstClockTime min, max;
     gboolean live;
 
+	GST_INFO_OBJECT(src, "Got src query: %s", GST_QUERY_TYPE_NAME(query));
+
 	switch (GST_QUERY_TYPE (query))
 	{
 	case GST_QUERY_LATENCY:
@@ -1930,9 +1944,10 @@ gst_dlna_soup_http_src_query (GstBaseSrc * bsrc, GstQuery * query)
 
 	case GST_QUERY_CONVERT:
 
+		// ??? - is this why rate change doesn't work any more??? - it used to be 0???
 		// *TODO* - with this inplace, we get reset/flush of pipeline, but bunch of errors
 		// about start greater than stop???
-		if (0)
+		if (1)
 		{
 			gst_query_parse_convert (query, &src_fmt, &src_val, &dest_fmt, &dest_val);
 
@@ -1968,6 +1983,10 @@ gst_dlna_soup_http_src_query (GstBaseSrc * bsrc, GstQuery * query)
 		{
 			GST_INFO_OBJECT(src, "Doing nothing");
 		}
+		break;
+
+	case GST_QUERY_CAPS:
+		// Not responding to caps query since souphttpsrc doesn't either
 		break;
 
 	default:

@@ -237,6 +237,8 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 			else
 			{
 				g_print("Set requested rate change to %4.1f\n", g_requested_rate);
+				g_do_seek = TRUE;
+				g_print("Setting do seek flag to TRUE\n");
 			}
 		}
 		else if (strstr(argv[i], "wait=") != NULL)

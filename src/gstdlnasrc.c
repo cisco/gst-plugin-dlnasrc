@@ -563,6 +563,11 @@ gst_dlna_src_event(GstPad    *pad,
 		// *TODO* - should we be doing something?
 		break;
 
+	case GST_EVENT_FLUSH_STOP:
+		GST_INFO_OBJECT(dlna_src, "Got src event: %s", GST_EVENT_TYPE_NAME(event));
+		// *TODO* - should we be doing something?
+		break;
+
 	case GST_EVENT_QOS:
 		// *TODO* - tmp just to get rid of all qos log messages
 		//ret = TRUE;
@@ -575,6 +580,10 @@ gst_dlna_src_event(GstPad    *pad,
 	case GST_EVENT_NAVIGATION:
 		// *TODO* - what does this event mean?
 		// Just call the default handler
+		break;
+
+	case GST_EVENT_RECONFIGURE:
+		// Just call default handler to handle upstream renegotiating caps
 		break;
 
 	default:
@@ -615,7 +624,7 @@ gst_dlna_src_query (GstPad    *pad,
 	gboolean ret = FALSE;
 	GstDlnaSrc *dlna_src = GST_DLNA_SRC(gst_pad_get_parent(pad));
 
-	GST_LOG_OBJECT(dlna_src, "Got src query: %s", GST_QUERY_TYPE_NAME(query));
+	GST_INFO_OBJECT(dlna_src, "Got src query: %s", GST_QUERY_TYPE_NAME(query));
 
 	switch (GST_QUERY_TYPE (query))
 	{
