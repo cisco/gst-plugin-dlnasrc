@@ -36,6 +36,8 @@ static gchar* g_file_path = NULL;
 static gchar* TEST_FILE_URL_PREFIX_ENV = "TEST_FILE_URL_PREFIX";
 
 static GstElement* g_sink = NULL;
+static GstElement* g_pipeline = NULL;
+static GstElement* g_passthru = NULL;
 
 
 /* Structure to contain all our information, so we can pass it around */
@@ -138,6 +140,7 @@ int main(int argc, char *argv[])
 		g_printerr("Problems creating pipeline\n");
 		return -1;
 	}
+	g_pipeline = data.pipeline;
 
 	// Start playing
 	g_print("Pipeline created, start playing\n");
@@ -369,9 +372,9 @@ static GstElement* create_playbin_pipeline()
 	GstElement* pipeline = NULL;
 	char launchLine[256];
 #ifdef GSTREAMER_010
-	char* line1 = "playbin2 uri=";
+	char* line1 = "playbin2 flags=0x3 uri=";
 #else
-	char* line1 = "playbin uri=";
+	char* line1 = "playbin flags=0x3 uri=";
 #endif
 	if (!g_use_file)
 	{
@@ -415,6 +418,8 @@ static GstElement* create_playbin_pipeline()
  */
 static GstElement* create_simple_pipeline()
 {
+	GstElement* passthru;
+
 	// Create gstreamer elements
 	GstElement* pipeline = gst_pipeline_new("simple-pipeline");
 	if (!pipeline)
@@ -446,6 +451,14 @@ static GstElement* create_simple_pipeline()
 		g_object_set(G_OBJECT(src), "uri", g_uri, NULL);
 	}
 
+	// Create passthru element
+	passthru  = gst_element_factory_make ("passthru", "passthru");
+	if (!passthru)
+	{
+		g_printerr ("passthru element could not be created.\n");
+		return NULL;
+	}
+
 	GstElement* sink = gst_element_factory_make ("filesink", "file-sink");
 	if (!sink)
 	{
@@ -456,11 +469,11 @@ static GstElement* create_simple_pipeline()
 
 	// Add all elements into the pipeline
 	gst_bin_add_many (GST_BIN (pipeline),
-			src, sink,
+			src, passthru, sink,
 			NULL);
 
 	// Link the elements together
-	if (!gst_element_link_many (src, sink,
+	if (!gst_element_link_many (src, passthru, sink,
 			NULL))
 	{
 		g_printerr ("Problems linking elements together\n");
@@ -491,29 +504,27 @@ static GstElement* create_manual_pipeline()
 		return NULL;
 	}
 
-	char file_uri[256];
-	memset(file_uri,'\0', 256);
-	g_file_path = getenv(TEST_FILE_URL_PREFIX_ENV);
-	if (g_file_path == NULL)
+	// Check if local file uri should be used
+	if (g_use_file)
 	{
-		g_printerr ("Could not get env var %s value\n", TEST_FILE_URL_PREFIX_ENV);
-		return NULL;
+		g_file_path = getenv(TEST_FILE_URL_PREFIX_ENV);
+		if (g_file_path == NULL)
+		{
+			g_printerr ("Could not get env var %s value\n", TEST_FILE_URL_PREFIX_ENV);
+			return NULL;
+		}
+		else
+		{
+			sprintf(g_uri, "%s%s", g_file_path, g_file_name);
+		}
 	}
-	else
-	{
-		sprintf(file_uri, "%s%s", g_file_path, g_file_name);
-	}
-	g_object_set(G_OBJECT(udbin), "uri", file_uri, NULL);
+	g_object_set(G_OBJECT(udbin), "uri", g_uri, NULL);
+	g_print("%s() - set uri decode bin uri: %s\n", __FUNCTION__, g_uri);
+
+	// Add callback to link after source has been selected
 	g_signal_connect (udbin, "pad-added", G_CALLBACK (manual_pipeline_cb_pad_added), NULL);
 
 	/*
-	GstElement* filesrc  = gst_element_factory_make ("filesrc", "file-source");
-	if (!filesrc)
-	{
-		g_printerr ("Filesrc element could not be created.\n");
-		return NULL;
-	}
-	g_object_set(G_OBJECT(filesrc), "location", "clock.mpg", NULL);
 
 	GstElement* tfind  = gst_element_factory_make ("typefind", "typefind");
 	if (!tfind)
@@ -564,6 +575,14 @@ static GstElement* create_manual_pipeline()
 		return NULL;
 	}
 */
+	// Create diagnostic element
+	g_passthru  = gst_element_factory_make ("passthru", "diagnostic-pt");
+	if (!g_passthru)
+	{
+		g_printerr ("passthru element could not be created.\n");
+		return NULL;
+	}
+
 	g_sink  = gst_element_factory_make ("playsink", "playsink");
 	if (!g_sink)
 	{
@@ -576,7 +595,7 @@ static GstElement* create_manual_pipeline()
 	// Add all elements into the pipeline
 	gst_bin_add_many (GST_BIN (pipeline),
 			//udbin, iselect, psink,
-			udbin, g_sink,
+			udbin, g_passthru, g_sink,
 			NULL);
 
 	// Link the elements together
@@ -587,7 +606,14 @@ static GstElement* create_manual_pipeline()
 			NULL))
 	{
 		g_printerr ("Problems linking elements together\n");
+		return NULL;	GstElement* filesrc  = gst_element_factory_make ("filesrc", "file-source");
+	if (!filesrc)
+	{
+		g_printerr ("Filesrc element could not be created.\n");
 		return NULL;
+	}
+	g_object_set(G_OBJECT(filesrc), "location", "clock.mpg", NULL);
+
 	}
 	*/
 	return pipeline;
@@ -595,7 +621,7 @@ static GstElement* create_manual_pipeline()
 
 static void
 manual_pipeline_cb_pad_added (GstElement *dec,
-		GstPad     *pad,
+		GstPad     *srcpad,
 		gpointer    data)
 {
 	g_print("%s() - called\n", __FUNCTION__);
@@ -605,9 +631,25 @@ manual_pipeline_cb_pad_added (GstElement *dec,
 	const gchar *name;
 	GstPadTemplate *templ;
 	GstElementClass *klass;
+	GstElement* passthru;
+	GstPad* d_src_pad;
+	GstPad* d_sink_pad;
+
+	d_src_pad = gst_element_get_static_pad(g_passthru, "src");
+	d_sink_pad = gst_element_get_static_pad(g_passthru, "sink");
+	if (!d_src_pad || !d_sink_pad)
+	{
+		g_printerr ("passthru element pads could not be retrieved.\n");
+		return;
+	}
+	if ((gst_pad_is_linked(d_sink_pad)) || (gst_pad_is_linked(d_src_pad)))
+	{
+		g_printerr ("passthru element pads already linked\n");
+		return;
+	}
 
 	/* check media type */
-	caps = gst_pad_query_caps (pad, NULL);
+	caps = gst_pad_query_caps (srcpad, NULL);
 	str = gst_caps_get_structure (caps, 0);
 	name = gst_structure_get_name (str);
 
@@ -625,13 +667,21 @@ manual_pipeline_cb_pad_added (GstElement *dec,
 
 	if (templ)
 	{
+		g_print("%s() - got sink pad template\n", __FUNCTION__);
 		GstPad *sinkpad;
 
 		sinkpad = gst_element_request_pad (g_sink, templ, NULL, NULL);
+		g_print("%s() - got sink pad from sink element\n", __FUNCTION__);
 
 		if (!gst_pad_is_linked (sinkpad))
 		{
-			gst_pad_link (pad, sinkpad);
+			gst_pad_link (srcpad, d_sink_pad);
+			gst_pad_link (d_src_pad, sinkpad);
+			g_print("%s() - sink pad of sink element is now linked\n", __FUNCTION__);
+		}
+		else
+		{
+			g_print("%s() - sink pad of sink element was already linked\n", __FUNCTION__);
 		}
 		gst_object_unref (sinkpad);
 	}

@@ -61,7 +61,7 @@ PKG_CHECK_MODULES(GST, [
 
 dnl *** soup ***
 PKG_CHECK_MODULES(SOUP, [
-  libsoup-gnome-2.4 >= 2.3.2
+  libsoup-2.4 >= 2.3.2
 ], [
   AC_SUBST(SOUP_CFLAGS)
   AC_SUBST(SOUP_LIBS)

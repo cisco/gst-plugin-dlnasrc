@@ -17,7 +17,7 @@ RUIH_GST_DTCP_DLL=/home/landerson/RUIHRI/git/gst-plugins-cl/dtcpip/test/dtcpip_m
 #RUIH_GST_DTCP_DLL=/media/truecrypt1/dtcpip_v1.1_prod.so
 export RUIH_GST_DTCP_DLL
 #
-GST_DEBUG=*:5,dlnasrc:4,dtcpip:5,dlnasouphttpsrc:5,cldemux:5,playbin:3,playbin2:3,\
+GST_DEBUG=*:1,dlnasrc:4,dtcpip:5,dlnasouphttpsrc:5,cldemux:5,playbin:3,playbin2:3,\
 basesrc:5,pushsrc:5,baseparse:1,task:1,queue2:2,multiqueue:2,bin:1,\
 mpeg2dec:4,mpegvparse:4,tsdemux:4,mpegtsbase:5,uridecodebin:5,filesrc:5,\
 mpegtsdemux:4,xvimagesink:5,\
@@ -34,7 +34,7 @@ export GST_DEBUG_DUMP_DOT_DIR=/tmp/
 #
 #./test file=clock.mpg rate=4 wait=10
 ./test host=192.168.2.16 rrid=23 rate=4 wait=10
-#./test host=192.168.0.106 dtcp rrid=9 pipeline
+#./test host=192.168.0.106 rrid=23 manual
 #rate=8 wait=15 host=192.168.0.106 or 192.168.2.2 pipeline switch position seek file=clock.mpg file=two_videos.mkv file=scte20_7.mpg dtcp	
 #
 # To debug with gdb debugger, use this line
