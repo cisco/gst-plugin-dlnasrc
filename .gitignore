@@ -27,5 +27,6 @@ test/*.mpg
 test/*.txt
 test/*.log
 test/*.out
+test/tmp
 bug
 
