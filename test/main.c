@@ -625,7 +625,6 @@ bin_cb_pad_added (GstElement *dec,
 	const gchar *name;
 	GstPadTemplate *templ;
 	GstElementClass *klass;
-	//GstElement* passthru;
 	GstPad* d_src_pad;
 	GstPad* d_sink_pad;
 
@@ -687,7 +686,11 @@ bin_cb_pad_added (GstElement *dec,
  */
 static gboolean create_manual_elements_pipeline(GstElement* pipeline)
 {
+	GstElement* tee = NULL;
 	GstElement* tsdemux = NULL;
+	GstElement* cldemux = NULL;
+	GstElement* fakesink = NULL;
+
 	GstElement* filesrc  = gst_element_factory_make ("filesrc", "file-source");
 	if (!filesrc)
 	{
@@ -697,6 +700,13 @@ static gboolean create_manual_elements_pipeline(GstElement* pipeline)
 	g_object_set(G_OBJECT(filesrc), "location", g_file_name, NULL);
 
 	g_print("%s() - creating elements manually\n", __FUNCTION__);
+
+	tee = gst_element_factory_make ("tee", "tee");
+	if (!tee)
+	{
+		g_printerr ("tee element could not be created.\n");
+		return FALSE;
+	}
 
 	tsdemux = gst_element_factory_make ("tsdemux", "tsdemux");
 	if (!tsdemux)
@@ -741,19 +751,46 @@ static gboolean create_manual_elements_pipeline(GstElement* pipeline)
 	}
 
 	gst_bin_add_many (GST_BIN (pipeline),
-			filesrc, tsdemux, g_queue, g_vparse, g_mpeg2dec, g_aparse, g_avdec, g_sink,
+			filesrc, tee, tsdemux, g_queue, g_vparse, g_mpeg2dec, g_aparse, g_avdec, g_sink,
 			NULL);
 
 	// Can only link source to demux for now, rest is done in callback
 	if (!gst_element_link_many (
-			filesrc, tsdemux,
+			filesrc, tee, tsdemux,
 			NULL))
 	{
 		g_printerr ("Problems linking filesrc to tsdemux\n");
 		return FALSE;
 	}
-
 	g_print("%s() - linked filesrc to tsdemux complete\n", __FUNCTION__);
+
+	if (0)
+	{
+		cldemux = gst_element_factory_make ("cldemux", "cldemux");
+		if (!cldemux)
+		{
+			g_printerr ("cldemux element could not be created.\n");
+			return FALSE;
+		}
+
+		fakesink = gst_element_factory_make ("fakesink", "fakesink");
+		if (!fakesink)
+		{
+			g_printerr ("fakesink element could not be created.\n");
+			return FALSE;
+		}
+		gst_bin_add_many (GST_BIN (pipeline),
+				cldemux, fakesink,
+				NULL);
+		if (!gst_element_link_many (
+				tee, cldemux, fakesink,
+				NULL))
+		{
+			g_printerr ("Problems linking tee to cldemux\n");
+			return FALSE;
+		}
+		g_print("%s() - linked cldemux to fakesink complete\n", __FUNCTION__);
+	}
 
 	// Add callback to link after source has been selected
 	g_print("%s() - registering tsdemux for callback\n", __FUNCTION__);
