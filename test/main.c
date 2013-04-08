@@ -16,7 +16,8 @@ static int g_rrid = 2;
 static char g_host[256];
 static char g_uri[256];
 
-static gboolean g_use_manual_pipeline = FALSE;
+static gboolean g_use_manual_bin_pipeline = FALSE;
+static gboolean g_use_manual_elements_pipeline = FALSE;
 static gboolean g_use_simple_pipeline = FALSE;
 static gboolean g_use_fancy_pipeline = FALSE;
 
@@ -38,6 +39,9 @@ static gchar* TEST_FILE_URL_PREFIX_ENV = "TEST_FILE_URL_PREFIX";
 static GstElement* g_sink = NULL;
 static GstElement* g_pipeline = NULL;
 static GstElement* g_passthru = NULL;
+static GstElement* g_queue = NULL;
+static GstElement* g_vparse = NULL;
+static GstElement* g_mpeg2dec = NULL;
 
 
 /* Structure to contain all our information, so we can pass it around */
@@ -56,8 +60,11 @@ typedef struct _CustomData {
 static gboolean process_cmd_line_args(int argc, char*argv[]);
 
 static GstElement* create_playbin_pipeline();
-static GstElement* create_manual_pipeline();
-static void manual_pipeline_cb_pad_added (GstElement *dec, GstPad *pad, gpointer data);
+static GstElement* create_manual_pipeline(gchar* pipeline_name, gboolean use_bin);
+static gboolean create_manual_bin_pipeline(GstElement* pipeline);
+static gboolean create_manual_elements_pipeline(GstElement* pipeline);
+static void bin_cb_pad_added (GstElement *dec, GstPad *pad, gpointer data);
+static void tsdemux_cb_pad_added (GstElement *tsdemux, GstPad *pad, gpointer data);
 static GstElement* create_fancy_pipeline();
 static GstElement* create_simple_pipeline();
 
@@ -113,10 +120,15 @@ int main(int argc, char *argv[])
 	gst_init (&argc, &argv);
 
 	// Build the pipeline
-	if (g_use_manual_pipeline)
+	if (g_use_manual_bin_pipeline)
 	{
-		g_print("Creating pipeline by manually assembling elements\n");
-		data.pipeline = create_manual_pipeline();
+		g_print("Creating pipeline by manually linking uri decode bin\n");
+		data.pipeline = create_manual_pipeline("manual-bin-pipeline", TRUE);
+	}
+	else if (g_use_manual_elements_pipeline)
+	{
+		g_print("Creating pipeline by manually linking decode elements\n");
+		data.pipeline = create_manual_pipeline("manual-elements-pipeline", FALSE);
 	}
 	else if (g_use_simple_pipeline)
 	{
@@ -293,10 +305,15 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 				g_print("Set requested host ip to %s\n", g_host);
 			}
 		}
-		else if (strstr(argv[i], "manual") != NULL)
+		else if (strstr(argv[i], "manual_bin") != NULL)
 		{
-			g_use_manual_pipeline = TRUE;
-			g_print("Set to manually build pipeline\n");
+			g_use_manual_bin_pipeline = TRUE;
+			g_print("Set to manually build pipeline using uridecode bin\n");
+		}
+		else if (strstr(argv[i], "manual_elements") != NULL)
+		{
+			g_use_manual_elements_pipeline = TRUE;
+			g_print("Set to manually build pipeline using individual elements\n");
 		}
 		else if (strstr(argv[i], "simple") != NULL)
 		{
@@ -305,7 +322,7 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 		}
 		else if (strstr(argv[i], "fancy") != NULL)
 		{
-			g_use_fancy_pipeline = FALSE;
+			g_use_fancy_pipeline = TRUE;
 			g_print("Set to build Fancy's pipeline\n");
 		}
 		else if (strstr(argv[i], "switch") != NULL)
@@ -350,7 +367,9 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 			g_printerr("\t fancy \t\t create Fancy's pipeline rather than playbin\n");
 			g_printerr("\t file=name \t\twhere name indicates file name using path from env var\n");
 			g_printerr("\t host=ip \t\t addr of server\n");
-			g_printerr("\t manual \t\t build manual pipeline rather than using playbin\n");
+			g_printerr("\t manual_uri_bin \t\t build manual pipeline using uri decode bin\n");
+			g_printerr("\t manual_decode_bin \t\t build manual pipeline using decode bin\n");
+			g_printerr("\t manual_elements \t\t build manual pipeline using decode elements\n");
 			g_printerr("\t position \t\t perform seek using current position + 10\n");
 			g_printerr("\t rate=y \t\t where y is desired rate\n");
 			g_printerr("\t rrid=i \t\t where i is cds recording id\n");
@@ -487,20 +506,13 @@ static GstElement* create_simple_pipeline()
  * Create pipeline manually based on pipeline which
  * playbin creates.
  */
-static GstElement* create_manual_pipeline()
+static GstElement* create_manual_pipeline(gchar* pipeline_name, gboolean use_bin)
 {
 	// Create gstreamer elements
-	GstElement* pipeline = gst_pipeline_new("manual-pipeline");
+	GstElement* pipeline = gst_pipeline_new(pipeline_name);
 	if (!pipeline)
 	{
 		g_printerr ("Pipeline element could not be created.\n");
-		return NULL;
-	}
-
-	GstElement* udbin  = gst_element_factory_make ("uridecodebin", "uridecodebin");
-	if (!udbin)
-	{
-		g_printerr ("uridecodebin element could not be created.\n");
 		return NULL;
 	}
 
@@ -518,71 +530,8 @@ static GstElement* create_manual_pipeline()
 			sprintf(g_uri, "%s%s", g_file_path, g_file_name);
 		}
 	}
-	g_object_set(G_OBJECT(udbin), "uri", g_uri, NULL);
-	g_print("%s() - set uri decode bin uri: %s\n", __FUNCTION__, g_uri);
 
-	// Add callback to link after source has been selected
-	g_signal_connect (udbin, "pad-added", G_CALLBACK (manual_pipeline_cb_pad_added), NULL);
-
-	/*
-
-	GstElement* tfind  = gst_element_factory_make ("typefind", "typefind");
-	if (!tfind)
-	{
-		g_printerr ("typefind element could not be created.\n");
-		return NULL;
-	}
-
-	GstElement* tsdemux = gst_element_factory_make ("tsdemux", "tsdemux");
-	if (!tsdemux)
-	{
-		g_printerr ("tsdemux element could not be created.\n");
-		return NULL;
-	}
-
-	GstElement* mqueue  = gst_element_factory_make ("multiqueue", "multiqueue");
-	if (!mqueue)
-	{
-		g_printerr ("mqueue element could not be created.\n");
-		return NULL;
-	}
-
-	GstElement* vparse  = gst_element_factory_make ("mpegvideoparse", "mpegvideoparse");
-	if (!vparse)
-	{
-		g_printerr ("mpegvideoparse element could not be created.\n");
-		return NULL;
-	}
-
-	GstElement* avdec  = gst_element_factory_make ("avdec_mpeg2video", "avdec_mpeg2video");
-	if (!avdec)
-	{
-		g_printerr ("avdec_mpeg2video element could not be created.\n");
-		return NULL;
-	}
-
-	GstElement* decodebin = gst_element_factory_make ("decodebin", "decodebin");
-	if (!decodebin)
-	{
-		g_printerr ("decode element could not be created.\n");
-		return NULL;
-	}
-
-	GstElement* iselect  = gst_element_factory_make ("input-selector", "input-selector");
-	if (!iselect)
-	{
-		g_printerr ("iselect element could not be created.\n");
-		return NULL;
-	}
-*/
-	// Create diagnostic element
-	g_passthru  = gst_element_factory_make ("passthru", "diagnostic-pt");
-	if (!g_passthru)
-	{
-		g_printerr ("passthru element could not be created.\n");
-		return NULL;
-	}
-
+	// Create playsink
 	g_sink  = gst_element_factory_make ("playsink", "playsink");
 	if (!g_sink)
 	{
@@ -592,35 +541,76 @@ static GstElement* create_manual_pipeline()
 	gst_util_set_object_arg (G_OBJECT(g_sink), "flags",
 	      "soft-colorbalance+soft-volume+vis+text+audio+video");
 
-	// Add all elements into the pipeline
-	gst_bin_add_many (GST_BIN (pipeline),
-			//udbin, iselect, psink,
-			udbin, g_passthru, g_sink,
-			NULL);
-
-	// Link the elements together
-	/*
-	if (!gst_element_link_many (
-			// udbin, iselect, psink, 	// no link possible from uridecodebin to input-selector
-			udbin, g_sink, 				// no link possible from uridecodebin to playsink
-			NULL))
+	if (use_bin)
 	{
-		g_printerr ("Problems linking elements together\n");
-		return NULL;	GstElement* filesrc  = gst_element_factory_make ("filesrc", "file-source");
-	if (!filesrc)
+		if (!create_manual_bin_pipeline(pipeline))
+		{
+			g_printerr ("%s() - problems creating decode bin based pipeline.\n",
+					__FUNCTION__);
+			return NULL;
+		}
+	}
+	else
 	{
-		g_printerr ("Filesrc element could not be created.\n");
-		return NULL;
+		if (!create_manual_elements_pipeline(pipeline))
+		{
+			g_printerr ("%s() - problems creating pipeline built from decode elements.\n",
+					__FUNCTION__);
+			return NULL;
+		}
 	}
-	g_object_set(G_OBJECT(filesrc), "location", "clock.mpg", NULL);
 
-	}
-	*/
+	g_print("%s() - creation of manual pipeline complete\n", __FUNCTION__);
 	return pipeline;
 }
 
+/**
+ * Create pipeline manually by creating a decode bin and linking in callback function.
+ */
+static gboolean create_manual_bin_pipeline(GstElement* pipeline)
+{
+	// Create decode elements
+	GstElement* dbin = NULL;
+
+	// Create URI decode bin
+	g_print("%s() - creating uridecodebin element\n", __FUNCTION__);
+
+	dbin  = gst_element_factory_make ("uridecodebin", "uridecodebin");
+	if (!dbin)
+	{
+		g_printerr ("%s() - uridecodebin element could not be created.\n", __FUNCTION__);
+		return FALSE;
+	}
+	g_object_set(G_OBJECT(dbin), "uri", g_uri, NULL);
+	g_print("%s() - set uri decode bin uri: %s\n", __FUNCTION__, g_uri);
+
+	// Create diagnostic element
+	g_passthru  = gst_element_factory_make ("passthru", "diagnostic-pt");
+	if (!g_passthru)
+	{
+		g_printerr ("%s() - passthru element could not be created.\n", __FUNCTION__);
+		return FALSE;
+	}
+
+	gst_bin_add_many (GST_BIN (pipeline),
+			dbin, g_passthru, g_sink,
+			NULL);
+
+	// Add callback to link after source has been selected
+	g_print("%s() - add callback on decode bin\n", __FUNCTION__);
+	g_signal_connect (dbin, "pad-added", G_CALLBACK (bin_cb_pad_added), NULL);
+	g_print("%s() - setup for decode bin callback\n", __FUNCTION__);
+
+	g_print("%s() - creation of manual uri decode bin pipeline complete\n", __FUNCTION__);
+	return TRUE;
+}
+
+/**
+ * Callback function to link decode bin to playsink when building a manual pipeline
+ * using a uri decode bin.
+ */
 static void
-manual_pipeline_cb_pad_added (GstElement *dec,
+bin_cb_pad_added (GstElement *dec,
 		GstPad     *srcpad,
 		gpointer    data)
 {
@@ -631,7 +621,7 @@ manual_pipeline_cb_pad_added (GstElement *dec,
 	const gchar *name;
 	GstPadTemplate *templ;
 	GstElementClass *klass;
-	GstElement* passthru;
+	//GstElement* passthru;
 	GstPad* d_src_pad;
 	GstPad* d_sink_pad;
 
@@ -688,6 +678,189 @@ manual_pipeline_cb_pad_added (GstElement *dec,
 }
 
 /**
+ * Create pipeline manually by creating individual elements based on pipeline which
+ * playbin creates.
+ */
+static gboolean create_manual_elements_pipeline(GstElement* pipeline)
+{
+	GstElement* tsdemux = NULL;
+	GstElement* filesrc  = gst_element_factory_make ("filesrc", "file-source");
+	if (!filesrc)
+	{
+		g_printerr ("Filesrc element could not be created.\n");
+		return FALSE;
+	}
+	g_object_set(G_OBJECT(filesrc), "location", "clock.mpg", NULL);
+
+	g_print("%s() - creating elements manually\n", __FUNCTION__);
+
+	tsdemux = gst_element_factory_make ("tsdemux", "tsdemux");
+	if (!tsdemux)
+	{
+		g_printerr ("tsdemux element could not be created.\n");
+		return FALSE;
+	}
+
+	g_queue  = gst_element_factory_make ("queue", "queue");
+	if (!g_queue)
+	{
+		g_printerr ("queue element could not be created.\n");
+		return FALSE;
+	}
+
+	g_vparse  = gst_element_factory_make ("mpegvideoparse", "mpegvideoparse");
+	if (!g_vparse)
+	{
+		g_printerr ("mpegvideoparse element could not be created.\n");
+		return FALSE;
+	}
+
+	g_mpeg2dec  = gst_element_factory_make ("mpeg2dec", "mpeg2dec");
+	if (!g_mpeg2dec)
+	{
+		g_printerr ("mpeg2dec element could not be created.\n");
+		return FALSE;
+	}
+
+	gst_bin_add_many (GST_BIN (pipeline),
+			filesrc, tsdemux, g_queue, g_vparse, g_mpeg2dec, g_sink,
+			NULL);
+
+	// Can only link source to demux for now, rest is done in callback
+	if (!gst_element_link_many (
+			filesrc, tsdemux,
+			NULL))
+	{
+		g_printerr ("Problems linking filesrc to tsdemux\n");
+		return FALSE;
+	}
+
+	g_print("%s() - linked filesrc to tsdemux complete\n", __FUNCTION__);
+
+	// Add callback to link after source has been selected
+	g_print("%s() - registering tsdemux for callback\n", __FUNCTION__);
+	g_signal_connect (tsdemux, "pad-added", G_CALLBACK (tsdemux_cb_pad_added), NULL);
+	g_print("%s() - setup for tsdemux callback\n", __FUNCTION__);
+
+	g_print("%s() - creation of manual pipeline complete\n", __FUNCTION__);
+	return TRUE;
+}
+
+/**
+ * Callback function to manually link up decode elements
+ */
+static void
+tsdemux_cb_pad_added (GstElement *tsdemux,
+					  GstPad     *tsdemux_src_pad,
+					  gpointer    data)
+{
+	g_print("%s() - called\n", __FUNCTION__);
+
+	gchar *name;
+	GstCaps *caps;
+	gchar *caps_string;
+	GstPad* queue_in_pad = NULL;
+	GstPad* mpeg2dec_src_pad = NULL;
+	GstPad* sink_in_pad = NULL;
+	GstPadTemplate *templ;
+	GstElementClass *klass;
+
+	name = gst_pad_get_name (tsdemux_src_pad);
+	g_print ("%s() - new pad %s was created\n", __FUNCTION__, name);
+
+	caps = gst_pad_query_caps (tsdemux_src_pad, NULL);
+	caps_string = gst_caps_to_string (caps);
+	gst_caps_unref (caps);
+	g_print ("%s() - Pad Capability:  %s\n", __FUNCTION__, caps_string);
+
+	if (strncmp (caps_string, "video/mpeg", 10) == 0)
+	{
+		g_print("%s() - dynamic Video-pad created, linking %s to queue/Mpegparser\n", __FUNCTION__, name);
+
+		// Link tsdemux src pad to queue
+		queue_in_pad = gst_element_get_compatible_pad(g_queue, tsdemux_src_pad, caps);
+		if (queue_in_pad != NULL)
+		{
+			g_print("%s() - got sink pad: %s ", __FUNCTION__, gst_pad_get_name (queue_in_pad));
+
+			if (gst_pad_link (tsdemux_src_pad, queue_in_pad) == GST_PAD_LINK_OK)
+			{
+				g_print ("%s() - linked tdemux src pad to queue sink pad\n", __FUNCTION__);
+			}
+			else
+			{
+				g_print ("%s() - unable to link src pad to sink\n", __FUNCTION__);
+				return;
+			}
+			gst_object_unref (queue_in_pad);
+		}
+		else
+		{
+			g_print ("%s() - Unable to get sink pad\n", __FUNCTION__);
+			return;
+		}
+
+		// Link queue to mpegvparse just using default element links
+		if (!gst_element_link_many (
+				g_queue, g_vparse, g_mpeg2dec,
+				NULL))
+		{
+			g_printerr ("Problems linking decode elements to playsink\n");
+			return;
+		}
+
+		// Link mpeg2dec video src pad to playsink
+		// Get static video src pad of mpeg2dec to hook up to sink pad of playsink
+		mpeg2dec_src_pad = gst_element_get_static_pad(g_mpeg2dec, "src");
+		if (mpeg2dec_src_pad == NULL)
+		{
+			g_printerr ("Unable to get video src output pad from mpeg2dec\n");
+			return;
+		}
+
+		// Get playsink's video sink pad template
+		klass = GST_ELEMENT_GET_CLASS (g_sink);
+		templ = gst_element_class_get_pad_template (klass, "video_sink");
+		if (templ)
+		{
+			g_print("%s() - got sink video pad template\n", __FUNCTION__);
+
+			sink_in_pad = gst_element_request_pad (g_sink, templ, NULL, NULL);
+			if (sink_in_pad != NULL)
+			{
+				g_print("%s() - got sink pad from sink element\n", __FUNCTION__);
+
+				if (gst_pad_link (mpeg2dec_src_pad, sink_in_pad) != GST_PAD_LINK_OK)
+				{
+					g_printerr ("Unable to link mpeg2dec src pad to playsink sink pad\n");
+				}
+				else
+				{
+					g_print("%s() - mpeg2dec and playsink are now linked\n", __FUNCTION__);
+				}
+				gst_object_unref (sink_in_pad);
+			}
+			else
+			{
+				g_printerr("%s() - Unable to get sink pad of playsink\n", __FUNCTION__);
+			}
+		}
+		else
+		{
+			g_printerr("%s() - Unable to get template of video sink pad of playsink\n", __FUNCTION__);
+		}
+		g_print("%s() - setup complete\n", __FUNCTION__);
+	}
+
+	else
+	{
+		g_print ("%s() - Pad was not a video pad\n", __FUNCTION__);
+	}
+	g_free (name);
+	g_free (caps_string);
+}
+
+/**
  * Create pipeline which is built from manual assembly of components
  * which Fancy uses for her testing.
  */
@@ -707,12 +880,6 @@ static GstElement* create_fancy_pipeline()
 		g_printerr ("Dlnasrc element could not be created.\n");
 		return NULL;
 	}
-	GstElement* dlnabin  = gst_element_factory_make ("dlnabin", "cablelabs demuxer");
-	if (!dlnabin)
-	{
-		g_printerr ("dlnabin element could not be created.\n");
-		return NULL;
-	}
 	*/
 	GstElement* filesrc  = gst_element_factory_make ("filesrc", "file-source");
 	if (!filesrc)
@@ -722,8 +889,22 @@ static GstElement* create_fancy_pipeline()
 	}
 	g_object_set(G_OBJECT(filesrc), "location", "clock.mpg", NULL);
 
-	GstElement* mpegvideoparse = gst_element_factory_make ("mpegvideoparse", "mpeg parser");
-	if (!mpegvideoparse)
+	GstElement* tsdemux = gst_element_factory_make ("tsdemux", "tsdemux");
+	if (!tsdemux)
+	{
+		g_printerr ("tsdemux element could not be created.\n");
+		return NULL;
+	}
+
+	GstElement* mqueue  = gst_element_factory_make ("multiqueue", "multiqueue");
+	if (!mqueue)
+	{
+		g_printerr ("mqueue element could not be created.\n");
+		return NULL;
+	}
+
+	GstElement* vparse  = gst_element_factory_make ("mpegvideoparse", "mpegvideoparse");
+	if (!vparse)
 	{
 		g_printerr ("mpegvideoparse element could not be created.\n");
 		return NULL;
@@ -736,74 +917,28 @@ static GstElement* create_fancy_pipeline()
 		return NULL;
 	}
 
-	GstElement* ffmpegcolorspace = gst_element_factory_make ("ffmpegcolorspace",  "RGB YUV converter");
-	if (!ffmpegcolorspace)
+	GstElement* iselect  = gst_element_factory_make ("input-selector", "input-selector");
+	if (!iselect)
 	{
-		g_printerr ("ffmpegcolorspace element could not be created.\n");
-		return NULL;
-	}
-	GstElement* videoscale = gst_element_factory_make ("videoscale", "videoscale");
-	if (!videoscale)
-	{
-		g_printerr ("videoscale element could not be created.\n");
+		g_printerr ("iselect element could not be created.\n");
 		return NULL;
 	}
 
-	GstElement* autovideosink = gst_element_factory_make ("autovideosink", "video-output");
-	if (!autovideosink)
+	g_sink  = gst_element_factory_make ("playsink", "playsink");
+	if (!g_sink)
 	{
-		g_printerr ("autovideosink element could not be created.\n");
+		g_printerr ("playsink element could not be created.\n");
 		return NULL;
 	}
-
-	GstElement* queue1 =  gst_element_factory_make ("queue", "queue1");
-	GstElement* queue2 =  gst_element_factory_make ("queue", "queue2");
-	if (!queue1 || !queue2)
-	{
-		g_printerr ("One of queue elements could not be created.\n");
-		return NULL;
-	}
-
-	GstElement* textsink = gst_element_factory_make ("filesink", "text file");
-	GstElement* captionsink = gst_element_factory_make ("filesink", "caption file");
-	if (!textsink || !captionsink)
-	{
-		g_printerr ("One of file sink elements could not be created.\n");
-		return NULL;
-	}
-
-	// Set properties as necessary on elements
-	/*
-	g_object_set(G_OBJECT(dlnasrc), "uri", g_uri, NULL);
-
-	// Verify URI was properly set
-	gchar* tmpUri = NULL;
-	g_object_get(G_OBJECT(dlnasrc), "uri", &tmpUri, NULL);	GstElement* ffmpegcolorspace = gst_element_factory_make ("ffmpegcolorspace",  "RGB YUV converter");
-
-	if ((tmpUri == NULL) || (strcmp(g_uri, tmpUri) != 0))
-	{
-		g_printerr ("Problems setting URI to: %s. Exiting.\n", g_uri);
-		return NULL;
-	}
-	else
-	{
-		g_free(tmpUri);
-	}
-	*/
-	g_object_set(G_OBJECT(textsink), "location", "demuxTextOutput", NULL);
-
-	g_object_set(G_OBJECT(captionsink), "location", "captionsTextOutput", NULL);
+	gst_util_set_object_arg (G_OBJECT(g_sink), "flags",
+	      "soft-colorbalance+soft-volume+vis+text+audio+video");
 
 	// Add all elements into the pipeline
 	gst_bin_add_many (GST_BIN (pipeline),
-			//dlnasrc, dlnabin, queue1,
-			filesrc, mpegvideoparse, queue2, mpeg2dec, ffmpegcolorspace,
-			videoscale, autovideosink, textsink, captionsink, NULL);
+			filesrc, tsdemux, mqueue, vparse, mpeg2dec, iselect, g_sink, NULL);
 
 	// Link the elements together
-//	if (!gst_element_link_many (dlnasrc, dlnabin, queue1, mpegvideoparse, queue2, mpeg2dec, ffmpegcolorspace,
-	if (!gst_element_link_many (filesrc, mpegvideoparse, queue2, mpeg2dec, ffmpegcolorspace,
-			videoscale, autovideosink, textsink, captionsink, NULL))
+	if (!gst_element_link_many (filesrc, tsdemux, mqueue, vparse, mpeg2dec, NULL))
 	{
 		g_printerr ("Problems linking elements together\n");
 		return NULL;
