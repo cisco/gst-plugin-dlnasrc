@@ -42,6 +42,8 @@ static GstElement* g_passthru = NULL;
 static GstElement* g_queue = NULL;
 static GstElement* g_vparse = NULL;
 static GstElement* g_mpeg2dec = NULL;
+static GstElement* g_aparse = NULL;
+static GstElement* g_avdec = NULL;
 
 
 /* Structure to contain all our information, so we can pass it around */
@@ -65,6 +67,8 @@ static gboolean create_manual_bin_pipeline(GstElement* pipeline);
 static gboolean create_manual_elements_pipeline(GstElement* pipeline);
 static void bin_cb_pad_added (GstElement *dec, GstPad *pad, gpointer data);
 static void tsdemux_cb_pad_added (GstElement *tsdemux, GstPad *pad, gpointer data);
+static gboolean link_video_elements(gchar* name, GstPad* tsdemux_src_pad, GstCaps* caps);
+static gboolean link_audio_elements(gchar* name, GstPad* tsdemux_src_pad, GstCaps* caps);
 static GstElement* create_fancy_pipeline();
 static GstElement* create_simple_pipeline();
 
@@ -690,7 +694,7 @@ static gboolean create_manual_elements_pipeline(GstElement* pipeline)
 		g_printerr ("Filesrc element could not be created.\n");
 		return FALSE;
 	}
-	g_object_set(G_OBJECT(filesrc), "location", "clock.mpg", NULL);
+	g_object_set(G_OBJECT(filesrc), "location", g_file_name, NULL);
 
 	g_print("%s() - creating elements manually\n", __FUNCTION__);
 
@@ -701,7 +705,7 @@ static gboolean create_manual_elements_pipeline(GstElement* pipeline)
 		return FALSE;
 	}
 
-	g_queue  = gst_element_factory_make ("queue", "queue");
+	g_queue  = gst_element_factory_make ("multiqueue", "multiqueue");
 	if (!g_queue)
 	{
 		g_printerr ("queue element could not be created.\n");
@@ -722,8 +726,22 @@ static gboolean create_manual_elements_pipeline(GstElement* pipeline)
 		return FALSE;
 	}
 
+	g_aparse  = gst_element_factory_make ("ac3parse", "ac3parse");
+	if (!g_aparse)
+	{
+		g_printerr ("ac3parse element could not be created.\n");
+		return FALSE;
+	}
+
+	g_avdec  = gst_element_factory_make ("avdec_ac3", "avdec_ac3");
+	if (!g_avdec)
+	{
+		g_printerr ("avdec_ac3 element could not be created.\n");
+		return FALSE;
+	}
+
 	gst_bin_add_many (GST_BIN (pipeline),
-			filesrc, tsdemux, g_queue, g_vparse, g_mpeg2dec, g_sink,
+			filesrc, tsdemux, g_queue, g_vparse, g_mpeg2dec, g_aparse, g_avdec, g_sink,
 			NULL);
 
 	// Can only link source to demux for now, rest is done in callback
@@ -759,11 +777,6 @@ tsdemux_cb_pad_added (GstElement *tsdemux,
 	gchar *name;
 	GstCaps *caps;
 	gchar *caps_string;
-	GstPad* queue_in_pad = NULL;
-	GstPad* mpeg2dec_src_pad = NULL;
-	GstPad* sink_in_pad = NULL;
-	GstPadTemplate *templ;
-	GstElementClass *klass;
 
 	name = gst_pad_get_name (tsdemux_src_pad);
 	g_print ("%s() - new pad %s was created\n", __FUNCTION__, name);
@@ -775,89 +788,207 @@ tsdemux_cb_pad_added (GstElement *tsdemux,
 
 	if (strncmp (caps_string, "video/mpeg", 10) == 0)
 	{
-		g_print("%s() - dynamic Video-pad created, linking %s to queue/Mpegparser\n", __FUNCTION__, name);
-
-		// Link tsdemux src pad to queue
-		queue_in_pad = gst_element_get_compatible_pad(g_queue, tsdemux_src_pad, caps);
-		if (queue_in_pad != NULL)
+		if (link_video_elements(name, tsdemux_src_pad, caps))
 		{
-			g_print("%s() - got sink pad: %s ", __FUNCTION__, gst_pad_get_name (queue_in_pad));
-
-			if (gst_pad_link (tsdemux_src_pad, queue_in_pad) == GST_PAD_LINK_OK)
-			{
-				g_print ("%s() - linked tdemux src pad to queue sink pad\n", __FUNCTION__);
-			}
-			else
-			{
-				g_print ("%s() - unable to link src pad to sink\n", __FUNCTION__);
-				return;
-			}
-			gst_object_unref (queue_in_pad);
+			g_print("%s() - setup of video elements complete\n", __FUNCTION__);
 		}
 		else
 		{
-			g_print ("%s() - Unable to get sink pad\n", __FUNCTION__);
-			return;
+			g_printerr("%s() - problems in setup of video elements\n", __FUNCTION__);
 		}
-
-		// Link queue to mpegvparse just using default element links
-		if (!gst_element_link_many (
-				g_queue, g_vparse, g_mpeg2dec,
-				NULL))
-		{
-			g_printerr ("Problems linking decode elements to playsink\n");
-			return;
-		}
-
-		// Link mpeg2dec video src pad to playsink
-		// Get static video src pad of mpeg2dec to hook up to sink pad of playsink
-		mpeg2dec_src_pad = gst_element_get_static_pad(g_mpeg2dec, "src");
-		if (mpeg2dec_src_pad == NULL)
-		{
-			g_printerr ("Unable to get video src output pad from mpeg2dec\n");
-			return;
-		}
-
-		// Get playsink's video sink pad template
-		klass = GST_ELEMENT_GET_CLASS (g_sink);
-		templ = gst_element_class_get_pad_template (klass, "video_sink");
-		if (templ)
-		{
-			g_print("%s() - got sink video pad template\n", __FUNCTION__);
-
-			sink_in_pad = gst_element_request_pad (g_sink, templ, NULL, NULL);
-			if (sink_in_pad != NULL)
-			{
-				g_print("%s() - got sink pad from sink element\n", __FUNCTION__);
-
-				if (gst_pad_link (mpeg2dec_src_pad, sink_in_pad) != GST_PAD_LINK_OK)
-				{
-					g_printerr ("Unable to link mpeg2dec src pad to playsink sink pad\n");
-				}
-				else
-				{
-					g_print("%s() - mpeg2dec and playsink are now linked\n", __FUNCTION__);
-				}
-				gst_object_unref (sink_in_pad);
-			}
-			else
-			{
-				g_printerr("%s() - Unable to get sink pad of playsink\n", __FUNCTION__);
-			}
-		}
-		else
-		{
-			g_printerr("%s() - Unable to get template of video sink pad of playsink\n", __FUNCTION__);
-		}
-		g_print("%s() - setup complete\n", __FUNCTION__);
 	}
-
+	else if (strncmp (caps_string, "audio/x-ac3", 11) == 0)
+	{
+		if (link_audio_elements(name, tsdemux_src_pad, caps))
+		{
+			g_print("%s() - setup of audio elements complete\n", __FUNCTION__);
+		}
+		else
+		{
+			g_printerr("%s() - problems in setup of audio elements\n", __FUNCTION__);
+		}
+	}
 	else
 	{
-		g_print ("%s() - Pad was not a video pad\n", __FUNCTION__);
+		g_print ("%s() - Pad was not an audio or video pad\n", __FUNCTION__);
 	}
 	g_free (name);
 	g_free (caps_string);
+}
+
+static gboolean
+link_video_elements(gchar* name, GstPad* tsdemux_src_pad, GstCaps* caps)
+{
+	GstPad* queue_in_pad = NULL;
+	GstPad* mpeg2dec_src_pad = NULL;
+	GstPad* sink_in_pad = NULL;
+	GstPadTemplate *templ;
+	GstElementClass *klass;
+	gboolean is_linked = FALSE;
+
+	g_print("%s() - dynamic Video-pad created, linking %s to queue/Mpegparser\n", __FUNCTION__, name);
+
+	// Link tsdemux src pad to queue
+	queue_in_pad = gst_element_get_compatible_pad(g_queue, tsdemux_src_pad, caps);
+	if (queue_in_pad != NULL)
+	{
+		g_print("%s() - got sink pad: %s ", __FUNCTION__, gst_pad_get_name (queue_in_pad));
+
+		if (gst_pad_link (tsdemux_src_pad, queue_in_pad) == GST_PAD_LINK_OK)
+		{
+			g_print ("%s() - linked tdemux src pad to queue sink pad\n", __FUNCTION__);
+		}
+		else
+		{
+			g_print ("%s() - unable to link src pad to sink\n", __FUNCTION__);
+			return FALSE;
+		}
+		gst_object_unref (queue_in_pad);
+	}
+	else
+	{
+		g_print ("%s() - Unable to get sink pad\n", __FUNCTION__);
+		return FALSE;
+	}
+
+	// Link queue to mpegvparse just using default element links
+	if (!gst_element_link_many (
+			g_queue, g_vparse, g_mpeg2dec,
+			NULL))
+	{
+		g_printerr ("%s() - problems linking video decode elements\n", __FUNCTION__);
+		return FALSE;
+	}
+
+	// Link mpeg2dec video src pad to playsink
+	// Get static video src pad of mpeg2dec to hook up to sink pad of playsink
+	mpeg2dec_src_pad = gst_element_get_static_pad(g_mpeg2dec, "src");
+	if (mpeg2dec_src_pad == NULL)
+	{
+		g_printerr ("%s() - unable to get video src output pad from mpeg2dec\n", __FUNCTION__);
+		return FALSE;
+	}
+
+	// Get playsink's video sink pad template
+	klass = GST_ELEMENT_GET_CLASS (g_sink);
+	templ = gst_element_class_get_pad_template (klass, "video_sink");
+	if (templ)
+	{
+		g_print("%s() - got sink video pad template\n", __FUNCTION__);
+
+		sink_in_pad = gst_element_request_pad (g_sink, templ, NULL, NULL);
+		if (sink_in_pad != NULL)
+		{
+			g_print("%s() - got sink pad from sink element\n", __FUNCTION__);
+
+			if (gst_pad_link (mpeg2dec_src_pad, sink_in_pad) != GST_PAD_LINK_OK)
+			{
+				g_printerr ("%s() - unable to link mpeg2dec src pad to playsink sink pad\n", __FUNCTION__);
+			}
+			else
+			{
+				g_print("%s() - mpeg2dec and playsink are now linked\n", __FUNCTION__);
+				is_linked = TRUE;
+			}
+			gst_object_unref (sink_in_pad);
+		}
+		else
+		{
+			g_printerr("%s() - Unable to get sink pad of playsink\n", __FUNCTION__);
+		}
+	}
+	else
+	{
+		g_printerr("%s() - Unable to get template of video sink pad of playsink\n", __FUNCTION__);
+	}
+	return is_linked;
+}
+
+static gboolean
+link_audio_elements(gchar* name, GstPad* tsdemux_src_pad, GstCaps* caps)
+{
+	GstPad* queue_in_pad = NULL;
+	GstPad* avdec_src_pad = NULL;
+	GstPad* sink_in_pad = NULL;
+	GstPadTemplate *templ;
+	GstElementClass *klass;
+	gboolean is_linked = FALSE;
+
+	g_print("%s() - dynamic Audio-pad created, linking %s to queue/ac3parser\n", __FUNCTION__, name);
+
+	// Link tsdemux src pad to queue
+	queue_in_pad = gst_element_get_compatible_pad(g_queue, tsdemux_src_pad, caps);
+	if (queue_in_pad != NULL)
+	{
+		g_print("%s() - got sink pad: %s ", __FUNCTION__, gst_pad_get_name (queue_in_pad));
+
+		if (gst_pad_link (tsdemux_src_pad, queue_in_pad) == GST_PAD_LINK_OK)
+		{
+			g_print ("%s() - linked tdemux src pad to queue sink pad\n", __FUNCTION__);
+		}
+		else
+		{
+			g_print ("%s() - unable to link src pad to sink\n", __FUNCTION__);
+			return FALSE;
+		}
+		gst_object_unref (queue_in_pad);
+	}
+	else
+	{
+		g_print ("%s() - Unable to get sink pad\n", __FUNCTION__);
+		return FALSE;
+	}
+
+	// Link queue to ac3parse just using default element links
+	if (!gst_element_link_many (
+			g_queue, g_aparse, g_avdec,
+			NULL))
+	{
+		g_printerr ("%s() - problems linking audio decode elements\n", __FUNCTION__);
+		return FALSE;
+	}
+
+	// Get static audio src pad of avdec to hook up to sink pad of playsink
+	avdec_src_pad = gst_element_get_static_pad(g_avdec, "src");
+	if (avdec_src_pad == NULL)
+	{
+		g_printerr ("%s() - unable to get audio src output pad from avdec\n", __FUNCTION__);
+		return FALSE;
+	}
+
+	// Get playsink's audio sink pad template
+	klass = GST_ELEMENT_GET_CLASS (g_sink);
+	templ = gst_element_class_get_pad_template (klass, "audio_sink");
+	if (templ)
+	{
+		g_print("%s() - got sink audio pad template\n", __FUNCTION__);
+
+		sink_in_pad = gst_element_request_pad (g_sink, templ, NULL, NULL);
+		if (sink_in_pad != NULL)
+		{
+			g_print("%s() - got sink pad from sink element\n", __FUNCTION__);
+
+			if (gst_pad_link (avdec_src_pad, sink_in_pad) != GST_PAD_LINK_OK)
+			{
+				g_printerr ("%s() - unable to link avdec src pad to playsink sink pad\n", __FUNCTION__);
+			}
+			else
+			{
+				is_linked = TRUE;
+				g_print("%s() - avdec and playsink are now linked\n", __FUNCTION__);
+			}
+			gst_object_unref (sink_in_pad);
+		}
+		else
+		{
+			g_printerr("%s() - Unable to get sink pad of playsink\n", __FUNCTION__);
+		}
+	}
+	else
+	{
+		g_printerr("%s() - Unable to get template of audio sink pad of playsink\n", __FUNCTION__);
+	}
+	return is_linked;
 }
 
 /**
