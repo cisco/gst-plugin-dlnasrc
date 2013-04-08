@@ -690,16 +690,26 @@ static gboolean create_manual_elements_pipeline(GstElement* pipeline)
 	GstElement* tsdemux = NULL;
 	GstElement* cldemux = NULL;
 	GstElement* fakesink = NULL;
-
-	GstElement* filesrc  = gst_element_factory_make ("filesrc", "file-source");
-	if (!filesrc)
-	{
-		g_printerr ("Filesrc element could not be created.\n");
-		return FALSE;
-	}
-	g_object_set(G_OBJECT(filesrc), "location", g_file_name, NULL);
+	GstElement* src = NULL;
 
 	g_print("%s() - creating elements manually\n", __FUNCTION__);
+
+	// Create either a file or dlna source
+	if (g_use_file)
+	{
+		src = gst_element_factory_make ("filesrc", "file-source");
+		g_object_set(G_OBJECT(src), "location", g_file_name, NULL);
+	}
+	else
+	{
+		src = gst_element_factory_make ("dlnasrc", "dlna-source");
+		g_object_set(G_OBJECT(src), "uri", g_uri, NULL);
+	}
+	if (!src)
+	{
+		g_printerr ("src element could not be created.\n");
+		return FALSE;
+	}
 
 	tee = gst_element_factory_make ("tee", "tee");
 	if (!tee)
@@ -751,12 +761,12 @@ static gboolean create_manual_elements_pipeline(GstElement* pipeline)
 	}
 
 	gst_bin_add_many (GST_BIN (pipeline),
-			filesrc, tee, tsdemux, g_queue, g_vparse, g_mpeg2dec, g_aparse, g_avdec, g_sink,
+			src, tee, tsdemux, g_queue, g_vparse, g_mpeg2dec, g_aparse, g_avdec, g_sink,
 			NULL);
 
 	// Can only link source to demux for now, rest is done in callback
 	if (!gst_element_link_many (
-			filesrc, tee, tsdemux,
+			src, tee, tsdemux,
 			NULL))
 	{
 		g_printerr ("Problems linking filesrc to tsdemux\n");

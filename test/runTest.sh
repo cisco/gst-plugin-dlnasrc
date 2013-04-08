@@ -33,7 +33,7 @@ export GST_DEBUG_NO_COLOR
 # This doesn't seem to work here - need to do gst-launch from cmd line?
 #export GST_DEBUG_DUMP_DOT_DIR=tmp
 #
-./test file=true_lies.mpg manual_elements
+./test host=192.168.2.16 rrid=29 manual_elements
 #./test host=192.168.0.106 rrid=28 dtcp
 #./test host=192.168.2.16 rrid=23 manual
 #rate=8 wait=15 host=192.168.0.106 or 192.168.2.2 pipeline switch position seek file=clock.mpg file=two_videos.mkv file=scte20_7.mpg dtcp	
