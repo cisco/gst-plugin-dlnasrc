@@ -1039,181 +1039,79 @@ link_cldemux_elements(GstElement* pipeline, GstElement* tee)
 	GstElement* csink = NULL;
 	GstElement* fqueue = NULL;
 
-	GstPad* tee_src_pad = NULL;
-	GstPad* cldemux_sink_pad = NULL;
-	GstPad* cldemux_video_src_pad = NULL;
-	GstPad* esassembler_sink_pad = NULL;
-	GstPad* esassembler_src_pad = NULL;
-	GstPad* dlnacaptions_sink_pad = NULL;
-	GstPad* dlnacaptions_src_pad = NULL;
-	GstPad* csink_pad = NULL;
-
-	if (0)
+	fqueue = gst_element_factory_make ("queue2", "fqueue");
+	if (!fqueue)
 	{
-		esassembler = gst_element_factory_make ("esassembler", "esassembler");
-		if (!esassembler)
-		{
-			g_printerr ("%s() - esassembler element could not be created.\n", __FUNCTION__);
-			return FALSE;
-		}
-
-		dlnacaptions = gst_element_factory_make ("dlnacaptions", "dlnacaptions");
-		if (!dlnacaptions)
-		{
-			g_printerr ("%s() - dlnacaptions element could not be created.\n", __FUNCTION__);
-			return FALSE;
-		}
-
-		gst_bin_add_many (GST_BIN (pipeline),
-				esassembler, dlnacaptions,
-				NULL);
-
-		// Get static cldemux transport sink pad to hook up to tee
-		cldemux_sink_pad = gst_element_get_static_pad(cldemux, "transport_sink");
-		if (cldemux_sink_pad == NULL)
-		{
-			g_printerr ("%s() - unable to get transport sink pad from cldemux\n", __FUNCTION__);
-			return FALSE;
-		}
-
-		// Get src pad from tee to link to cldemux sink pad
-		tee_src_pad = gst_element_get_request_pad(tee, "src_%u");
-		if (tee_src_pad == NULL)
-		{
-			g_printerr ("%s() - unable to get request src pad from tee\n", __FUNCTION__);
-			return FALSE;
-		}
-		if (gst_pad_link (tee_src_pad, cldemux_sink_pad) != GST_PAD_LINK_OK)
-		{
-			g_printerr ("%s() - unable to link tee src pad to cldemux sink pad\n", __FUNCTION__);
-			return FALSE;
-		}
-		else
-		{
-			g_print("%s() - tee and cldemux are now linked\n", __FUNCTION__);
-		}
-		gst_object_unref (cldemux_sink_pad);
-		gst_object_unref (tee_src_pad);
-		// Link cldemux video src to esassembler
-		cldemux_video_src_pad = gst_element_get_static_pad(cldemux, "video_src");
-		if (cldemux_video_src_pad == NULL)
-		{
-			g_printerr ("%s() - unable to get video src pad from cldemux\n", __FUNCTION__);
-			return FALSE;
-		}
-		esassembler_sink_pad = gst_element_get_static_pad(esassembler, "sink");
-		if (esassembler_sink_pad == NULL)
-		{
-			g_printerr ("%s() - unable to get sink pad from esassembler\n", __FUNCTION__);
-			return FALSE;
-		}
-		if (gst_pad_link (cldemux_video_src_pad, esassembler_sink_pad) != GST_PAD_LINK_OK)
-		{
-			g_printerr ("%s() - unable to link cldemux video src pad to esassembler sink pad\n", __FUNCTION__);
-			return FALSE;
-		}
-		else
-		{
-			g_print("%s() - esassembler and cldemux are now linked\n", __FUNCTION__);
-		}
-
-		// Link esassembler to dlnacaptions
-		esassembler_src_pad = gst_element_get_static_pad(esassembler, "src");
-		if (esassembler_src_pad == NULL)
-		{
-			g_printerr ("%s() - unable to get src pad from esassembler\n", __FUNCTION__);
-			return FALSE;
-		}
-		dlnacaptions_sink_pad = gst_element_get_static_pad(dlnacaptions, "pes_sink");
-		if (dlnacaptions_sink_pad == NULL)
-		{
-			g_printerr ("%s() - unable to get sink pad from dlnacaptions\n", __FUNCTION__);
-			return FALSE;
-		}
-		if (gst_pad_link (esassembler_src_pad, dlnacaptions_sink_pad) != GST_PAD_LINK_OK)
-		{
-			g_printerr ("%s() - unable to link esassembler src pad to dlnacaptions sink pad\n", __FUNCTION__);
-			return FALSE;
-		}
-		else
-		{
-			g_print("%s() - esassembler and dlnacaptions are now linked\n", __FUNCTION__);
-		}
-
-		// Link dlnacaptions to fakesink
-		dlnacaptions_src_pad = gst_element_get_static_pad(dlnacaptions, "video_src");
-		if (dlnacaptions_src_pad == NULL)
-		{
-			g_printerr ("%s() - unable to get src pad from dlnacaptions\n", __FUNCTION__);
-			return FALSE;
-		}
-		csink_pad = gst_element_get_static_pad(csink, "sink");
-		if (csink_pad == NULL)
-		{
-			g_printerr ("%s() - unable to get sink pad from captions fake sink\n", __FUNCTION__);
-			return FALSE;
-		}
-		if (gst_pad_link (dlnacaptions_src_pad, csink_pad) != GST_PAD_LINK_OK)
-		{
-			g_printerr ("%s() - unable to link dlnacaptions src pad to fake sink pad\n", __FUNCTION__);
-			return FALSE;
-		}
-		else
-		{
-			g_print("%s() - fakesink and dlnacaptions are now linked\n", __FUNCTION__);
-		}
+		g_printerr ("%s() - fake queue element could not be created.\n", __FUNCTION__);
+		return FALSE;
 	}
-	else
+
+	cldemux = gst_element_factory_make ("cldemux", "cldemux");
+	if (!cldemux)
 	{
-		fqueue = gst_element_factory_make ("queue2", "fqueue");
-		if (!fqueue)
-		{
-			g_printerr ("%s() - fake queue element could not be created.\n", __FUNCTION__);
-			return FALSE;
-		}
-
-		cldemux = gst_element_factory_make ("cldemux", "cldemux");
-		if (!cldemux)
-		{
-			g_printerr ("%s() - cldemux element could not be created.\n", __FUNCTION__);
-			return FALSE;
-		}
-		csink = gst_element_factory_make ("fakesink", "fakecsink");
-		if (!csink)
-		{
-			g_printerr ("%s() - captions fakesink element could not be created.\n", __FUNCTION__);
-			return FALSE;
-		}
-
-		gst_bin_add_many (GST_BIN (pipeline),
-				fqueue, cldemux, csink,
-				NULL);
-
-		if (!gst_element_link_many (
-				tee, fqueue, cldemux, csink,
-				NULL))
-		{
-			g_printerr ("%s() - problems linking fake leg elements\n", __FUNCTION__);
-			return FALSE;
-		}
-
-		if (!gst_element_sync_state_with_parent(fqueue))
-		{
-			g_printerr ("%s() - problems setting queue state\n", __FUNCTION__);
-			return FALSE;
-		}
-		if (!gst_element_sync_state_with_parent(cldemux))
-		{
-			g_printerr ("%s() - problems setting cldemux state\n", __FUNCTION__);
-			return FALSE;
-		}
-		if (!gst_element_sync_state_with_parent(csink))
-		{
-			g_printerr ("%s() - problems setting fakesink state\n", __FUNCTION__);
-			return FALSE;
-		}
-		g_print("%s() - linking fake elements complete\n", __FUNCTION__);
+		g_printerr ("%s() - cldemux element could not be created.\n", __FUNCTION__);
+		return FALSE;
 	}
+
+	esassembler = gst_element_factory_make ("esassembler", "esassembler");
+	if (!esassembler)
+	{
+		g_printerr ("%s() - esassembler element could not be created.\n", __FUNCTION__);
+		return FALSE;
+	}
+
+	dlnacaptions = gst_element_factory_make ("dlnacaptions", "dlnacaptions");
+	if (!dlnacaptions)
+	{
+		g_printerr ("%s() - dlnacaptions element could not be created.\n", __FUNCTION__);
+		return FALSE;
+	}
+
+	csink = gst_element_factory_make ("fakesink", "fakecsink");
+	if (!csink)
+	{
+		g_printerr ("%s() - captions fakesink element could not be created.\n", __FUNCTION__);
+		return FALSE;
+	}
+
+	gst_bin_add_many (GST_BIN (pipeline),
+			fqueue, cldemux, esassembler, dlnacaptions, csink,
+			NULL);
+
+	if (!gst_element_link_many (
+			tee, fqueue, cldemux, esassembler, dlnacaptions, csink,
+			NULL))
+	{
+		g_printerr ("%s() - problems linking fake leg elements\n", __FUNCTION__);
+		return FALSE;
+	}
+
+	if (!gst_element_sync_state_with_parent(fqueue))
+	{
+		g_printerr ("%s() - problems setting queue state\n", __FUNCTION__);
+		return FALSE;
+	}
+	if (!gst_element_sync_state_with_parent(cldemux))
+	{
+		g_printerr ("%s() - problems setting cldemux state\n", __FUNCTION__);
+		return FALSE;
+	}
+	if (!gst_element_sync_state_with_parent(esassembler))
+	{
+		g_printerr ("%s() - problems setting esassembler state\n", __FUNCTION__);
+		return FALSE;
+	}
+	if (!gst_element_sync_state_with_parent(dlnacaptions))
+	{
+		g_printerr ("%s() - problems setting dlnacaptions state\n", __FUNCTION__);
+		return FALSE;
+	}
+	if (!gst_element_sync_state_with_parent(csink))
+	{
+		g_printerr ("%s() - problems setting fakesink state\n", __FUNCTION__);
+		return FALSE;
+	}
+	g_print("%s() - linking cldemux related elements complete\n", __FUNCTION__);
 
 	return TRUE;
 }
