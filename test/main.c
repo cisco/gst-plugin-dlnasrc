@@ -7,6 +7,12 @@
 // Uncomment to compile under GStreamer-0.10 instead of GStreamer-1.0
 //#define GSTREAMER_010
 
+// Uncomment to get cldemux with esassembler and dlnacaptions
+#define WITH_CAPTIONS 1
+
+// Uncomment to send cldemux leg of pipeline to file, default is fake sink
+//#define CLDEMUX_OUT_TO_FILE 1
+
 // Global vars for cmd line args
 //
 static int g_wait_secs = 0;
@@ -336,6 +342,11 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 			g_test_uri_switch = TRUE;
 			g_print("Set to test uri switching\n");
 		}
+		else if (strstr(argv[i], "query") != NULL)
+		{
+			g_do_query = TRUE;
+			g_print("Set to query position\n");
+		}
 		else if (strstr(argv[i], "position") != NULL)
 		{
 			g_test_positioning = TRUE;
@@ -376,7 +387,8 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 			g_printerr("\t manual_uri_bin \t\t build manual pipeline using uri decode bin\n");
 			g_printerr("\t manual_decode_bin \t\t build manual pipeline using decode bin\n");
 			g_printerr("\t manual_elements \t\t build manual pipeline using decode elements\n");
-			g_printerr("\t position \t\t perform seek using current position + 10\n");
+			g_printerr("\t position \t\t query position as part of test\n");
+			g_printerr("\t query \t\t perform seek using current position + 10\n");
 			g_printerr("\t rate=y \t\t where y is desired rate\n");
 			g_printerr("\t rrid=i \t\t where i is cds recording id\n");
 			g_printerr("\t simple \t\t create simple pipeline rather than playbin\n");
@@ -930,16 +942,18 @@ link_video_elements(gchar* name, GstPad* tsdemux_src_pad, GstCaps* caps)
 		g_printerr("%s() - Unable to get template of video sink pad of playsink\n", __FUNCTION__);
 	}
 
-	if (link_cldemux_elements(g_pipeline, g_tee))
+	if (1)
 	{
-		g_print("%s() - linking cldemux complete\n", __FUNCTION__);
+		if (link_cldemux_elements(g_pipeline, g_tee))
+		{
+			g_print("%s() - linking cldemux complete\n", __FUNCTION__);
+		}
+		else
+		{
+			g_printerr ("%s() - Problems linking cldemux elements\n", __FUNCTION__);
+			return FALSE;
+		}
 	}
-	else
-	{
-		g_printerr ("%s() - Problems linking cldemux elements\n", __FUNCTION__);
-		return FALSE;
-	}
-
 	return is_linked;
 }
 
@@ -1067,22 +1081,43 @@ link_cldemux_elements(GstElement* pipeline, GstElement* tee)
 		return FALSE;
 	}
 
+#ifdef CLDEMUX_OUT_TO_FILE
+	csink = gst_element_factory_make ("filesink", "filetsink");
+	if (!csink)
+	{
+		g_printerr ("%s() - filesink element could not be created.\n", __FUNCTION__);
+		return FALSE;
+	}
+	g_object_set(G_OBJECT(csink), "location", "cld-output.txt", NULL);
+#else
 	csink = gst_element_factory_make ("fakesink", "fakecsink");
 	if (!csink)
 	{
-		g_printerr ("%s() - captions fakesink element could not be created.\n", __FUNCTION__);
+		g_printerr ("%s() - fakesink element could not be created.\n", __FUNCTION__);
 		return FALSE;
 	}
+#endif
 
+	// Add elements to pipeline
 	gst_bin_add_many (GST_BIN (pipeline),
-			fqueue, cldemux, esassembler, dlnacaptions, csink,
-			NULL);
+#ifdef WITH_CAPTIONS
+		fqueue, cldemux, esassembler, dlnacaptions, csink,
+#else
+		fqueue, cldemux, csink,
+#endif
+		NULL);
 
+	// Link elements
 	if (!gst_element_link_many (
+#ifdef WITH_CAPTIONS
+
 			tee, fqueue, cldemux, esassembler, dlnacaptions, csink,
+#else
+			tee, fqueue, cldemux, csink,
+#endif
 			NULL))
 	{
-		g_printerr ("%s() - problems linking fake leg elements\n", __FUNCTION__);
+		g_printerr ("%s() - problems linking cldemux leg elements\n", __FUNCTION__);
 		return FALSE;
 	}
 
@@ -1096,21 +1131,27 @@ link_cldemux_elements(GstElement* pipeline, GstElement* tee)
 		g_printerr ("%s() - problems setting cldemux state\n", __FUNCTION__);
 		return FALSE;
 	}
+
+#ifdef WITH_CAPTIONS
 	if (!gst_element_sync_state_with_parent(esassembler))
 	{
 		g_printerr ("%s() - problems setting esassembler state\n", __FUNCTION__);
 		return FALSE;
 	}
+
 	if (!gst_element_sync_state_with_parent(dlnacaptions))
 	{
 		g_printerr ("%s() - problems setting dlnacaptions state\n", __FUNCTION__);
 		return FALSE;
 	}
+#endif
+
 	if (!gst_element_sync_state_with_parent(csink))
 	{
 		g_printerr ("%s() - problems setting fakesink state\n", __FUNCTION__);
 		return FALSE;
 	}
+
 	g_print("%s() - linking cldemux related elements complete\n", __FUNCTION__);
 
 	return TRUE;
@@ -1548,14 +1589,16 @@ static gboolean perform_test_seek(CustomData* data, gint64 position, GstFormat f
 	{
 		rate = g_requested_rate;
 	}
-	g_print("%s - Requesting rate of %4.1f\n", __FUNCTION__, rate);
+	g_print("%s - Requesting rate of %4.1f at position %lld using format %s\n",
+			__FUNCTION__, rate, position, gst_format_get_name(format));
 
+	/*
 	// If not testing position, set position to zero
 	if (!g_test_positioning)
 	{
 		position = 0;
 	}
-
+	*/
 	// Initiate seek
 	if (!gst_element_seek (data->pipeline, rate,
 			format, GST_SEEK_FLAG_FLUSH,
