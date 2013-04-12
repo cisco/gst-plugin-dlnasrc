@@ -8,7 +8,7 @@
 //#define GSTREAMER_010
 
 // Uncomment to get cldemux with esassembler and dlnacaptions
-#define WITH_CAPTIONS 1
+//#define WITH_CAPTIONS 1
 
 // Uncomment to send cldemux leg of pipeline to file, default is fake sink
 //#define CLDEMUX_OUT_TO_FILE 1
@@ -180,6 +180,10 @@ int main(int argc, char *argv[])
 
 	// Print out elements in playbin
 	log_bin_elements(GST_BIN(data.pipeline));
+
+	// Create pipeline diagram
+	g_print("Creating pipeline.dot file\n");
+	GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(data.pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline");
 
 	// Perform requested testing
 	g_print("Begin pipeline test\n");
@@ -981,14 +985,14 @@ link_audio_elements(gchar* name, GstPad* tsdemux_src_pad, GstCaps* caps)
 		}
 		else
 		{
-			g_print ("%s() - unable to link src pad to sink\n", __FUNCTION__);
+			g_printerr ("%s() - unable to link src pad to sink\n", __FUNCTION__);
 			return FALSE;
 		}
 		gst_object_unref (queue_in_pad);
 	}
 	else
 	{
-		g_print ("%s() - Unable to get sink pad\n", __FUNCTION__);
+		g_printerr ("%s() - Unable to get sink pad\n", __FUNCTION__);
 		return FALSE;
 	}
 
@@ -1053,6 +1057,8 @@ link_cldemux_elements(GstElement* pipeline, GstElement* tee)
 	GstElement* csink = NULL;
 	GstElement* fqueue = NULL;
 
+	g_print("%s() - creating cldemux portion of pipeline\n", __FUNCTION__);
+
 	fqueue = gst_element_factory_make ("queue2", "fqueue");
 	if (!fqueue)
 	{
@@ -1067,6 +1073,7 @@ link_cldemux_elements(GstElement* pipeline, GstElement* tee)
 		return FALSE;
 	}
 
+#ifdef WITH_CAPTIONS
 	esassembler = gst_element_factory_make ("esassembler", "esassembler");
 	if (!esassembler)
 	{
@@ -1080,6 +1087,7 @@ link_cldemux_elements(GstElement* pipeline, GstElement* tee)
 		g_printerr ("%s() - dlnacaptions element could not be created.\n", __FUNCTION__);
 		return FALSE;
 	}
+#endif
 
 #ifdef CLDEMUX_OUT_TO_FILE
 	csink = gst_element_factory_make ("filesink", "filetsink");

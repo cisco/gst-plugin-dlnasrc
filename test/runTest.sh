@@ -1,4 +1,5 @@
 #!/bin/sh
+rm ./tmp/*.dot
 GST_PLUGIN_PATH=/usr/local/lib/gstreamer-1.0
 #GST_PLUGIN_PATH=/usr/local/lib/gstreamer-0.10
 export GST_PLUGIN_PATH
