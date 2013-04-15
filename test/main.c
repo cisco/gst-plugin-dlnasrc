@@ -41,6 +41,7 @@ static gboolean g_use_file = FALSE;
 static char g_file_name[256];
 static gchar* g_file_path = NULL;
 static gchar* TEST_FILE_URL_PREFIX_ENV = "TEST_FILE_URL_PREFIX";
+static gboolean g_create_dot = FALSE;
 
 static GstElement* g_sink = NULL;
 static GstElement* g_pipeline = NULL;
@@ -182,8 +183,11 @@ int main(int argc, char *argv[])
 	log_bin_elements(GST_BIN(data.pipeline));
 
 	// Create pipeline diagram
-	g_print("Creating pipeline.dot file\n");
-	GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(data.pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline");
+	if (g_create_dot)
+	{
+		g_print("Creating pipeline.dot file\n");
+		GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(data.pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline");
+	}
 
 	// Perform requested testing
 	g_print("Begin pipeline test\n");
@@ -379,11 +383,17 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 			g_format_bytes = TRUE;
 			g_print("Set to use byte format for query and seek\n");
 		}
+		else if (strstr(argv[i], "dot") != NULL)
+		{
+			g_create_dot = TRUE;
+			g_print("Set to generate dot file for pipeline diagram\n");
+		}
 		else
 		{
 			g_printerr("Invalid option: %s\n", argv[i]);
 			g_printerr("Usage:\n");
 			g_printerr("\t byte \t\t use byte format for query and seek\n");
+			g_printerr("\t dot \t\t generate dot file of pipeline diagram\n");
 			g_printerr("\t dtcp \t\t indicates content is dtcp/ip encrypted\n");
 			g_printerr("\t fancy \t\t create Fancy's pipeline rather than playbin\n");
 			g_printerr("\t file=name \t\twhere name indicates file name using path from env var\n");
@@ -1052,8 +1062,10 @@ static gboolean
 link_cldemux_elements(GstElement* pipeline, GstElement* tee)
 {
 	GstElement* cldemux = NULL;
+#ifdef WITH_CAPTIONS
 	GstElement* esassembler = NULL;
 	GstElement* dlnacaptions = NULL;
+#endif
 	GstElement* csink = NULL;
 	GstElement* fqueue = NULL;
 
