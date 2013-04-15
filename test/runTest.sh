@@ -39,8 +39,8 @@ export GST_DEBUG_NO_COLOR
 # This doesn't seem to work here - need to export in terminal window using ./tmp as value
 #export GST_DEBUG_DUMP_DOT_DIR=tmp
 #
-./test file=true_lies.mpg dot
-#./test host=192.168.2.16 rrid=33 wait=5 rate=8 query
+#./test file=true_lies.mpg dot
+./test host=192.168.2.16 rrid=33 dot
 #rate=8 wait=15 host=192.168.0.106 or 192.168.2.2 pipeline switch position seek file=clock.mpg file=two_videos.mkv file=scte20_7.mpg dtcp	
 #
 # To debug with gdb debugger, use this line

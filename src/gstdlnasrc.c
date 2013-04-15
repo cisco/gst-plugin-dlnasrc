@@ -514,7 +514,6 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
 			// Put rates into GArray
 			psCnt = dlna_src->head_response->content_features->playspeeds_cnt;
 			garray = g_array_sized_new(TRUE, TRUE, sizeof(gfloat), psCnt);
-			g_array_set_clear_func(garray, (GDestroyNotify)g_value_unset);
 			for (i = 0; i < psCnt; i++)
 			{
 				rate = dlna_src->head_response->content_features->playspeeds[i];
@@ -607,7 +606,7 @@ gst_dlna_src_event(GstPad    *pad,
 #endif
 	}
 
-	return ret;
+ 	return ret;
 }
 
 /**
@@ -671,7 +670,7 @@ gst_dlna_src_query (GstPad    *pad,
 
 	default:
 		// Call the default handler
-		GST_DEBUG_OBJECT(dlna_src,
+		GST_INFO_OBJECT(dlna_src,
 				"Got unsupported src query: %s, passing to default handler",
 				GST_QUERY_TYPE_NAME(query));
 		break;
@@ -925,6 +924,7 @@ static gboolean dlna_src_handle_query_convert(GstDlnaSrc *dlna_src, GstQuery *qu
     if (dlna_src->uri == NULL)
     {
 		GST_ERROR_OBJECT(dlna_src, "No URI, unable to handle query");
+		return FALSE;
     }
 
 	// Parse query to see what format was requested
