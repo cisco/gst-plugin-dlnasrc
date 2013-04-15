@@ -202,15 +202,17 @@ static gboolean dlna_src_set_uri(GstDlnaSrc *dlna_src, const gchar* value);
 
 static gboolean dlna_src_init_uri(GstDlnaSrc *dlna_src, const gchar* value);
 
-static gboolean dlna_src_dtcp_setup(GstDlnaSrc *dlna_src);
-
-static gboolean dlna_src_open_socket(GstDlnaSrc *dlna_src);
-
 static gboolean dlna_src_parse_uri(GstDlnaSrc *dlna_src);
 
-static gboolean dlna_src_formulate_head_request(GstDlnaSrc *dlna_src);
+static gboolean dlna_src_dtcp_setup(GstDlnaSrc *dlna_src);
 
-static gboolean dlna_src_issue_head_request(GstDlnaSrc *dlna_src);
+static gboolean dlna_src_head_request(GstDlnaSrc *dlna_src, gint64 start_npt, gint64 start_byte);
+
+static gboolean dlna_src_head_request_formulate(GstDlnaSrc *dlna_src, gint64 start_npt, gint64 start_byte);
+
+static gboolean dlna_src_head_request_issue(GstDlnaSrc *dlna_src);
+
+static gboolean dlna_src_open_socket(GstDlnaSrc *dlna_src);
 
 static gboolean dlna_src_close_socket(GstDlnaSrc *dlna_src);
 
@@ -249,6 +251,8 @@ static gboolean dlna_src_handle_query_duration(GstDlnaSrc *dlna_src, GstQuery *q
 static gboolean dlna_src_handle_query_seeking(GstDlnaSrc *dlna_src, GstQuery *query);
 
 static gboolean dlna_src_handle_query_segment(GstDlnaSrc *dlna_src, GstQuery *query);
+
+static gboolean dlna_src_handle_query_convert(GstDlnaSrc *dlna_src, GstQuery *query);
 
 static gboolean dlna_src_is_change_valid(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start);
 
@@ -640,6 +644,10 @@ gst_dlna_src_query (GstPad    *pad,
 		ret = dlna_src_handle_query_segment(dlna_src, query);
 		break;
 
+	case GST_QUERY_CONVERT:
+		ret = dlna_src_handle_query_convert(dlna_src, query);
+		break;
+
 	case GST_QUERY_URI:
 		GST_INFO_OBJECT (dlna_src, "query uri");
 		gst_query_set_uri (query, dlna_src->uri);
@@ -894,6 +902,75 @@ static gboolean dlna_src_handle_query_segment(GstDlnaSrc *dlna_src, GstQuery *qu
 				"Got segment query with non-supported format type: %s, passing to default handler",
 				GST_QUERY_TYPE_NAME(query));
 	}
+
+	return ret;
+}
+
+/**
+ * Responds to a convert query by issuing head and returning conversion value
+ *
+ * @param	dlna_src	this element
+ * @param	query		received query to respond to
+ *
+ * @return	true if responded to query, false otherwise
+ */
+static gboolean dlna_src_handle_query_convert(GstDlnaSrc *dlna_src, GstQuery *query)
+{
+	// Always return true since no other element can do this
+	gboolean ret = TRUE;
+	GstFormat src_fmt, dest_fmt;
+	gint64 src_val, dest_val;
+
+    // Make sure a URI has been set and HEAD response received
+    if (dlna_src->uri == NULL)
+    {
+		GST_ERROR_OBJECT(dlna_src, "No URI, unable to handle query");
+    }
+
+	// Parse query to see what format was requested
+	gst_query_parse_convert (query, &src_fmt, &src_val, &dest_fmt, &dest_val);
+
+	// Print out info about conversion that has been requested
+	GST_INFO_OBJECT(dlna_src, "Got conversion query: src fmt: %s, dest fmt: %s, src val: %lld, dest: val %lld",
+			gst_format_get_name(src_fmt), gst_format_get_name(dest_fmt), src_val, dest_val);
+
+	gint64 start_byte = 0;
+	gint64 start_npt = 0;
+	if (src_fmt == GST_FORMAT_BYTES)
+	{
+		start_byte = src_val;
+	}
+	else if (src_fmt == GST_FORMAT_TIME)
+	{
+		start_npt = src_val;
+	}
+	else
+	{
+		GST_ERROR_OBJECT(dlna_src,
+				"Got segment query with non-supported format type: %s",
+				GST_QUERY_TYPE_NAME(query));
+		return ret;
+	}
+
+	// Formulate and issue HEAD request
+	if (!dlna_src_head_request(dlna_src, start_npt, start_byte))
+	{
+		GST_ERROR_OBJECT(dlna_src, "Problems with HEAD request");
+		return FALSE;
+	}
+
+	// Get time seek start positions which contain converted value
+	if (dest_fmt == GST_FORMAT_BYTES)
+	{
+		dest_val = dlna_src->head_response->time_seek_npt_start;
+	}
+	else if (dest_fmt == GST_FORMAT_TIME)
+	{
+		dest_val = dlna_src->head_response->time_seek_npt_start;
+	}
+
+	// Return results in query
+	gst_query_set_convert (query, src_fmt, src_val, dest_fmt, dest_val);
 
 	return ret;
 }
@@ -1660,6 +1737,22 @@ dlna_src_init_uri(GstDlnaSrc *dlna_src, const gchar* value)
 		return FALSE;
 	}
 
+	if (!dlna_src_head_request(dlna_src, 0, 0))
+	{
+		GST_ERROR_OBJECT(dlna_src, "Problems with HEAD request/response");
+		if (dlna_src->uri) {
+			free(dlna_src->uri);
+		}
+		dlna_src->uri = NULL;
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
+static gboolean
+dlna_src_head_request(GstDlnaSrc *dlna_src, gint64 start_npt, gint64 start_byte)
+{
 	// Open socket to send HEAD request
 	if (!dlna_src_open_socket(dlna_src))
 	{
@@ -1672,7 +1765,7 @@ dlna_src_init_uri(GstDlnaSrc *dlna_src, const gchar* value)
 	}
 
 	// Formulate HEAD request
-	if (!dlna_src_formulate_head_request(dlna_src))
+	if (!dlna_src_head_request_formulate(dlna_src, start_npt, start_byte))
 	{
 		GST_ERROR_OBJECT(dlna_src, "Problems formulating HEAD request\n");
 		if (dlna_src->uri) {
@@ -1683,7 +1776,7 @@ dlna_src_init_uri(GstDlnaSrc *dlna_src, const gchar* value)
 	}
 
 	// Send HEAD Request and read response
-	if (!dlna_src_issue_head_request(dlna_src))
+	if (!dlna_src_head_request_issue(dlna_src))
 	{
 		GST_ERROR_OBJECT(dlna_src, "Problems sending and receiving HEAD request\n");
 		if (dlna_src->uri) {
@@ -1909,7 +2002,7 @@ dlna_src_close_socket(GstDlnaSrc *dlna_src)
  * @return	true if sucessful, false otherwise
  */
 static gboolean
-dlna_src_formulate_head_request(GstDlnaSrc *dlna_src)
+dlna_src_head_request_formulate(GstDlnaSrc *dlna_src, gint64 start_npt, gint64 start_byte)
 {
 	GST_LOG_OBJECT(dlna_src, "Formulating head request");
 
@@ -1941,8 +2034,25 @@ dlna_src_formulate_head_request(GstDlnaSrc *dlna_src)
     strcat(requestStr, "getAvailableSeekRange.dlna.org : 1");
     strcat(requestStr, CRLF);
 
-    // Include time seek range if supported
-    strcat(requestStr, "TimeSeekRange.dlna.org : npt=0-");
+    // Include time seek range
+    strcat(requestStr, "TimeSeekRange.dlna.org : ");
+
+    // Include either starting npt or byte
+    if (start_byte != 0)
+    {
+        strcat(requestStr, "bytes=");
+        (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
+        sprintf(tmpStr, "%lld", start_byte);
+        strcat(requestStr, tmpStr);
+    }
+    else
+    {
+        strcat(requestStr, "npt=");
+        (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
+        sprintf(tmpStr, "%lld", start_npt);
+        strcat(requestStr, tmpStr);
+    }
+    strcat(requestStr, "-");
     strcat(requestStr, CRLF);
 
     // Add termination characters for overall request
@@ -1963,7 +2073,7 @@ dlna_src_formulate_head_request(GstDlnaSrc *dlna_src)
  * @return	true if sucessful, false otherwise
  */
 static gboolean
-dlna_src_issue_head_request(GstDlnaSrc *dlna_src)
+dlna_src_head_request_issue(GstDlnaSrc *dlna_src)
 {
 	GST_LOG_OBJECT(dlna_src, "Issuing head request: %s", dlna_src->head_request_str);
 

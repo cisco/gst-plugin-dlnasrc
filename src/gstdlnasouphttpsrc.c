@@ -1944,45 +1944,37 @@ gst_dlna_soup_http_src_query (GstBaseSrc * bsrc, GstQuery * query)
 
 	case GST_QUERY_CONVERT:
 
-		// ??? - is this why rate change doesn't work any more??? - it used to be 0???
-		// *TODO* - with this inplace, we get reset/flush of pipeline, but bunch of errors
-		// about start greater than stop???
-		if (1)
+		gst_query_parse_convert (query, &src_fmt, &src_val, &dest_fmt, &dest_val);
+
+		// Print out info about conversion that has been requested
+		GST_INFO_OBJECT(src, "Got conversion query: src fmt: %s, dest fmt: %s, src val: %lld, dest: val %lld",
+				gst_format_get_name(src_fmt), gst_format_get_name(dest_fmt), src_val, dest_val);
+
+		if (src_fmt == dest_fmt)
 		{
-			gst_query_parse_convert (query, &src_fmt, &src_val, &dest_fmt, &dest_val);
-
-			// Print out info about conversion that has been requested
-			GST_INFO_OBJECT(src, "Got conversion query: src fmt %s, dest fmt %s, src val %lld, dest val %lld",
-					gst_format_get_name(src_fmt), gst_format_get_name(dest_fmt), src_val, dest_val);
-
-			if (src_fmt == dest_fmt)
+			dest_val = src_val;
+			GST_INFO_OBJECT(src, "No conversion necessary, setting dest to src");
+			ret = TRUE;
+		}
+		else
+		{
+			// Handle simple case
+			if (src_val == 0)
 			{
-				dest_val = src_val;
-				GST_INFO_OBJECT(src, "Setting dest to src");
+				dest_val = 1;
+				GST_INFO_OBJECT(src, "Setting dest to zero");
 				ret = TRUE;
 			}
 			else
 			{
-				// Handle simple case
-				if (src_val == 0)
-				{
-					dest_val = 1;
-					GST_INFO_OBJECT(src, "Setting dest to zero");
-					ret = TRUE;
-				}
-				else
-				{
-					// *TODO* - Figure out conversion here, do a head & get response
-					GST_INFO_OBJECT(src, "Doing nothing");
-					ret = FALSE;
-				}
+				// *TODO* - return true to indicate processed
+				// This logic has to be cleaned up along with dlnasrc & tsdemux
+				// It works but isn't pretty
+				GST_INFO_OBJECT(src, "Do nothing");
+				ret = TRUE;
 			}
-			gst_query_set_convert (query, src_fmt, src_val, dest_fmt, dest_val);
 		}
-		else
-		{
-			GST_INFO_OBJECT(src, "Doing nothing");
-		}
+		gst_query_set_convert (query, src_fmt, src_val, dest_fmt, dest_val);
 		break;
 
 	case GST_QUERY_CAPS:
