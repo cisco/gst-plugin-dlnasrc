@@ -32,7 +32,7 @@ static gboolean g_format_bytes = FALSE;
 static gboolean g_do_query = FALSE;
 static gboolean g_do_seek = FALSE;
 
-static gboolean g_test_positioning = FALSE;
+static gboolean g_zero_position = FALSE;
 static gboolean g_test_uri_switch = FALSE;
 static int g_eos_max_cnt = 1;
 static int g_eos_cnt = 0;
@@ -355,10 +355,10 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 			g_do_query = TRUE;
 			g_print("Set to query position\n");
 		}
-		else if (strstr(argv[i], "position") != NULL)
+		else if (strstr(argv[i], "zero") != NULL)
 		{
-			g_test_positioning = TRUE;
-			g_print("Set to test positioning\n");
+			g_zero_position = TRUE;
+			g_print("Set to position to zero\n");
 		}
 		else if (strstr(argv[i], "file=") != NULL)
 		{
@@ -401,7 +401,6 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 			g_printerr("\t manual_uri_bin \t\t build manual pipeline using uri decode bin\n");
 			g_printerr("\t manual_decode_bin \t\t build manual pipeline using decode bin\n");
 			g_printerr("\t manual_elements \t\t build manual pipeline using decode elements\n");
-			g_printerr("\t position \t\t query position as part of test\n");
 			g_printerr("\t query \t\t perform seek using current position + 10\n");
 			g_printerr("\t rate=y \t\t where y is desired rate\n");
 			g_printerr("\t rrid=i \t\t where i is cds recording id\n");
@@ -409,6 +408,7 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 			g_printerr("\t switch \t\t play for wait secs then switch uri\n");
 			g_printerr("\t uri=l \t\t where l is uri of desired content\n");
 			g_printerr("\t wait=x \t\t where x is secs\n");
+			g_printerr("\t zero \t\t set start position of seek to zero\n");
 			return FALSE;
 		}
 	}
@@ -1609,16 +1609,16 @@ static gboolean perform_test_seek(CustomData* data, gint64 position, GstFormat f
 	{
 		rate = g_requested_rate;
 	}
-	g_print("%s - Requesting rate of %4.1f at position %lld using format %s\n",
-			__FUNCTION__, rate, position, gst_format_get_name(format));
 
-	/*
-	// If not testing position, set position to zero
-	if (!g_test_positioning)
+	// If requested, set position to zero
+	if (g_zero_position)
 	{
 		position = 0;
 	}
-	*/
+
+	g_print("%s - Requesting rate of %4.1f at position %lld using format %s\n",
+			__FUNCTION__, rate, position, gst_format_get_name(format));
+
 	// Initiate seek
 	if (!gst_element_seek (data->pipeline, rate,
 			format, GST_SEEK_FLAG_FLUSH,
