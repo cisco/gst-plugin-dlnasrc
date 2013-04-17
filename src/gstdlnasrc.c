@@ -2759,7 +2759,7 @@ static gboolean dlna_src_head_response_parse_operations(GstDlnaSrc *dlna_src, gi
 		if (strlen(tmp2) != 2)
 		{
 			GST_WARNING_OBJECT(dlna_src,
-				"DLNA.ORG_OP from HEAD response sub field value: %s, is not at expected len of 2",
+				"DLNA.ORG_OP from HEAD response sub field %s value: %s, is not at expected len of 2",
 				field_str, tmp2);
 		}
 		else
@@ -2779,7 +2779,7 @@ static gboolean dlna_src_head_response_parse_operations(GstDlnaSrc *dlna_src, gi
 			else
 			{
 				GST_WARNING_OBJECT(dlna_src,
-					"DLNA.ORG_OP Time Seek Flag from HEAD response sub field value: %s, is not 0 or 1",
+					"DLNA.ORG_OP Time Seek Flag from HEAD response sub field %s value: %s, is not 0 or 1",
 					field_str, tmp2);
 			}
 
@@ -2798,7 +2798,7 @@ static gboolean dlna_src_head_response_parse_operations(GstDlnaSrc *dlna_src, gi
 			else
 			{
 				GST_WARNING_OBJECT(dlna_src,
-					"DLNA.ORG_OP Range Flag from HEAD response sub field value: %s, is not 0 or 1",
+					"DLNA.ORG_OP Range Flag from HEAD response sub field %s value: %s, is not 0 or 1",
 					field_str, tmp2);
 			}
 		}
@@ -3338,7 +3338,7 @@ dlna_src_npt_to_nanos(GstDlnaSrc *dlna_src, gchar* string, guint64* media_time_n
         *media_time_nanos = (secs * 1000) * 1000000L;
         ret = TRUE;
     	GST_LOG_OBJECT(dlna_src, "Convert npt str %s secs=%f into nanosecs: %llu\n",
-    			string, secs, media_time_nanos);
+    			string, secs, *media_time_nanos);
     }
     else
     {
