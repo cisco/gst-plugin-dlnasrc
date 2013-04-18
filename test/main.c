@@ -274,6 +274,8 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 				g_print("Set requested rate change to %4.1f\n", g_requested_rate);
 				g_do_seek = TRUE;
 				g_print("Setting do seek flag to TRUE\n");
+				g_do_query = TRUE;
+				g_print("Setting do query flag to TRUE\n");
 			}
 		}
 		else if (strstr(argv[i], "wait=") != NULL)
@@ -1455,7 +1457,7 @@ static void perform_test(CustomData* data)
 	{
 		format = GST_FORMAT_BYTES;
 	}
-	g_print("%s - Query and Seek on pipeline element using format: %s\n",
+	g_print("%s - Test pipeline using format: %s\n",
 			__FUNCTION__, gst_format_get_name(format));
 
 	// Query current position, duration and rate
@@ -1469,6 +1471,10 @@ static void perform_test(CustomData* data)
 			return;
 		}
 	}
+	else
+	{
+		g_print("%s - Not performing query\n", __FUNCTION__);
+	}
 
 	// Initiate seek to perform test
 	if (g_do_seek)
@@ -1479,6 +1485,10 @@ static void perform_test(CustomData* data)
 					__FUNCTION__);
 			return;
 		}
+	}
+	else
+	{
+		g_print("%s - Not performing seek\n", __FUNCTION__);
 	}
 
 	// Initiate pause if rate was set to zero
