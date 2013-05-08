@@ -1129,9 +1129,10 @@ gst_dlna_soup_http_src_got_headers_cb (SoupMessage * msg, GstDlnaSoupHTTPSrc * s
   if (src->ret == GST_FLOW_CUSTOM_ERROR &&
       src->read_position && msg->status_code != SOUP_STATUS_PARTIAL_CONTENT)
   {
+	// *TODO* - work around for range header
     //src->seekable = FALSE;
-    GST_ERROR_OBJECT (src, "TODO - FIX THIS UP- Server does not accept Range HTTP header, URL: %s",
-    		src->location);
+    //GST_ERROR_OBJECT (src, "TODO - FIX THIS UP- Server does not accept Range HTTP header, URL: %s",
+    //		src->location);
     //src->ret = GST_FLOW_ERROR;
   }
 }

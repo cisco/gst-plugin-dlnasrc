@@ -702,6 +702,8 @@ static gboolean dlna_src_handle_query_duration(GstDlnaSrc *dlna_src, GstQuery *q
 	gint64 duration = 0;
 	GstFormat format;
 
+	GST_INFO_OBJECT(dlna_src, "Called");
+
 	// Make sure a URI has been set and HEAD response received
     if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
     	(dlna_src->head_response->content_features == NULL))
@@ -771,6 +773,8 @@ static gboolean dlna_src_handle_query_seeking(GstDlnaSrc *dlna_src, GstQuery *qu
 	gboolean supports_seeking = FALSE;
 	gint64 seek_start = 0;
 	gint64 seek_end = 0;
+
+	GST_INFO_OBJECT(dlna_src, "Called");
 
     // Make sure a URI has been set and HEAD response received
     if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
@@ -848,6 +852,8 @@ static gboolean dlna_src_handle_query_segment(GstDlnaSrc *dlna_src, GstQuery *qu
 	gint64 start = 0;
 	gint64 end = 0;
 
+	GST_INFO_OBJECT(dlna_src, "Called");
+
     // Make sure a URI has been set and HEAD response received
     if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
     	(dlna_src->head_response->content_features == NULL))
@@ -919,6 +925,8 @@ static gboolean dlna_src_handle_query_convert(GstDlnaSrc *dlna_src, GstQuery *qu
 	gboolean ret = TRUE;
 	GstFormat src_fmt, dest_fmt;
 	gint64 src_val, dest_val;
+
+	GST_INFO_OBJECT(dlna_src, "Called");
 
     // Make sure a URI has been set and HEAD response received
     if (dlna_src->uri == NULL)
