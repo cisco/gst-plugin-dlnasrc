@@ -41,6 +41,9 @@
 // Uncomment to use soup http src rather than dlna soup http src
 //#define USE_SOUP_HTTP_SRC
 
+// Uncomment to not issue HEAD request, just issue GET
+//#define NO_HEAD_REQUEST
+
 /* props */
 enum
 {
@@ -929,10 +932,11 @@ static gboolean dlna_src_handle_query_convert(GstDlnaSrc *dlna_src, GstQuery *qu
 	GST_INFO_OBJECT(dlna_src, "Called");
 
     // Make sure a URI has been set and HEAD response received
-    if (dlna_src->uri == NULL)
+    if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
+        (dlna_src->head_response->content_features == NULL))
     {
-		GST_ERROR_OBJECT(dlna_src, "No URI, unable to handle query");
-		return FALSE;
+        GST_ERROR_OBJECT(dlna_src, "No URI and/or HEAD response info, unable to handle query");
+        return FALSE;
     }
 
 	// Parse query to see what format was requested
@@ -1545,9 +1549,12 @@ dlna_src_set_uri(GstDlnaSrc *dlna_src, const gchar* value)
 	// *TODO* - hardcode to true for now
 	g_object_set(G_OBJECT(dlna_src->http_src), "seekable", TRUE, NULL);
 
-	g_object_set(G_OBJECT(dlna_src->http_src), "content-size", dlna_src->head_response->byte_seek_total, NULL);
+	if (dlna_src->head_response != NULL)
+	{
+	    g_object_set(G_OBJECT(dlna_src->http_src), "content-size", dlna_src->head_response->byte_seek_total, NULL);
 
-	g_object_set(G_OBJECT(dlna_src->http_src), "content-duration", dlna_src->head_response->time_seek_npt_duration, NULL);
+	    g_object_set(G_OBJECT(dlna_src->http_src), "content-duration", dlna_src->head_response->time_seek_npt_duration, NULL);
+	}
 #endif
 
 	// Initialize current requested values
@@ -1559,7 +1566,9 @@ dlna_src_set_uri(GstDlnaSrc *dlna_src, const gchar* value)
 	// Setup elements based on HEAD response
 	// Use flag or profile name starts with DTCP (
 	// *TODO* - also add check for profile name starting with DTCP or should just use flag???
-	if (dlna_src->head_response->content_features->flag_link_protected_set)
+	if ((dlna_src->head_response != NULL) &&
+	    (dlna_src->head_response->content_features != NULL) &&
+	    (dlna_src->head_response->content_features->flag_link_protected_set))
 	{
 		// Setup the dtcpip decrypter element, this will also ghost pad the
 		// src pad of the bin
@@ -1745,15 +1754,20 @@ dlna_src_init_uri(GstDlnaSrc *dlna_src, const gchar* value)
 		return FALSE;
 	}
 
+#ifndef NO_HEAD_REQUEST
+	GST_INFO_OBJECT(dlna_src, "Using HEAD Request");
 	if (!dlna_src_head_request(dlna_src, 0, 0))
 	{
-		GST_ERROR_OBJECT(dlna_src, "Problems with HEAD request/response");
-		if (dlna_src->uri) {
-			free(dlna_src->uri);
-		}
-		dlna_src->uri = NULL;
-		return FALSE;
+	    GST_ERROR_OBJECT(dlna_src, "Problems with HEAD request/response");
+	    if (dlna_src->uri) {
+	        free(dlna_src->uri);
+	    }
+	    dlna_src->uri = NULL;
+	    return FALSE;
 	}
+#else
+    GST_INFO_OBJECT(dlna_src, "Not using HEAD Request");
+#endif
 
 	return TRUE;
 }
@@ -3378,7 +3392,7 @@ dlna_src_init (GstPlugin * dlna_src)
 
     // *TODO* - setting  + 1 forces this element to get selected as src by playsrc2
 	return gst_element_register ((GstPlugin *)dlna_src, "dlnasrc",
-			GST_RANK_PRIMARY+1,
+			GST_RANK_PRIMARY+101,
 //			GST_RANK_PRIMARY-1,
 			GST_TYPE_DLNA_SRC);
 }
