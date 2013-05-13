@@ -48,7 +48,6 @@ static GstElement* g_pipeline = NULL;
 static GstElement* g_passthru = NULL;
 static GstElement* g_tee = NULL;
 static GstElement* g_queue = NULL;
-static GstElement* g_vparse = NULL;
 static GstElement* g_mpeg2dec = NULL;
 static GstElement* g_aparse = NULL;
 static GstElement* g_avdec = NULL;
@@ -767,13 +766,6 @@ static gboolean create_manual_elements_pipeline(GstElement* pipeline)
 		return FALSE;
 	}
 
-	g_vparse  = gst_element_factory_make ("mpegvideoparse", "mpegvideoparse");
-	if (!g_vparse)
-	{
-		g_printerr ("%s() - mpegvideoparse element could not be created.\n", __FUNCTION__);
-		return FALSE;
-	}
-
 	g_mpeg2dec  = gst_element_factory_make ("mpeg2dec", "mpeg2dec");
 	if (!g_mpeg2dec)
 	{
@@ -796,7 +788,7 @@ static gboolean create_manual_elements_pipeline(GstElement* pipeline)
 	}
 
 	gst_bin_add_many (GST_BIN (pipeline),
-			src, g_tee, mqueue, tsdemux, g_queue, g_vparse, g_mpeg2dec,
+			src, g_tee, mqueue, tsdemux, g_queue, g_mpeg2dec,
 			g_aparse, g_avdec,
 			g_sink,
 			NULL);
@@ -909,7 +901,7 @@ link_video_elements(gchar* name, GstPad* tsdemux_src_pad, GstCaps* caps)
 
 	// Link queue to mpegvparse just using default element links
 	if (!gst_element_link_many (
-			g_queue, g_vparse, g_mpeg2dec,
+			g_queue, g_mpeg2dec,
 			NULL))
 	{
 		g_printerr ("%s() - problems linking video decode elements\n", __FUNCTION__);
