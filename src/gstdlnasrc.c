@@ -39,7 +39,7 @@
 //#define GSTREAMER_010
 
 // Uncomment to use soup http src rather than dlna soup http src
-//#define USE_SOUP_HTTP_SRC
+#define USE_SOUP_HTTP_SRC
 
 // Uncomment to not issue HEAD request, just issue GET
 //#define NO_HEAD_REQUEST
@@ -3392,7 +3392,7 @@ dlna_src_init (GstPlugin * dlna_src)
 
     // *TODO* - setting  + 1 forces this element to get selected as src by playsrc2
 	return gst_element_register ((GstPlugin *)dlna_src, "dlnasrc",
-			GST_RANK_PRIMARY+101,
+            GST_RANK_PRIMARY+101,
 //			GST_RANK_PRIMARY-1,
 			GST_TYPE_DLNA_SRC);
 }
