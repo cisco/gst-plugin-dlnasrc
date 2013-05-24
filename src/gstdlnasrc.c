@@ -483,7 +483,6 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
 		GParamSpec * pspec)
 {
 	GstDlnaSrc *dlna_src = GST_DLNA_SRC (object);
-	GST_INFO_OBJECT(dlna_src, "Getting property: %d", prop_id);
 
 	int i = 0;
 	GArray* garray = NULL;
@@ -493,6 +492,7 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
 	switch (prop_id) {
 
 	case PROP_URI:
+	    GST_LOG_OBJECT(dlna_src, "Getting property: uri");
 		if (dlna_src->uri != NULL)
 		{
 			g_value_set_string(value, dlna_src->uri);
@@ -502,6 +502,7 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
 		break;
 
 	case PROP_CL_NAME:
+        GST_LOG_OBJECT(dlna_src, "Getting property: CableLab's assigned src name");
     	if (dlna_src->cl_name != NULL)
     	{
     		g_value_set_string(value, dlna_src->cl_name);
@@ -509,7 +510,7 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
 		break;
 
 	case PROP_SUPPORTED_RATES:
-
+        GST_LOG_OBJECT(dlna_src, "Getting property: supported rates");
 		if ((dlna_src->head_response != NULL) &&
 				(dlna_src->head_response->content_features != NULL) &&
 				(dlna_src->head_response->content_features->playspeeds_cnt > 0))
@@ -630,7 +631,7 @@ gst_dlna_src_query (GstPad    *pad,
 	gboolean ret = FALSE;
 	GstDlnaSrc *dlna_src = GST_DLNA_SRC(gst_pad_get_parent(pad));
 
-	GST_INFO_OBJECT(dlna_src, "Got src query: %s", GST_QUERY_TYPE_NAME(query));
+	GST_LOG_OBJECT(dlna_src, "Got src query: %s", GST_QUERY_TYPE_NAME(query));
 
 	switch (GST_QUERY_TYPE (query))
 	{
@@ -673,7 +674,7 @@ gst_dlna_src_query (GstPad    *pad,
 
 	default:
 		// Call the default handler
-		GST_INFO_OBJECT(dlna_src,
+		GST_LOG_OBJECT(dlna_src,
 				"Got unsupported src query: %s, passing to default handler",
 				GST_QUERY_TYPE_NAME(query));
 		break;
@@ -705,7 +706,7 @@ static gboolean dlna_src_handle_query_duration(GstDlnaSrc *dlna_src, GstQuery *q
 	gint64 duration = 0;
 	GstFormat format;
 
-	GST_INFO_OBJECT(dlna_src, "Called");
+	GST_LOG_OBJECT(dlna_src, "Called");
 
 	// Make sure a URI has been set and HEAD response received
     if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
@@ -777,7 +778,7 @@ static gboolean dlna_src_handle_query_seeking(GstDlnaSrc *dlna_src, GstQuery *qu
 	gint64 seek_start = 0;
 	gint64 seek_end = 0;
 
-	GST_INFO_OBJECT(dlna_src, "Called");
+	GST_DEBUG_OBJECT(dlna_src, "Called");
 
     // Make sure a URI has been set and HEAD response received
     if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
