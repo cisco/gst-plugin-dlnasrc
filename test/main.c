@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 
 
 // Uncomment to compile under GStreamer-0.10 instead of GStreamer-1.0
@@ -1451,14 +1452,17 @@ static void perform_test(CustomData* data)
 	GstBus *bus;
 	GstMessage *msg;
 	int i = 0;
+	gfloat rate = 0;
 
 	// Wait specified seconds for playback to start up
 	long secs = g_wait_secs;
     gint64 position = -1;
     for (i = 0; i < g_rate_change_cnt; i++)
     {
-        g_print("%s - Waiting %ld secs prior to rate change %d\n",
-                __FUNCTION__, secs, g_rate_change_cnt);
+        rate = pow(g_requested_rate, i+1);
+
+        g_print("%s - Waiting %ld secs prior to change %d of %d using rate %0.2f\n",
+                __FUNCTION__, secs, (i+1), g_rate_change_cnt, rate);
         g_usleep(secs * 1000000L);
 
         // Determine what format to use for query and seek
@@ -1488,7 +1492,7 @@ static void perform_test(CustomData* data)
         // Initiate seek to perform test
         if (g_do_seek)
         {
-            if (!perform_test_seek(data, position, format, (g_requested_rate * (i+1))))
+            if (!perform_test_seek(data, position, format, rate))
             {
                 g_printerr("%s - Problems with seek associated with test.\n",
                         __FUNCTION__);
