@@ -27,7 +27,6 @@ static char g_uri[256];
 static gboolean g_use_manual_bin_pipeline = FALSE;
 static gboolean g_use_manual_elements_pipeline = FALSE;
 static gboolean g_use_simple_pipeline = FALSE;
-static gboolean g_use_fancy_pipeline = FALSE;
 
 static gboolean g_use_dtcp = FALSE;
 static gboolean g_format_bytes = FALSE;
@@ -79,7 +78,6 @@ static void tsdemux_cb_pad_added (GstElement *tsdemux, GstPad *pad, gpointer dat
 static gboolean link_video_elements(gchar* name, GstPad* tsdemux_src_pad, GstCaps* caps);
 static gboolean link_audio_elements(gchar* name, GstPad* tsdemux_src_pad, GstCaps* caps);
 static gboolean link_cldemux_elements(GstElement* pipeline, GstElement* tee);
-static GstElement* create_fancy_pipeline();
 static GstElement* create_simple_pipeline();
 
 static void on_source_changed(GstElement* element, GParamSpec* param, gpointer data);
@@ -148,11 +146,6 @@ int main(int argc, char *argv[])
 	{
 		g_print("Creating simple pipeline\n");
 		data.pipeline = create_simple_pipeline();
-	}
-	else if (g_use_fancy_pipeline)
-	{
-		g_print("Creating pipeline used by Fancy\n");
-		data.pipeline = create_fancy_pipeline();
 	}
 	else
 	{
@@ -343,11 +336,6 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 			g_use_simple_pipeline = TRUE;
 			g_print("Set to build simplest pipeline\n");
 		}
-		else if (strstr(argv[i], "fancy") != NULL)
-		{
-			g_use_fancy_pipeline = TRUE;
-			g_print("Set to build Fancy's pipeline\n");
-		}
 		else if (strstr(argv[i], "switch") != NULL)
 		{
 			g_test_uri_switch = TRUE;
@@ -408,9 +396,9 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 			g_printerr("Invalid option: %s\n", argv[i]);
 			g_printerr("Usage:\n");
 			g_printerr("\t byte \t\t use byte format for query and seek\n");
+            g_printerr("\t changes=x \t\t where x is number of 2x increase rate changes\n");
 			g_printerr("\t dot \t\t generate dot file of pipeline diagram\n");
 			g_printerr("\t dtcp \t\t indicates content is dtcp/ip encrypted\n");
-			g_printerr("\t fancy \t\t create Fancy's pipeline rather than playbin\n");
 			g_printerr("\t file=name \t\twhere name indicates file name using path from env var\n");
 			g_printerr("\t host=ip \t\t addr of server\n");
 			g_printerr("\t manual_uri_bin \t\t build manual pipeline using uri decode bin\n");
@@ -424,7 +412,6 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 			g_printerr("\t uri=l \t\t where l is uri of desired content\n");
 			g_printerr("\t wait=x \t\t where x is secs\n");
 			g_printerr("\t zero \t\t set start position of seek to zero\n");
-            g_printerr("\t changes=x \t\t where x is number of 2x increase rate changes\n");
 			return FALSE;
 		}
 	}
@@ -1184,93 +1171,6 @@ link_cldemux_elements(GstElement* pipeline, GstElement* tee)
 	g_print("%s() - linking cldemux related elements complete\n", __FUNCTION__);
 
 	return TRUE;
-}
-
-/**
- * Create pipeline which is built from manual assembly of components
- * which Fancy uses for her testing.
- */
-static GstElement* create_fancy_pipeline()
-{
-	// Create gstreamer elements
-	GstElement* pipeline = gst_pipeline_new("manual-playbin");
-	if (!pipeline)
-	{
-		g_printerr ("Pipeline element could not be created.\n");
-		return NULL;
-	}
-	/*
-	GstElement* dlnasrc  = gst_element_factory_make ("dlnasrc", "http-source");
-	if (!dlnasrc)
-	{
-		g_printerr ("Dlnasrc element could not be created.\n");
-		return NULL;
-	}
-	*/
-	GstElement* filesrc  = gst_element_factory_make ("filesrc", "file-source");
-	if (!filesrc)
-	{
-		g_printerr ("Filesrc element could not be created.\n");
-		return NULL;
-	}
-	g_object_set(G_OBJECT(filesrc), "location", "clock.mpg", NULL);
-
-	GstElement* tsdemux = gst_element_factory_make ("tsdemux", "tsdemux");
-	if (!tsdemux)
-	{
-		g_printerr ("tsdemux element could not be created.\n");
-		return NULL;
-	}
-
-	GstElement* mqueue  = gst_element_factory_make ("multiqueue", "multiqueue");
-	if (!mqueue)
-	{
-		g_printerr ("mqueue element could not be created.\n");
-		return NULL;
-	}
-
-	GstElement* vparse  = gst_element_factory_make ("mpegvideoparse", "mpegvideoparse");
-	if (!vparse)
-	{
-		g_printerr ("mpegvideoparse element could not be created.\n");
-		return NULL;
-	}
-
-	GstElement* mpeg2dec = gst_element_factory_make ("mpeg2dec",  "mpeg decoder");
-	if (!mpeg2dec)
-	{
-		g_printerr ("mpeg2dec element could not be created.\n");
-		return NULL;
-	}
-
-	GstElement* iselect  = gst_element_factory_make ("input-selector", "input-selector");
-	if (!iselect)
-	{
-		g_printerr ("iselect element could not be created.\n");
-		return NULL;
-	}
-
-	g_sink  = gst_element_factory_make ("playsink", "playsink");
-	if (!g_sink)
-	{
-		g_printerr ("playsink element could not be created.\n");
-		return NULL;
-	}
-	gst_util_set_object_arg (G_OBJECT(g_sink), "flags",
-	      "soft-colorbalance+soft-volume+vis+text+audio+video");
-
-	// Add all elements into the pipeline
-	gst_bin_add_many (GST_BIN (pipeline),
-			filesrc, tsdemux, mqueue, vparse, mpeg2dec, iselect, g_sink, NULL);
-
-	// Link the elements together
-	if (!gst_element_link_many (filesrc, tsdemux, mqueue, vparse, mpeg2dec, NULL))
-	{
-		g_printerr ("Problems linking elements together\n");
-		return NULL;
-	}
-
-	return pipeline;
 }
 
 /**
