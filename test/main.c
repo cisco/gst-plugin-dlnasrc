@@ -19,6 +19,7 @@ static int g_wait_secs = 0;
 static int g_state_change_timeout_secs = 45;
 static gfloat g_requested_rate = 1;
 static int g_rrid = 2;
+static int g_rate_change_cnt = 1;
 static char g_host[256];
 static char g_uri[256];
 
@@ -84,7 +85,7 @@ static void on_source_changed(GstElement* element, GParamSpec* param, gpointer d
 
 static void perform_test(CustomData* data);
 static gboolean perform_test_query(CustomData* data, gint64* position, GstFormat format);
-static gboolean perform_test_seek(CustomData* data, gint64 position, GstFormat format);
+static gboolean perform_test_seek(CustomData* data, gint64 position, GstFormat format, gfloat rate);
 static gboolean set_pipeline_state(CustomData* data, GstState desired_state, gint timeoutSecs);
 static gboolean set_new_uri(CustomData* data);
 static void handle_message (CustomData *data, GstMessage *msg);
@@ -389,6 +390,18 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 			g_create_dot = TRUE;
 			g_print("Set to generate dot file for pipeline diagram\n");
 		}
+        else if (strstr(argv[i], "changes=") != NULL)
+        {
+            if (sscanf(argv[i], "changes=%d", &g_rate_change_cnt) != 1)
+            {
+                g_printerr("Invalid rate change count arg specified: %s\n", argv[i]);
+                return FALSE;
+            }
+            else
+            {
+                g_print("Set requested rate change count to %d\n", g_rate_change_cnt);
+            }
+        }
 		else
 		{
 			g_printerr("Invalid option: %s\n", argv[i]);
@@ -410,6 +423,7 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 			g_printerr("\t uri=l \t\t where l is uri of desired content\n");
 			g_printerr("\t wait=x \t\t where x is secs\n");
 			g_printerr("\t zero \t\t set start position of seek to zero\n");
+            g_printerr("\t changes=x \t\t where x is number of 2x increase rate changes\n");
 			return FALSE;
 		}
 	}
@@ -1436,52 +1450,56 @@ static void perform_test(CustomData* data)
 {
 	GstBus *bus;
 	GstMessage *msg;
+	int i = 0;
 
 	// Wait specified seconds for playback to start up
 	long secs = g_wait_secs;
-	g_print("%s - Waiting %ld secs for startup prior to rate change\n",
-			__FUNCTION__, secs);
-	g_usleep(secs * 1000000L);
+    gint64 position = -1;
+    for (i = 0; i < g_rate_change_cnt; i++)
+    {
+        g_print("%s - Waiting %ld secs prior to rate change %d\n",
+                __FUNCTION__, secs, g_rate_change_cnt);
+        g_usleep(secs * 1000000L);
 
-	// Determine what format to use for query and seek
-	GstFormat format = GST_FORMAT_TIME;
-	if (g_format_bytes)
-	{
-		format = GST_FORMAT_BYTES;
-	}
-	g_print("%s - Test pipeline using format: %s\n",
-			__FUNCTION__, gst_format_get_name(format));
+        // Determine what format to use for query and seek
+        GstFormat format = GST_FORMAT_TIME;
+        if (g_format_bytes)
+        {
+            format = GST_FORMAT_BYTES;
+        }
+        g_print("%s - Test pipeline using format: %s\n",
+                __FUNCTION__, gst_format_get_name(format));
 
-	// Query current position, duration and rate
-	gint64 position = -1;
-	if (g_do_query)
-	{
-		if (!perform_test_query(data, &position, format))
-		{
-			g_printerr("%s - Problems with query associated with test.\n",
-				__FUNCTION__);
-			return;
-		}
-	}
-	else
-	{
-		g_print("%s - Not performing query\n", __FUNCTION__);
-	}
+        // Query current position, duration and rate
+        if (g_do_query)
+        {
+            if (!perform_test_query(data, &position, format))
+            {
+                g_printerr("%s - Problems with query associated with test.\n",
+                        __FUNCTION__);
+                return;
+            }
+        }
+        else
+        {
+            g_print("%s - Not performing query\n", __FUNCTION__);
+        }
 
-	// Initiate seek to perform test
-	if (g_do_seek)
-	{
-		if (!perform_test_seek(data, position, format))
-		{
-			g_printerr("%s - Problems with seek associated with test.\n",
-					__FUNCTION__);
-			return;
-		}
-	}
-	else
-	{
-		g_print("%s - Not performing seek\n", __FUNCTION__);
-	}
+        // Initiate seek to perform test
+        if (g_do_seek)
+        {
+            if (!perform_test_seek(data, position, format, (g_requested_rate * (i+1))))
+            {
+                g_printerr("%s - Problems with seek associated with test.\n",
+                        __FUNCTION__);
+                return;
+            }
+        }
+        else
+        {
+            g_print("%s - Not performing seek\n", __FUNCTION__);
+        }
+    }
 
 	// Initiate pause if rate was set to zero
 	if (g_requested_rate == 0)
@@ -1598,34 +1616,37 @@ static gboolean perform_test_query(CustomData* data, gint64* position, GstFormat
 	return TRUE;
 }
 
-static gboolean perform_test_seek(CustomData* data, gint64 position, GstFormat format)
+static gboolean perform_test_seek(CustomData* data, gint64 start_position, GstFormat format, gfloat rate)
 {
+    gint64 stop_position = GST_CLOCK_TIME_NONE;
+
 	// Determine if seek is necessary for requested test
-	gfloat rate = 1;
-	if ((g_requested_rate == 0) || (g_test_uri_switch))
+	if ((rate == 0) || (g_test_uri_switch))
 	{
 		g_print("%s - No seeking necessary for requested test\n", __FUNCTION__);
 		return TRUE;
-	}
-	else
-	{
-		rate = g_requested_rate;
 	}
 
 	// If requested, set position to zero
 	if (g_zero_position)
 	{
-		position = 0;
+		start_position = 0;
+	}
+
+	// If reverse playspeed, set stop to zero
+	if (rate < 0)
+	{
+	    stop_position = 0;
 	}
 
 	g_print("%s - Requesting rate of %4.1f at position %lld using format %s\n",
-			__FUNCTION__, rate, position, gst_format_get_name(format));
+			__FUNCTION__, rate, start_position, gst_format_get_name(format));
 
 	// Initiate seek
 	if (!gst_element_seek (data->pipeline, rate,
 			format, GST_SEEK_FLAG_FLUSH,
-			GST_SEEK_TYPE_SET, position,
-			GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE))
+			GST_SEEK_TYPE_SET, start_position,
+			GST_SEEK_TYPE_NONE, stop_position))
 	{
 		g_printerr("%s - Problems seeking.\n", __FUNCTION__);
 		return FALSE;
