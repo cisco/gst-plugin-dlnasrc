@@ -34,6 +34,7 @@ static gboolean g_do_query = FALSE;
 static gboolean g_do_seek = FALSE;
 
 static gboolean g_zero_position = FALSE;
+static gboolean g_positions = FALSE;
 static gboolean g_test_uri_switch = FALSE;
 static int g_eos_max_cnt = 1;
 static int g_eos_cnt = 0;
@@ -84,6 +85,7 @@ static void on_source_changed(GstElement* element, GParamSpec* param, gpointer d
 
 static void perform_test(CustomData* data);
 static gboolean perform_test_rate_change(CustomData* data);
+static gboolean perform_test_position(CustomData* data);
 static gboolean perform_test_query(CustomData* data, gint64* position, GstFormat format);
 static gboolean perform_test_seek(CustomData* data, gint64 position, GstFormat format, gfloat rate);
 static gboolean set_pipeline_state(CustomData* data, GstState desired_state, gint timeoutSecs);
@@ -392,6 +394,11 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
                 g_print("Set requested rate change count to %d\n", g_rate_change_cnt);
             }
         }
+        else if (strstr(argv[i], "position") != NULL)
+        {
+            g_positions = TRUE;
+            g_print("Set to test positioning\n");
+        }
 		else
 		{
 			g_printerr("Invalid option: %s\n", argv[i]);
@@ -405,6 +412,7 @@ static gboolean process_cmd_line_args(int argc, char *argv[])
 			g_printerr("\t manual_uri_bin \t\t build manual pipeline using uri decode bin\n");
 			g_printerr("\t manual_decode_bin \t\t build manual pipeline using decode bin\n");
 			g_printerr("\t manual_elements \t\t build manual pipeline using decode elements\n");
+            g_printerr("\t position \t\t test positioning of seeks\n");
 			g_printerr("\t query \t\t perform seek using current position + 10\n");
 			g_printerr("\t rate=y \t\t where y is desired rate\n");
 			g_printerr("\t rrid=i \t\t where i is cds recording id\n");
@@ -1377,6 +1385,10 @@ static void perform_test(CustomData* data)
 			return;
 		}
 	}
+    else if (g_positions)
+    {
+        perform_test_position(data);
+    }
 
 	// Wait until error or EOS
 	bus = gst_element_get_bus (data->pipeline);
@@ -1452,6 +1464,60 @@ static gboolean perform_test_rate_change(CustomData* data)
         else
         {
             g_print("%s - Not performing seek\n", __FUNCTION__);
+        }
+    }
+
+    return TRUE;
+}
+
+static gboolean perform_test_position(CustomData* data)
+{
+    int i = 0;
+    gfloat rate = 1.0;
+    long secs = g_wait_secs;
+    gint64 position = -1;
+
+    for (i = 0; i < g_rate_change_cnt; i++)
+    {
+        g_print("%s - Waiting %ld secs prior to position change %d of %d\n",
+                __FUNCTION__, secs, (i+1), g_rate_change_cnt);
+        g_usleep(secs * 1000000L);
+
+        // Determine what format to use for query and seek
+        GstFormat format = GST_FORMAT_TIME;
+        if (g_format_bytes)
+        {
+            format = GST_FORMAT_BYTES;
+        }
+        g_print("%s - Test pipeline using format: %s\n",
+                __FUNCTION__, gst_format_get_name(format));
+
+        // Query current position
+        if (!perform_test_query(data, &position, format))
+        {
+            g_printerr("%s - Problems with query associated with test.\n",
+                    __FUNCTION__);
+            return FALSE;
+        }
+
+        // Adjust position by 60 secs
+        if ((i+1) % 2)
+        {
+            position = position + 15000000;
+            g_print("%s - Seeking forward to %lld\n", __FUNCTION__, position);
+        }
+        else
+        {
+            position =  position - 15000000;
+            g_print("%s - Seeking backward to %lld\n", __FUNCTION__, position);
+        }
+
+        // Initiate seek to perform test
+        if (!perform_test_seek(data, position, format, rate))
+        {
+            g_printerr("%s - Problems with seek associated with test.\n",
+                    __FUNCTION__);
+            return FALSE;
         }
     }
 
