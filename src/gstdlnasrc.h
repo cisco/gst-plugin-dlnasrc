@@ -1,3 +1,21 @@
+/* GStreamer dlna src
+ * Copyright (C) 2013 CableLabs, Louisville, CO 80027
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public
+ * License along with this library; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 02111-1307, USA.
+ */
 
 #ifndef __GST_DLNA_SRC_H__
 #define __GST_DLNA_SRC_H__
@@ -21,7 +39,6 @@ G_BEGIN_DECLS
 #define VOLUME_MAX_DOUBLE 10.0
 #define PLAYSPEEDS_MAX_CNT 64
 
-// *TODO* - should be http?
 #define DEFAULT_RX_URI  "http://0.0.0.0:4140"
 #define DEFAULT_RX_ADDR "0.0.0.0"
 #define DEFAULT_RX_PORT 4140
@@ -69,6 +86,7 @@ struct _GstDlnaSrc
 	// Current playback rate
 	gfloat rate;
 
+	// *TODO* - need to support this eventually,
 	// indication if the pipeline is live
 	//gboolean is_live;
 
@@ -181,8 +199,6 @@ struct _GstDlnaSrcHeadResponseContentFeatures
 struct _GstDlnaSrcClass
 {
 	GstBinClass parent_class;
-	//GstPushSrcClass parent_class;
-
 };
 
 GType gst_dlna_src_get_type (void);

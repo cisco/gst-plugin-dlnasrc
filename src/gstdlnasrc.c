@@ -1,18 +1,43 @@
-/*
-  This src adds DLNA playback capabilities to souphttpsrc
- */
-
-/**
- * SECTION:element-dlnasrc
+/* GStreamer dlna src
+ * Copyright (C) 2013 CableLabs, Louisville, CO 80027
  *
- * HTTP/DLNA client source
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
- * <refsect2>
- * <title>Example launch line</title>
- * |[
- * gst-launch ...
- * ]|
- * </refsect2>
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
+ *
+ * Alternatively, the contents of this file may be used under the
+ * GNU Lesser General Public License Version 2.1 (the "LGPL"), in
+ * which case the following provisions apply instead of the ones
+ * mentioned above:
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public
+ * License along with this library; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 02111-1307, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -35,13 +60,7 @@
 
 #include "gstdlnasrc.h"
 
-// Uncomment to compile under GStreamer-0.10 instead of GStreamer-1.0
-//#define GSTREAMER_010
-
-// Uncomment to use soup http src rather than dlna soup http src
-#define USE_SOUP_HTTP_SRC
-
-// Uncomment to not issue HEAD request, just issue GET
+// Uncomment when testing with server that does not support HEAD requests.
 //#define NO_HEAD_REQUEST
 
 /* props */
@@ -179,17 +198,9 @@ static void gst_dlna_src_set_property (GObject* object, guint prop_id,
 static void gst_dlna_src_get_property (GObject* object, guint prop_id,
 		GValue* value, GParamSpec* spec);
 
-#ifdef GSTREAMER_010
-	static gboolean gst_dlna_src_event(GstPad* pad, GstEvent* event);
-#else
-	static gboolean gst_dlna_src_event(GstPad* pad, GstObject* parent, GstEvent* event);
-#endif
+static gboolean gst_dlna_src_event(GstPad* pad, GstObject* parent, GstEvent* event);
 
-#ifdef GSTREAMER_010
-	static gboolean gst_dlna_src_query(GstPad *pad, GstQuery *query);
-#else
-	static gboolean gst_dlna_src_query(GstPad *pad, GstObject* parent, GstQuery *query);
-#endif
+static gboolean gst_dlna_src_query(GstPad *pad, GstObject* parent, GstQuery *query);
 
 // **********************
 // Method declarations associated with URI handling
@@ -257,11 +268,10 @@ static gboolean dlna_src_handle_query_segment(GstDlnaSrc *dlna_src, GstQuery *qu
 
 static gboolean dlna_src_handle_query_convert(GstDlnaSrc *dlna_src, GstQuery *query);
 
-static gboolean dlna_src_is_change_valid(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start);
+static gboolean dlna_src_is_change_valid(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start,
+        GstSeekType start_type, guint64 stop, GstSeekType stop_type);
 
 static gboolean dlna_src_is_rate_supported(GstDlnaSrc *dlna_src, gfloat rate);
-
-static gboolean dlna_src_is_new_http_request_needed(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start, guint64 stop);
 
 static gboolean dlna_src_formulate_extra_headers(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format,
 												 guint64 start, GstStructure** headers);
@@ -269,24 +279,11 @@ static gboolean dlna_src_formulate_extra_headers(GstDlnaSrc *dlna_src, gfloat ra
 static gboolean dlna_src_npt_to_nanos(GstDlnaSrc *dlna_src, gchar* string, guint64* media_time_nanos);
 
 
-#ifdef GSTREAMER_010
+#define gst_dlna_src_parent_class parent_class
 
-static void _do_Init(GType type);
-
-GST_BOILERPLATE_FULL(GstDlnaSrc, gst_dlna_src, GstElement, GST_TYPE_BIN, _do_Init);
-
-const GstElementDetails gst_dlna_src_details
-	= GST_ELEMENT_DETAILS("HTTP/DLNA client source 2/20/13 7:35 AM",
-		"Source/Network",
-		"Receive data as a client via HTTP with DLNA extensions",
-		"Eric Winkelman <e.winkelman@cablelabs.com>");
-#else
-	#define gst_dlna_src_parent_class parent_class
-
-	G_DEFINE_TYPE_WITH_CODE (GstDlnaSrc, gst_dlna_src, GST_TYPE_BIN,
-			G_IMPLEMENT_INTERFACE (GST_TYPE_URI_HANDLER,
-					gst_dlna_src_uri_handler_init));
-#endif
+G_DEFINE_TYPE_WITH_CODE (GstDlnaSrc, gst_dlna_src, GST_TYPE_BIN,
+        G_IMPLEMENT_INTERFACE (GST_TYPE_URI_HANDLER,
+                gst_dlna_src_uri_handler_init));
 
 // Recommended in tutorial for writing a plugin
 //
@@ -302,23 +299,6 @@ gst_play_marshal_VOID__OBJECT_BOOLEAN (GClosure *closure,
 //
 GST_DEBUG_CATEGORY_STATIC (gst_dlna_src_debug);
 #define GST_CAT_DEFAULT gst_dlna_src_debug
-
-#ifdef GSTREAMER_010
-static void
-gst_dlna_src_base_init (gpointer gclass)
-{
-	GstElementClass *element_class = GST_ELEMENT_CLASS (gclass);
-
-	gst_element_class_set_details_simple(element_class,
-			"HTTP/DLNA client source",
-			"Source/Network",
-			"Receive data as a client via HTTP with DLNA extensions",
-			"Eric Winkelman <e.winkelman@cablelabs.com> 2/20/13 7:36 AM");
-
-	gst_element_class_add_pad_template(element_class,
-			gst_static_pad_template_get(&gst_dlna_src_pad_template));
-}
-#endif
 
 /*
  * Initializes (only called once) the class associated with this element from within
@@ -336,9 +316,6 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
 
 	gobject_klass = (GObjectClass *) klass;
 
-#ifdef GSTREAMER_010
-	parent_class = g_type_class_peek_parent (klass);
-#else
 	GstElementClass *gstelement_klass;
 	gstelement_klass = (GstElementClass *) klass;
 	gst_element_class_set_static_metadata (gstelement_klass,
@@ -350,7 +327,6 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
 	// Add the src pad template
 	gst_element_class_add_pad_template(gstelement_klass,
 			gst_static_pad_template_get(&gst_dlna_src_pad_template));
-#endif
 
 	gobject_klass->set_property = gst_dlna_src_set_property;
 	gobject_klass->get_property = gst_dlna_src_get_property;
@@ -371,11 +347,6 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
 						G_TYPE_ARRAY, G_PARAM_READABLE));
 
 	gobject_klass->dispose = GST_DEBUG_FUNCPTR (gst_dlna_src_dispose);
-
-#ifdef GSTREAMER_010
-	// *TODO* - get rid of this if not needed
-	//gst_element_class_set_details (gstelement_klass, &gst_dlna_src_details);
-#endif
 }
 
 /*
@@ -386,12 +357,7 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
  * @param gclass	class representation of this element
  */
 static void
-#ifdef GSTREAMER_010
-gst_dlna_src_init (GstDlnaSrc * dlna_src,
-		GstDlnaSrcClass * gclass)
-#else
 gst_dlna_src_init (GstDlnaSrc * dlna_src)
-#endif
 {
     GST_INFO_OBJECT(dlna_src, "Initializing");
 
@@ -402,11 +368,7 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
 	dlna_src->rate = 1.0;
 
 	// Create source element
-#ifdef USE_SOUP_HTTP_SRC
 	dlna_src->http_src = gst_element_factory_make("souphttpsrc", ELEMENT_NAME_SOUP_HTTP_SRC);
-#else
-	dlna_src->http_src = gst_element_factory_make("dlnasouphttpsrc", ELEMENT_NAME_DLNA_SOUP_HTTP_SRC);
-#endif
 	if (!dlna_src->http_src)
 	{
 		GST_ERROR_OBJECT(dlna_src, "The source element could not be created. Exiting.\n");
@@ -546,14 +508,9 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
  * @return	true if this element handles event, false otherwise
  */
 static gboolean
-#ifdef GSTREAMER_010
-gst_dlna_src_event(GstPad    *pad,
-					   GstEvent  *event)
-#else
 gst_dlna_src_event(GstPad    *pad,
 					   GstObject *parent,
 					   GstEvent  *event)
-#endif
 {
 	gboolean ret = FALSE;
 	GstDlnaSrc *dlna_src = GST_DLNA_SRC(gst_pad_get_parent(pad));
@@ -603,11 +560,7 @@ gst_dlna_src_event(GstPad    *pad,
 	// If not handled, pass on to default pad handler
 	if (!ret)
 	{
-#ifdef GSTREAMER_010
-		ret = gst_pad_event_default (pad, event);
-#else
 		ret = gst_pad_event_default (pad, parent, event);
-#endif
 	}
 
  	return ret;
@@ -619,14 +572,9 @@ gst_dlna_src_event(GstPad    *pad,
  * @return true if query could be performed
  */
 static gboolean
-#ifdef GSTREAMER_010
-gst_dlna_src_query (GstPad    *pad,
-						GstQuery  *query)
-#else
 gst_dlna_src_query (GstPad    *pad,
 		   	   	   	    GstObject *parent,
 						GstQuery  *query)
-#endif
 {
 	gboolean ret = FALSE;
 	GstDlnaSrc *dlna_src = GST_DLNA_SRC(gst_pad_get_parent(pad));
@@ -682,11 +630,7 @@ gst_dlna_src_query (GstPad    *pad,
 
 	if (!ret)
 	{
-#ifdef GSTREAMER_010
-		ret = gst_pad_query_default (pad, query);
-#else
 		ret = gst_pad_query_default (pad, parent, query);
-#endif
 	}
 
 	return ret;
@@ -1027,6 +971,17 @@ dlna_src_handle_event_seek(GstDlnaSrc *dlna_src, GstPad* pad, GstEvent* event)
     		"Got Seek event: rate: %3.1g, format: %s, flags: %d, start type: %d,  start: %lld, stop type: %d, stop: %lld",
     		rate, gst_format_get_name(format), flags, start_type, start, stop_type, stop);
 
+    // Do HEAD request to convert start type into
+    // Verify requested change is valid
+    if (!dlna_src_is_change_valid(dlna_src, rate, format, start, start_type, stop, stop_type))
+    {
+    	GST_ERROR_OBJECT(dlna_src, "Requested change is invalid, event handled");
+    	return TRUE;
+    }
+
+    // *TODO* - Do we need to stop current request??? - no because the current one will be cancelled
+    // when the request start is different from start - really???
+
     // Seek Flags are:
     //
     // 0 - GST_SEEK_FLAG_NONE - no flag
@@ -1037,39 +992,14 @@ dlna_src_handle_event_seek(GstDlnaSrc *dlna_src, GstPad* pad, GstEvent* event)
     // 5 - GST_SEEK_FLAG_SKIP - when doing trick modes, allow elements to skip frames instead of generating all frames
     //
 
-    // Seek Types are:
-    //
-    // 0 - GST_SEEK_TYPE_NONE - no change in position is required
-    // 1 - GST_SEEK_TYPE_CUR - change relative to currently configured segment.
-    // 		This can't be used to seek relative to the current playback position
-    // 		do a position query, calculate the desired position and then do an absolute position seek
-    // 		instead if that's what you want to do.
-    // 2 - GST_SEEK_TYPE_SET - absolute position is requested
-    // 3 - GST_SEEK_TYPE_END - relative position to duration is requested
-    //
+    // *TODO* - Only flag could possible respond to is GST_SEEK_FLAG_FLUSH.
+    // If this is set, verify base will perform flush otherwise do it here???
+    // If base does it, will it reset the values set here???
 
-    // *TODO* - need check to see if any of these flags will not be satisfied
-    // since any seek event on this element will initiate a new HTTP GET request
+    // *TODO* - is this needed here??? Assign play rate to supplied rate
+    dlna_src->rate = rate;
 
-    // Verify requested change is valid
-    if (!dlna_src_is_change_valid(dlna_src, rate, format, start))
-    {
-    	GST_ERROR_OBJECT(dlna_src, "Requested change is invalid, event handled");
-    	return TRUE;
-    }
-
-    // Determine if new HTTP GET Request needs to be issues
-    if (!dlna_src_is_new_http_request_needed(dlna_src, rate, format, start, stop))
-    {
-    	GST_INFO_OBJECT(dlna_src,
-    		"Current http request would satisfy, but new request appears to be needed???");
-        //return FALSE;
-    	// Playback terminates if we don't issue another request
-    	// Do we need to stop current one??? - no because the current one will be cancelled
-    	// when the request start is different from start
-    }
-
-    // Set up new requested change values
+    // Set up new requested values
     dlna_src->requested_rate = rate;
     dlna_src->requested_format = format;
     dlna_src->requested_start = start;
@@ -1118,9 +1048,19 @@ dlna_src_handle_event_seek(GstDlnaSrc *dlna_src, GstPad* pad, GstEvent* event)
 	g_object_set_property(G_OBJECT(dlna_src->http_src), "extra-headers", &struct_value);
 	GST_LOG_OBJECT(dlna_src, "set extra hdrs of http src");
 
-	GST_INFO_OBJECT(dlna_src,
-			"returning false, make sure basesrc gets chance to process");
-	return FALSE;
+	if (1)
+	{
+	    GST_INFO_OBJECT(dlna_src,
+			"returning false to make sure souphttpsrc gets chance to process");
+	    return FALSE;
+	}
+	else
+	{
+	    // *TODO* - if we don't give soup src a chance we don't do what needs to be done
+        GST_INFO_OBJECT(dlna_src,
+            "returning true so souphttpsrc doesn't have to process");
+        return TRUE;
+	}
 }
 
 /**
@@ -1134,7 +1074,8 @@ dlna_src_handle_event_seek(GstDlnaSrc *dlna_src, GstPad* pad, GstEvent* event)
  * @return	true if change is valid, false otherwise
  */
 static gboolean
-dlna_src_is_change_valid(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start)
+dlna_src_is_change_valid(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start,
+        GstSeekType start_type, guint64 stop, GstSeekType stop_type)
 {
 	// Check if supplied rate is supported
 	if ((rate == 1.0) || (dlna_src_is_rate_supported(dlna_src, rate)))
@@ -1146,6 +1087,20 @@ dlna_src_is_change_valid(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, gu
 		GST_ERROR_OBJECT(dlna_src, "Rate of %4.1f is not supported by server", rate);
 		return FALSE;
 	}
+
+	// Seek Types are:
+    //
+    // 0 - GST_SEEK_TYPE_NONE - no change in position is required
+    // 1 - GST_SEEK_TYPE_CUR - change relative to currently configured segment.
+    //      This can't be used to seek relative to the current playback position
+    //      do a position query, calculate the desired position and then do an absolute position seek
+    //      instead if that's what you want to do.
+    // 2 - GST_SEEK_TYPE_SET - absolute position is requested
+    // 3 - GST_SEEK_TYPE_END - relative position to duration is requested
+    //
+
+    // *TODO* - need check to see if any of these seek types are requested.
+    // May need to adjust start position accordingly
 
 	// Check if supplied start is valid
 	if (format == GST_FORMAT_BYTES)
@@ -1179,64 +1134,9 @@ dlna_src_is_change_valid(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, gu
 		return FALSE;
 	}
 
-	// Assign play rate to supplied rate
-	dlna_src->rate = rate;
-
 	GST_INFO_OBJECT(dlna_src, "Requested change is valid");
 
 	return TRUE;
-}
-
-static gboolean
-dlna_src_is_new_http_request_needed(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, guint64 start, guint64 stop)
-{
-	// Has rate changed?
-
-	// Check if supplied formats are the same
-	if (((format == GST_FORMAT_BYTES) && (dlna_src->requested_format == GST_FORMAT_BYTES)) ||
-		((format == GST_FORMAT_TIME) && (dlna_src->requested_format == GST_FORMAT_TIME)))
-	{
-		// Verify start is within range
-		// *TODO* - add support for DTCP
-		if (start < dlna_src->requested_start)
-		{
-			GST_INFO_OBJECT(dlna_src,
-				"New request needed since start %llu is smaller than requested start %llu",
-					start, dlna_src->requested_start);
-			return TRUE;
-		}
-		else if (stop > dlna_src->requested_stop)
-		{
-			GST_INFO_OBJECT(dlna_src,
-				"New request needed since stop %llu is larger than requested stop %llu",
-					start, dlna_src->requested_stop);
-			return TRUE;
-		}
-		else
-		{
-			GST_INFO_OBJECT(dlna_src,
-				"New seek, starting at %llu, stopping at %llu, is within current range, starting %llu, stopping %llu",
-					start, stop, dlna_src->requested_start, dlna_src->requested_stop);
-		}
-	}
-	else
-	{
-		GST_INFO_OBJECT(dlna_src,
-			"New requested needed since format %s is used rather than requested format %s",
-			gst_format_get_name(format), gst_format_get_name(dlna_src->requested_format));
-	}
-
-	// Check for rate change
-	if (rate != dlna_src->requested_rate)
-	{
-		GST_INFO_OBJECT(dlna_src,
-			"New request needed since new rate of %3.1f is different from requested rate %3.1f",
-				rate, dlna_src->requested_rate);
-		return TRUE;
-	}
-
-	GST_INFO_OBJECT(dlna_src, "New request not needed");
-	return FALSE;
 }
 
 /**
@@ -1419,58 +1319,26 @@ dlna_src_formulate_extra_headers(GstDlnaSrc *dlna_src, gfloat rate, GstFormat fo
 	return TRUE;
 }
 
-#ifdef GSTREAMER_010
-static void
-_do_Init(GType type)
-{
-    static const GInterfaceInfo urihandler_info =
-    {
-        gst_dlna_src_uri_handler_init,
-        NULL,
-        NULL
-    };
-
-    g_type_add_interface_static(type, GST_TYPE_URI_HANDLER, &urihandler_info);
-}
-#endif
 
 /*********************************************/
 /**********                         **********/
 /********** GstUriHandler INTERFACE **********/
 /**********                         **********/
 /*********************************************/
-#ifdef GSTREAMER_010
-static GstURIType
-gst_dlna_src_uri_get_type(void)
-#else
 static guint
 gst_dlna_src_uri_get_type(GType type)
-#endif
 {
 	return GST_URI_SRC;
 }
 
-#ifdef GSTREAMER_010
-static gchar **
-gst_dlna_src_uri_get_protocols(void)
-#else
 static const gchar *const *
 gst_dlna_src_uri_get_protocols(GType type)
-#endif
 {
-#ifdef GSTREAMER_010
-	static gchar *protocols[] = { "http", "https", NULL };
-#else
 	static const gchar *protocols[] = { "http", "https", NULL };
-#endif
 	return protocols;
 }
 
-#ifdef GSTREAMER_010
-static const gchar *
-#else
 static gchar *
-#endif
 gst_dlna_src_uri_get_uri(GstURIHandler* handler)
 {
 	GstDlnaSrc *dlna_src = GST_DLNA_SRC(handler);
@@ -1478,12 +1346,8 @@ gst_dlna_src_uri_get_uri(GstURIHandler* handler)
 }
 
 static gboolean
-#ifdef GSTREAMER_010
-gst_dlna_src_uri_set_uri(GstURIHandler * handler, const gchar * uri)
-#else
 gst_dlna_src_uri_set_uri(GstURIHandler * handler, const gchar * uri,
 	    GError ** error)
-#endif
 {
 	GstDlnaSrc *dlna_src = GST_DLNA_SRC(handler);
 
@@ -1546,19 +1410,7 @@ dlna_src_set_uri(GstDlnaSrc *dlna_src, const gchar* value)
 	// Set the URI
 	g_object_set(G_OBJECT(dlna_src->http_src), "location", dlna_src->uri, NULL);
 
-#ifndef USE_SOUP_HTTP_SRC
-	// *TODO* - hardcode to true for now
-	g_object_set(G_OBJECT(dlna_src->http_src), "seekable", TRUE, NULL);
-
-	if (dlna_src->head_response != NULL)
-	{
-	    g_object_set(G_OBJECT(dlna_src->http_src), "content-size", dlna_src->head_response->byte_seek_total, NULL);
-
-	    g_object_set(G_OBJECT(dlna_src->http_src), "content-duration", dlna_src->head_response->time_seek_npt_duration, NULL);
-	}
-#endif
-
-	// Initialize current requested values
+	// Changing URI so reset requested values to default values
     dlna_src->requested_rate = 1.0;
     dlna_src->requested_format = GST_FORMAT_BYTES;
     dlna_src->requested_start = 0;
@@ -3414,11 +3266,7 @@ dlna_src_init (GstPlugin * dlna_src)
 GST_PLUGIN_DEFINE (
     GST_VERSION_MAJOR,
     GST_VERSION_MINOR,
-#ifdef GSTREAMER_010
-    "dlnasrc",
-#else
     dlnasrc,
-#endif
     "MPEG+DLNA Decoder",
     (GstPluginInitFunc)dlna_src_init,
     VERSION,
@@ -3426,7 +3274,6 @@ GST_PLUGIN_DEFINE (
     "gst-cablelabs_ri",
     "http://gstreamer.net/"
 )
-
 #endif
 
 /*
