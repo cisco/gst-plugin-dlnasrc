@@ -1,18 +1,50 @@
+/* Test program for CableLabs GStreamer plugins
+ * Copyright (C) 2013 CableLabs, Louisville, CO 80027
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+ * DEALINGS IN THE SOFTWARE.
+ *
+ * Alternatively, the contents of this file may be used under the
+ * GNU Lesser General Public License Version 2.1 (the "LGPL"), in
+ * which case the following provisions apply instead of the ones
+ * mentioned above:
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public
+ * License along with this library; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 02111-1307, USA.
+ */
+
 #include <gst/gst.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
-
-
-// Uncomment to compile under GStreamer-0.10 instead of GStreamer-1.0
-//#define GSTREAMER_010
-
-// Uncomment to get cldemux with esassembler and dlnacaptions
-//#define WITH_CAPTIONS 1
-
-// Uncomment to send cldemux leg of pipeline to file, default is fake sink
-//#define CLDEMUX_OUT_TO_FILE 1
 
 // Global vars for cmd line args
 //
@@ -38,6 +70,8 @@ static gboolean g_positions = FALSE;
 static gboolean g_test_uri_switch = FALSE;
 static int g_eos_max_cnt = 1;
 static int g_eos_cnt = 0;
+//static const guint64 NANOS_PER_SECOND = 1000000000L;
+static const guint64 NANOS_PER_MINUTE = 60000000000L;
 
 static gboolean g_use_file = FALSE;
 static char g_file_name[256];
@@ -78,7 +112,6 @@ static void bin_cb_pad_added (GstElement *dec, GstPad *pad, gpointer data);
 static void tsdemux_cb_pad_added (GstElement *tsdemux, GstPad *pad, gpointer data);
 static gboolean link_video_elements(gchar* name, GstPad* tsdemux_src_pad, GstCaps* caps);
 static gboolean link_audio_elements(gchar* name, GstPad* tsdemux_src_pad, GstCaps* caps);
-static gboolean link_cldemux_elements(GstElement* pipeline, GstElement* tee);
 static GstElement* create_simple_pipeline();
 
 static void on_source_changed(GstElement* element, GParamSpec* param, gpointer data);
@@ -434,11 +467,7 @@ static GstElement* create_playbin_pipeline()
 {
 	GstElement* pipeline = NULL;
 	char launchLine[256];
-#ifdef GSTREAMER_010
-	char* line1 = "playbin2 flags=0x3 uri=";
-#else
 	char* line1 = "playbin flags=0x3 uri=";
-#endif
 	if (!g_use_file)
 	{
 		sprintf(launchLine, "%s%s", line1, g_uri);
@@ -961,18 +990,6 @@ link_video_elements(gchar* name, GstPad* tsdemux_src_pad, GstCaps* caps)
 		g_printerr("%s() - Unable to get template of video sink pad of playsink\n", __FUNCTION__);
 	}
 
-	if (1)
-	{
-		if (link_cldemux_elements(g_pipeline, g_tee))
-		{
-			g_print("%s() - linking cldemux complete\n", __FUNCTION__);
-		}
-		else
-		{
-			g_printerr ("%s() - Problems linking cldemux elements\n", __FUNCTION__);
-			return FALSE;
-		}
-	}
 	return is_linked;
 }
 
@@ -1063,125 +1080,6 @@ link_audio_elements(gchar* name, GstPad* tsdemux_src_pad, GstCaps* caps)
 	return is_linked;
 }
 
-static gboolean
-link_cldemux_elements(GstElement* pipeline, GstElement* tee)
-{
-	GstElement* cldemux = NULL;
-#ifdef WITH_CAPTIONS
-	GstElement* esassembler = NULL;
-	GstElement* dlnacaptions = NULL;
-#endif
-	GstElement* csink = NULL;
-	GstElement* fqueue = NULL;
-
-	g_print("%s() - creating cldemux portion of pipeline\n", __FUNCTION__);
-
-	fqueue = gst_element_factory_make ("queue2", "fqueue");
-	if (!fqueue)
-	{
-		g_printerr ("%s() - fake queue element could not be created.\n", __FUNCTION__);
-		return FALSE;
-	}
-
-	cldemux = gst_element_factory_make ("cldemux", "cldemux");
-	if (!cldemux)
-	{
-		g_printerr ("%s() - cldemux element could not be created.\n", __FUNCTION__);
-		return FALSE;
-	}
-
-#ifdef WITH_CAPTIONS
-	esassembler = gst_element_factory_make ("esassembler", "esassembler");
-	if (!esassembler)
-	{
-		g_printerr ("%s() - esassembler element could not be created.\n", __FUNCTION__);
-		return FALSE;
-	}
-
-	dlnacaptions = gst_element_factory_make ("dlnacaptions", "dlnacaptions");
-	if (!dlnacaptions)
-	{
-		g_printerr ("%s() - dlnacaptions element could not be created.\n", __FUNCTION__);
-		return FALSE;
-	}
-#endif
-
-#ifdef CLDEMUX_OUT_TO_FILE
-	csink = gst_element_factory_make ("filesink", "filetsink");
-	if (!csink)
-	{
-		g_printerr ("%s() - filesink element could not be created.\n", __FUNCTION__);
-		return FALSE;
-	}
-	g_object_set(G_OBJECT(csink), "location", "cld-output.txt", NULL);
-#else
-	csink = gst_element_factory_make ("fakesink", "fakecsink");
-	if (!csink)
-	{
-		g_printerr ("%s() - fakesink element could not be created.\n", __FUNCTION__);
-		return FALSE;
-	}
-#endif
-
-	// Add elements to pipeline
-	gst_bin_add_many (GST_BIN (pipeline),
-#ifdef WITH_CAPTIONS
-		fqueue, cldemux, esassembler, dlnacaptions, csink,
-#else
-		fqueue, cldemux, csink,
-#endif
-		NULL);
-
-	// Link elements
-	if (!gst_element_link_many (
-#ifdef WITH_CAPTIONS
-
-			tee, fqueue, cldemux, esassembler, dlnacaptions, csink,
-#else
-			tee, fqueue, cldemux, csink,
-#endif
-			NULL))
-	{
-		g_printerr ("%s() - problems linking cldemux leg elements\n", __FUNCTION__);
-		return FALSE;
-	}
-
-	if (!gst_element_sync_state_with_parent(fqueue))
-	{
-		g_printerr ("%s() - problems setting queue state\n", __FUNCTION__);
-		return FALSE;
-	}
-	if (!gst_element_sync_state_with_parent(cldemux))
-	{
-		g_printerr ("%s() - problems setting cldemux state\n", __FUNCTION__);
-		return FALSE;
-	}
-
-#ifdef WITH_CAPTIONS
-	if (!gst_element_sync_state_with_parent(esassembler))
-	{
-		g_printerr ("%s() - problems setting esassembler state\n", __FUNCTION__);
-		return FALSE;
-	}
-
-	if (!gst_element_sync_state_with_parent(dlnacaptions))
-	{
-		g_printerr ("%s() - problems setting dlnacaptions state\n", __FUNCTION__);
-		return FALSE;
-	}
-#endif
-
-	if (!gst_element_sync_state_with_parent(csink))
-	{
-		g_printerr ("%s() - problems setting fakesink state\n", __FUNCTION__);
-		return FALSE;
-	}
-
-	g_print("%s() - linking cldemux related elements complete\n", __FUNCTION__);
-
-	return TRUE;
-}
-
 /**
  * Callback when playbin's source element changes
  */
@@ -1234,22 +1132,14 @@ static void log_bin_elements(GstBin* bin)
 	GstIterator* it = gst_bin_iterate_elements(bin);
 	gboolean done = FALSE;
 	GstElement *elem = NULL;
-#ifdef GSTREAMER_010
-	gpointer value;
-#else
 	GValue value = { 0 };
-#endif
 
 	while (!done)
 	{
 		switch (gst_iterator_next (it, &value))
 		{
 		case GST_ITERATOR_OK:
-#ifdef GSTREAMER_010
-			elem = GST_ELEMENT(value);
-#else
 			elem = (GstElement *) g_value_get_object (&value);
-#endif
 			g_print("Bin %s has element: %s\n",
 				GST_ELEMENT_NAME(GST_ELEMENT(bin)),
 				GST_ELEMENT_NAME(elem));
@@ -1264,9 +1154,7 @@ static void log_bin_elements(GstBin* bin)
 				g_print("Element: %s is linked to: ", GST_ELEMENT_NAME(elem));
 				elem = log_element_links(elem);
 			}
-#ifndef GSTREAMER_010
 			g_value_unset (&value);
-#endif
 			break;
 		case GST_ITERATOR_RESYNC:
 			gst_iterator_resync (it);
@@ -1292,21 +1180,13 @@ static GstElement* log_element_links(GstElement* elem)
 	GstPad* peer = NULL;
 	GstElement* ds_elem = NULL;
 	int cnt = 0;
-#ifdef GSTREAMER_010
-	gpointer value;
-#else
 	GValue value = { 0 };
-#endif
 	while (!done)
 	{
 		switch (gst_iterator_next (it, &value))
 		{
 		case GST_ITERATOR_OK:
-#ifdef GSTREAMER_010
-			pad = GST_PAD(value);
-#else
 			pad = (GstPad *) g_value_get_object (&value);
-#endif
 			// Got a pad, check if its linked
 			if (gst_pad_is_linked(pad))
 			{
@@ -1328,9 +1208,7 @@ static GstElement* log_element_links(GstElement* elem)
 					}
 				}
 			}
-#ifndef GSTREAMER_010
 			g_value_unset (&value);
-#endif
 			break;
 		case GST_ITERATOR_RESYNC:
 			gst_iterator_resync (it);
@@ -1475,45 +1353,23 @@ static gboolean perform_test_position(CustomData* data)
     int i = 0;
     gfloat rate = 1.0;
     long secs = g_wait_secs;
-    gint64 position = -1;
+    guint64 position = 0L;
 
-    for (i = 0; i < g_rate_change_cnt; i++)
+    g_print("%s - Performing position changes at 4, 1, 3, and 2 mins\n",  __FUNCTION__);
+
+    guint64 positions[] = {4L,1L,3L,2L};
+    for (i = 0; i < 4; i++)
     {
-        g_print("%s - Waiting %ld secs prior to position change %d of %d\n",
-                __FUNCTION__, secs, (i+1), g_rate_change_cnt);
+        g_print("%s - Waiting %ld secs prior to seeking to %llu minutes\n",
+                __FUNCTION__, secs, positions[i]);
         g_usleep(secs * 1000000L);
 
-        // Determine what format to use for query and seek
-        GstFormat format = GST_FORMAT_TIME;
-        if (g_format_bytes)
-        {
-            format = GST_FORMAT_BYTES;
-        }
-        g_print("%s - Test pipeline using format: %s\n",
-                __FUNCTION__, gst_format_get_name(format));
-
-        // Query current position
-        if (!perform_test_query(data, &position, format))
-        {
-            g_printerr("%s - Problems with query associated with test.\n",
-                    __FUNCTION__);
-            return FALSE;
-        }
-
-        // Adjust position by 60 secs
-        if ((i+1) % 2)
-        {
-            position = position + 15000000;
-            g_print("%s - Seeking forward to %lld\n", __FUNCTION__, position);
-        }
-        else
-        {
-            position =  position - 15000000;
-            g_print("%s - Seeking backward to %lld\n", __FUNCTION__, position);
-        }
+        position = positions[i] * NANOS_PER_MINUTE;
+        g_print("%s - Seeking to time position: %" GST_TIME_FORMAT "\n",
+                __FUNCTION__, GST_TIME_ARGS (position));
 
         // Initiate seek to perform test
-        if (!perform_test_seek(data, position, format, rate))
+        if (!perform_test_seek(data, position, GST_FORMAT_TIME, rate))
         {
             g_printerr("%s - Problems with seek associated with test.\n",
                     __FUNCTION__);
@@ -1529,34 +1385,34 @@ static gboolean perform_test_query(CustomData* data, gint64* position, GstFormat
 	g_print("%s - Query position in format: %s\n",
 			__FUNCTION__, gst_format_get_name(format));
 
-#ifdef GSTREAMER_010
-	if (!gst_element_query_position(data->pipeline, &format, position))
-#else
+	// Query current time
 	if (!gst_element_query_position(data->pipeline, format, position))
-#endif
 	{
 		g_printerr("%s - Unable to retrieve current position.\n",
 				__FUNCTION__);
 		return FALSE;
 	}
-	g_print("%s - Got current position in format %s: %llu\n",
-			__FUNCTION__, gst_format_get_name(format), *position);
+	if (format == GST_FORMAT_TIME)
+	{
+	    g_print("%s - Got current time position: %" GST_TIME_FORMAT "\n",
+            __FUNCTION__, GST_TIME_ARGS (*position));
+	}
 
 	// Query duration
 	if (!GST_CLOCK_TIME_IS_VALID (data->duration))
 	{
-#ifdef GSTREAMER_010
-		if (!gst_element_query_duration (data->pipeline, &fmt, &data->duration))
-#else
 		if (!gst_element_query_duration (data->pipeline, GST_FORMAT_TIME, &data->duration))
-#endif
 		{
 			g_printerr ("Could not query current duration.\n");
 			return FALSE;
 		}
 		else
 		{
-			g_print ("Current duration is: %llu\n", data->duration);
+		    if (format == GST_FORMAT_TIME)
+		    {
+		        g_print("%s - Got time duration: %" GST_TIME_FORMAT "\n",
+		            __FUNCTION__, GST_TIME_ARGS (data->duration));
+		    }
 		}
 	}
 
@@ -1565,11 +1421,7 @@ static gboolean perform_test_query(CustomData* data, gint64* position, GstFormat
 	GstFormat fmt;
 	gint64 start;
 	gint64 stop;
-#ifdef GSTREAMER_010
-	query = gst_query_new_segment(fmt);
-#else
 	query = gst_query_new_segment(GST_FORMAT_TIME);
-#endif
 	if (query != NULL)
 	{
 		gst_element_query(data->pipeline, query);
@@ -1586,7 +1438,7 @@ static gboolean perform_test_query(CustomData* data, gint64* position, GstFormat
 	// Print current position and total duration
 	if (!g_format_bytes)
 	{
-		g_print ("Position %" GST_TIME_FORMAT " / %" GST_TIME_FORMAT "\r",
+		g_print ("Current Time Position %" GST_TIME_FORMAT " / Total Duration %" GST_TIME_FORMAT "\r",
 			GST_TIME_ARGS (*position), GST_TIME_ARGS (data->duration));
 	}
 
@@ -1616,8 +1468,16 @@ static gboolean perform_test_seek(CustomData* data, gint64 start_position, GstFo
 	    stop_position = 0;
 	}
 
-	g_print("%s - Requesting rate of %4.1f at position %lld using format %s\n",
-			__FUNCTION__, rate, start_position, gst_format_get_name(format));
+	if (format == GST_FORMAT_TIME)
+	{
+        g_print("%s - Seeking to time position: %" GST_TIME_FORMAT " at rate %3.1f\n",
+                __FUNCTION__, GST_TIME_ARGS (start_position), rate);
+	}
+	else
+	{
+	    g_print("%s - Requesting rate of %4.1f at position %lld using format %s\n",
+	        __FUNCTION__, rate, start_position, gst_format_get_name(format));
+	}
 
 	// Initiate seek
 	if (!gst_element_seek (data->pipeline, rate,
