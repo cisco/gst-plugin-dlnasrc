@@ -44,10 +44,11 @@
 #include "config.h"
 #endif
 
+#include <ctype.h>
+#include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <ctype.h>
 #include <gst/gst.h>
 #include <glib-object.h>
 
@@ -671,7 +672,7 @@ static gboolean dlna_src_handle_query_duration(GstDlnaSrc *dlna_src, GstQuery *q
 			gst_query_set_duration(query, GST_FORMAT_BYTES, dlna_src->head_response->byte_seek_total);
 			ret = TRUE;
 
-			GST_LOG_OBJECT(dlna_src, "Duration in bytes for this content on the server: %lld",
+			GST_LOG_OBJECT(dlna_src, "Duration in bytes for this content on the server: %" PRIu64,
 					dlna_src->head_response->byte_seek_total);
 		}
 		else
@@ -687,7 +688,7 @@ static gboolean dlna_src_handle_query_duration(GstDlnaSrc *dlna_src, GstQuery *q
 			ret = TRUE;
 
 			GST_LOG_OBJECT(dlna_src,
-					"Duration in media time for this content on the server, npt: %s, nanosecs: %llu",
+					"Duration in media time for this content on the server, npt: %s, nanosecs: %" PRIu64,
 					dlna_src->head_response->time_seek_npt_duration_str,
 					dlna_src->head_response->time_seek_npt_duration);
 		}
@@ -748,7 +749,7 @@ static gboolean dlna_src_handle_query_seeking(GstDlnaSrc *dlna_src, GstQuery *qu
 					dlna_src->head_response->byte_seek_start, dlna_src->head_response->byte_seek_end);
 			ret = TRUE;
 
-			GST_INFO_OBJECT(dlna_src, "Byte seeks supported for this content by the server, start %lld, end %lld",
+			GST_INFO_OBJECT(dlna_src, "Byte seeks supported for this content by the server, start %" PRIu64 ", end %" PRIu64,
 					dlna_src->head_response->byte_seek_start, dlna_src->head_response->byte_seek_end);
 		}
 		else
@@ -765,7 +766,7 @@ static gboolean dlna_src_handle_query_seeking(GstDlnaSrc *dlna_src, GstQuery *qu
 					dlna_src->head_response->time_seek_npt_start, dlna_src->head_response->time_seek_npt_end);
 			ret = TRUE;
 
-			GST_INFO_OBJECT(dlna_src, "Time based seeks supported for this content by the server, start %lld, end %lld",
+			GST_INFO_OBJECT(dlna_src, "Time based seeks supported for this content by the server, start %" PRIu64 ", end %" PRIu64,
 					dlna_src->head_response->time_seek_npt_start, dlna_src->head_response->time_seek_npt_end);
 		}
 		else
@@ -824,7 +825,7 @@ static gboolean dlna_src_handle_query_segment(GstDlnaSrc *dlna_src, GstQuery *qu
 					dlna_src->head_response->byte_seek_start, dlna_src->head_response->byte_seek_end);
 			ret = TRUE;
 
-			GST_LOG_OBJECT(dlna_src, "Segment info in bytes for this content, rate %f, start %lld, end %lld",
+			GST_LOG_OBJECT(dlna_src, "Segment info in bytes for this content, rate %f, start %" PRIu64 ", end %" PRIu64,
 					dlna_src->rate, dlna_src->head_response->byte_seek_start, dlna_src->head_response->byte_seek_end);
 		}
 		else
@@ -840,7 +841,7 @@ static gboolean dlna_src_handle_query_segment(GstDlnaSrc *dlna_src, GstQuery *qu
 					dlna_src->head_response->time_seek_npt_start, dlna_src->head_response->time_seek_npt_end);
 			ret = TRUE;
 
-			GST_LOG_OBJECT(dlna_src, "Time based segment info for this content by the server, rate %f, start %lld, end %lld",
+			GST_LOG_OBJECT(dlna_src, "Time based segment info for this content by the server, rate %f, start %" PRIu64 ", end %" PRIu64,
 					dlna_src->rate, dlna_src->head_response->time_seek_npt_start, dlna_src->head_response->time_seek_npt_end);
 		}
 		else
@@ -888,7 +889,7 @@ static gboolean dlna_src_handle_query_convert(GstDlnaSrc *dlna_src, GstQuery *qu
 	gst_query_parse_convert (query, &src_fmt, &src_val, &dest_fmt, &dest_val);
 
 	// Print out info about conversion that has been requested
-	GST_INFO_OBJECT(dlna_src, "Got conversion query: src fmt: %s, dest fmt: %s, src val: %lld, dest: val %lld",
+	GST_INFO_OBJECT(dlna_src, "Got conversion query: src fmt: %s, dest fmt: %s, src val: %" PRIu64 ", dest: val %" PRIu64,
 			gst_format_get_name(src_fmt), gst_format_get_name(dest_fmt), src_val, dest_val);
 
 	gint64 start_byte = 0;
@@ -968,7 +969,7 @@ dlna_src_handle_event_seek(GstDlnaSrc *dlna_src, GstPad* pad, GstEvent* event)
     		(gint64*)&start, (GstSeekType*)&stop_type, (gint64*)&stop);
 
     GST_INFO_OBJECT(dlna_src,
-    		"Got Seek event: rate: %3.1g, format: %s, flags: %d, start type: %d,  start: %lld, stop type: %d, stop: %lld",
+    		"Got Seek event: rate: %3.1g, format: %s, flags: %d, start type: %d,  start: %" PRIu64 ", stop type: %d, stop: %" PRIu64,
     		rate, gst_format_get_name(format), flags, start_type, start, stop_type, stop);
 
     // Do HEAD request to convert start type into
@@ -1111,7 +1112,7 @@ dlna_src_is_change_valid(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, gu
 				(start > dlna_src->head_response->byte_seek_end))
 		{
 			GST_ERROR_OBJECT(dlna_src,
-					"Specified start byte %lld is not valid, valid range: %llu to %llu",
+					"Specified start byte %" PRIu64 " is not valid, valid range: %" PRIu64 " to %" PRIu64,
 					start, dlna_src->head_response->byte_seek_start, dlna_src->head_response->byte_seek_end);
 			return FALSE;
 		}
@@ -1123,7 +1124,7 @@ dlna_src_is_change_valid(GstDlnaSrc *dlna_src, gfloat rate, GstFormat format, gu
 				(start > dlna_src->head_response->time_seek_npt_end))
 		{
 			GST_ERROR_OBJECT(dlna_src,
-					"Specified start time %lld is not valid, valid range: %llu to %llu",
+					"Specified start time %" PRIu64 " is not valid, valid range: %" PRIu64 " to %" PRIu64,
 					start, dlna_src->head_response->time_seek_npt_start, dlna_src->head_response->time_seek_npt_end);
 			return FALSE;
 		}
@@ -1237,7 +1238,7 @@ dlna_src_formulate_extra_headers(GstDlnaSrc *dlna_src, gfloat rate, GstFormat fo
 	if (GST_FORMAT_BYTES == format)
 	{
 		// Include range header if format is bytes
-		sprintf((gchar*)&br_field_value[0], "%s%llu-", br_field_value_prefix, start);
+		sprintf((gchar*)&br_field_value[0], "%s%" PRIu64 "-", br_field_value_prefix, start);
 		GST_INFO_OBJECT(dlna_src, "Set range header value: %s", br_field_value);
 
 		// *TODO* - handle DTCP
@@ -1917,14 +1918,14 @@ dlna_src_head_request_formulate(GstDlnaSrc *dlna_src, gint64 start_npt, gint64 s
     {
         strcat(requestStr, "bytes=");
         (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-        sprintf(tmpStr, "%lld", start_byte);
+        sprintf(tmpStr, "%" PRIu64, start_byte);
         strcat(requestStr, tmpStr);
     }
     else
     {
         strcat(requestStr, "npt=");
         (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-        sprintf(tmpStr, "%lld", start_npt);
+        sprintf(tmpStr, "%" PRIu64, start_npt);
         strcat(requestStr, tmpStr);
     }
     strcat(requestStr, "-");
@@ -2391,11 +2392,11 @@ dlna_src_head_response_parse_time_seek(GstDlnaSrc *dlna_src, gint idx, gchar* fi
 		{
 			tmp_str1++;
 			// *TODO* - add logic to deal with '*'
-			if ((ret_code = sscanf(tmp_str1, "%llu-%llu/%llu",
+			if ((ret_code = sscanf(tmp_str1, "%" PRIu64 "-%" PRIu64 "/%" PRIu64,
 					&ullong1, &ullong2, &ullong3)) != 3)
 			{
 				GST_WARNING_OBJECT(dlna_src,
-					"Problems parsing BYTES from HEAD response field hdr %s, idx: %d, value: %s, retcode: %d, ullong: %llu, %llu, %llu",
+					"Problems parsing BYTES from HEAD response field hdr %s, idx: %d, value: %s, retcode: %d, ullong: %" PRIu64 ", %" PRIu64 ", %" PRIu64,
 					HEAD_RESPONSE_HDRS[idx], idx, tmp_str1, ret_code, ullong1, ullong2, ullong3);
 			}
 			else
@@ -2448,11 +2449,11 @@ dlna_src_head_response_parse_dtcp_range(GstDlnaSrc *dlna_src, gint idx, gchar* f
 	{
 		tmp_str1 = tmp_str2 + strlen(TIME_SEEK_HDRS[HDR_IDX_BYTES] + 1) + 1;
 		// *TODO* - add logic to deal with '*'
-		if ((ret_code = sscanf(tmp_str1, "%llu-%llu/%llu",
+		if ((ret_code = sscanf(tmp_str1, "%" PRIu64 "-%" PRIu64 "/%" PRIu64,
 				&ullong1, &ullong2, &ullong3)) != 3)
 		{
 			GST_WARNING_OBJECT(dlna_src,
-					"Problems parsing BYTES from HEAD response field hdr %s, idx: %d, value: %s, retcode: %d, ullong: %llu, %llu, %llu",
+					"Problems parsing BYTES from HEAD response field hdr %s, idx: %d, value: %s, retcode: %d, ullong: %" PRIu64 ", %" PRIu64 ", %" PRIu64,
 					HEAD_RESPONSE_HDRS[idx], idx, tmp_str1, ret_code, ullong1, ullong2, ullong3);
 		}
 		else
@@ -3030,7 +3031,7 @@ dlna_src_head_response_struct_to_str(GstDlnaSrc *dlna_src)
     {
     	strcat(structStr, dlna_src->head_response->time_seek_npt_start_str);
         (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-        sprintf(tmpStr, " - %llu", dlna_src->head_response->time_seek_npt_start);
+        sprintf(tmpStr, " - %" PRIu64, dlna_src->head_response->time_seek_npt_start);
         strcat(structStr, tmpStr);
     }
     strcat(structStr, "\n");
@@ -3040,7 +3041,7 @@ dlna_src_head_response_struct_to_str(GstDlnaSrc *dlna_src)
     {
     	strcat(structStr, dlna_src->head_response->time_seek_npt_end_str);
     	(void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-    	sprintf(tmpStr, " - %llu", dlna_src->head_response->time_seek_npt_end);
+    	sprintf(tmpStr, " - %" PRIu64, dlna_src->head_response->time_seek_npt_end);
     	strcat(structStr, tmpStr);
     }
     strcat(structStr, "\n");
@@ -3050,26 +3051,26 @@ dlna_src_head_response_struct_to_str(GstDlnaSrc *dlna_src)
     {
     	strcat(structStr, dlna_src->head_response->time_seek_npt_duration_str);
     	(void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-    	sprintf(tmpStr, " - %llu", dlna_src->head_response->time_seek_npt_duration);
+    	sprintf(tmpStr, " - %" PRIu64, dlna_src->head_response->time_seek_npt_duration);
     	strcat(structStr, tmpStr);
     }
     strcat(structStr, "\n");
 
     strcat(structStr, "Byte Seek Start: ");
     (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-    sprintf(tmpStr, "%llu", dlna_src->head_response->byte_seek_start);
+    sprintf(tmpStr, "%" PRIu64, dlna_src->head_response->byte_seek_start);
     strcat(structStr, tmpStr);
     strcat(structStr, "\n");
 
     strcat(structStr, "Byte Seek End: ");
     (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-    sprintf(tmpStr, "%llu", dlna_src->head_response->byte_seek_end);
+    sprintf(tmpStr, "%" PRIu64, dlna_src->head_response->byte_seek_end);
     strcat(structStr, tmpStr);
     strcat(structStr, "\n");
 
     strcat(structStr, "Byte Seek Total: ");
     (void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-    sprintf(tmpStr, "%llu", dlna_src->head_response->byte_seek_total);
+    sprintf(tmpStr, "%" PRIu64, dlna_src->head_response->byte_seek_total);
     strcat(structStr, tmpStr);
     strcat(structStr, "\n");
 
@@ -3077,19 +3078,19 @@ dlna_src_head_response_struct_to_str(GstDlnaSrc *dlna_src)
     {
     	strcat(structStr, "DTCP Range Start: ");
     	(void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-    	sprintf(tmpStr, "%lld", dlna_src->head_response->dtcp_range_start);
+    	sprintf(tmpStr, "%" PRIu64, dlna_src->head_response->dtcp_range_start);
     	strcat(structStr, tmpStr);
     	strcat(structStr, "\n");
 
     	strcat(structStr, "DTCP Range End: ");
     	(void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-    	sprintf(tmpStr, "%lld", dlna_src->head_response->dtcp_range_end);
+    	sprintf(tmpStr, "%" PRIu64, dlna_src->head_response->dtcp_range_end);
     	strcat(structStr, tmpStr);
     	strcat(structStr, "\n");
 
     	strcat(structStr, "DTCP Range Total: ");
     	(void) memset((gchar *)&tmpStr, 0, sizeof(tmpStr));
-    	sprintf(tmpStr, "%lld", dlna_src->head_response->dtcp_range_total);
+    	sprintf(tmpStr, "%" PRIu64, dlna_src->head_response->dtcp_range_total);
     	strcat(structStr, tmpStr);
     	strcat(structStr, "\n");
     }
@@ -3204,7 +3205,7 @@ dlna_src_npt_to_nanos(GstDlnaSrc *dlna_src, gchar* string, guint64* media_time_n
         *media_time_nanos = ((hours * 60 * 60 * 1000) + (mins * 60 * 1000) + (secs * 1000)) * 1000000L;
         ret = TRUE;
 
-    	GST_LOG_OBJECT(dlna_src, "Convert npt str %s hr=%d:mn=%d:s=%f into nanosecs: %llu\n",
+    	GST_LOG_OBJECT(dlna_src, "Convert npt str %s hr=%d:mn=%d:s=%f into nanosecs: %" PRIu64 "\n",
     			string, hours, mins, secs, *media_time_nanos);
     }
     else if (sscanf(string, "%f", &secs) == 1)
@@ -3212,7 +3213,7 @@ dlna_src_npt_to_nanos(GstDlnaSrc *dlna_src, gchar* string, guint64* media_time_n
         // Short form
         *media_time_nanos = (secs * 1000) * 1000000L;
         ret = TRUE;
-    	GST_LOG_OBJECT(dlna_src, "Convert npt str %s secs=%f into nanosecs: %llu\n",
+    	GST_LOG_OBJECT(dlna_src, "Convert npt str %s secs=%f into nanosecs: %" PRIu64 "\n",
     			string, secs, *media_time_nanos);
     }
     else
