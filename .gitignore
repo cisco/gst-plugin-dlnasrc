@@ -5,6 +5,7 @@
 *.Plo
 *~
 .deps
+.dirstamp
 .libs
 .project
 aclocal.m4
