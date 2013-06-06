@@ -41,7 +41,6 @@
  */
 
 #include <gst/gst.h>
-#include <inttypes.h>
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
@@ -1361,7 +1360,7 @@ static gboolean perform_test_position(CustomData* data)
     guint64 positions[] = {4L,1L,3L,2L};
     for (i = 0; i < 4; i++)
     {
-        g_print("%s - Waiting %ld secs prior to seeking to %" PRIu64 " minutes\n",
+        g_print("%s - Waiting %ld secs prior to seeking to %" G_GUINT64_FORMAT " minutes\n",
                 __FUNCTION__, secs, positions[i]);
         g_usleep(secs * 1000000L);
 
@@ -1476,7 +1475,7 @@ static gboolean perform_test_seek(CustomData* data, gint64 start_position, GstFo
 	}
 	else
 	{
-	    g_print("%s - Requesting rate of %4.1f at position %" PRIu64 " using format %s\n",
+	    g_print("%s - Requesting rate of %4.1f at position %" G_GUINT64_FORMAT " using format %s\n",
 	        __FUNCTION__, rate, start_position, gst_format_get_name(format));
 	}
 
