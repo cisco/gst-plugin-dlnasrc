@@ -60,9 +60,6 @@
 
 #include "gstdlnasrc.h"
 
-// Uncomment when testing with server that does not support HEAD requests.
-//#define NO_HEAD_REQUEST
-
 /* props */
 enum
 {
@@ -1607,20 +1604,11 @@ dlna_src_init_uri(GstDlnaSrc *dlna_src, const gchar* value)
         return FALSE;
     }
 
-#ifndef NO_HEAD_REQUEST
-    GST_INFO_OBJECT(dlna_src, "Using HEAD Request");
+    GST_INFO_OBJECT(dlna_src, "Issuing HEAD Request");
     if (!dlna_src_head_request(dlna_src, 0, 0))
     {
-        GST_ERROR_OBJECT(dlna_src, "Problems with HEAD request/response");
-        if (dlna_src->uri) {
-            free(dlna_src->uri);
-        }
-        dlna_src->uri = NULL;
-        return FALSE;
+        GST_INFO_OBJECT(dlna_src, "Unable to issue HEAD request & get HEAD response");
     }
-#else
-    GST_INFO_OBJECT(dlna_src, "Not using HEAD Request");
-#endif
 
     return TRUE;
 }
@@ -1790,12 +1778,16 @@ dlna_src_open_socket(GstDlnaSrc *dlna_src)
 
     gint ret = 0;
     gchar portStr[8] = {0};
-    snprintf(portStr, sizeof(portStr), "%d", dlna_src->uri_port);
+    if (dlna_src->uri_port > 0)
+    {
+        snprintf(portStr, sizeof(portStr), "%d", dlna_src->uri_port);
+    }
 
     struct addrinfo* srvrInfo = NULL;
     if (0 != (ret = getaddrinfo(dlna_src->uri_addr, portStr, &hints, &srvrInfo)))
     {
-        GST_ERROR_OBJECT(dlna_src, "getaddrinfo[%s]\n", gai_strerror(ret));
+        GST_ERROR_OBJECT(dlna_src, "getaddrinfo[%s] using addr %s, port %d\n", gai_strerror(ret),
+                dlna_src->uri_addr, dlna_src->uri_port);
         return FALSE;
     }
 
