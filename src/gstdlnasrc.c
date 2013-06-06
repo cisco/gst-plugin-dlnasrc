@@ -653,7 +653,7 @@ static gboolean dlna_src_handle_query_duration(GstDlnaSrc *dlna_src, GstQuery *q
     if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
             (dlna_src->head_response->content_features == NULL))
     {
-        GST_ERROR_OBJECT(dlna_src, "No URI and/or HEAD response info, unable to handle query");
+        GST_LOG_OBJECT(dlna_src, "No URI and/or HEAD response info, unable to handle query");
         return FALSE;
     }
 
@@ -909,7 +909,7 @@ static gboolean dlna_src_handle_query_convert(GstDlnaSrc *dlna_src, GstQuery *qu
     // Formulate and issue HEAD request
     if (!dlna_src_head_request(dlna_src, start_npt, start_byte))
     {
-        GST_ERROR_OBJECT(dlna_src, "Problems with HEAD request");
+        GST_WARNING_OBJECT(dlna_src, "Problems with HEAD request");
         return FALSE;
     }
 
@@ -1607,7 +1607,7 @@ dlna_src_init_uri(GstDlnaSrc *dlna_src, const gchar* value)
     GST_INFO_OBJECT(dlna_src, "Issuing HEAD Request");
     if (!dlna_src_head_request(dlna_src, 0, 0))
     {
-        GST_INFO_OBJECT(dlna_src, "Unable to issue HEAD request & get HEAD response");
+        GST_WARNING_OBJECT(dlna_src, "Unable to issue HEAD request & get HEAD response");
     }
 
     return TRUE;
@@ -1619,62 +1619,42 @@ dlna_src_head_request(GstDlnaSrc *dlna_src, gint64 start_npt, gint64 start_byte)
     // Open socket to send HEAD request
     if (!dlna_src_open_socket(dlna_src))
     {
-        GST_ERROR_OBJECT(dlna_src, "Problems creating socket to send HEAD request\n");
-        if (dlna_src->uri) {
-            free(dlna_src->uri);
-        }
-        dlna_src->uri = NULL;
+        GST_WARNING_OBJECT(dlna_src, "Problems creating socket to send HEAD request\n");
         return FALSE;
     }
 
     // Formulate HEAD request
     if (!dlna_src_head_request_formulate(dlna_src, start_npt, start_byte))
     {
-        GST_ERROR_OBJECT(dlna_src, "Problems formulating HEAD request\n");
-        if (dlna_src->uri) {
-            free(dlna_src->uri);
-        }
-        dlna_src->uri = NULL;
+        GST_WARNING_OBJECT(dlna_src, "Problems formulating HEAD request\n");
         return FALSE;
     }
 
     // Send HEAD Request and read response
     if (!dlna_src_head_request_issue(dlna_src))
     {
-        GST_ERROR_OBJECT(dlna_src, "Problems sending and receiving HEAD request\n");
-        if (dlna_src->uri) {
-            free(dlna_src->uri);
-        }
-        dlna_src->uri = NULL;
+        GST_WARNING_OBJECT(dlna_src, "Problems sending and receiving HEAD request\n");
         return FALSE;
     }
 
     // Close socket
     if (!dlna_src_close_socket(dlna_src))
     {
-        GST_ERROR_OBJECT(dlna_src, "Problems closing socket used to send HEAD request\n");
+        GST_WARNING_OBJECT(dlna_src, "Problems closing socket used to send HEAD request\n");
     }
 
     // Parse HEAD response to gather info about URI content item
     if (!dlna_src_head_response_parse(dlna_src))
     {
-        GST_ERROR_OBJECT(dlna_src, "Problems parsing HEAD response\n");
-        if (dlna_src->uri) {
-            free(dlna_src->uri);
-        }
-        dlna_src->uri = NULL;
+        GST_WARNING_OBJECT(dlna_src, "Problems parsing HEAD response\n");
         return FALSE;
     }
 
     // Make sure return code from HEAD response is OK
     if ((dlna_src->head_response->ret_code != 200) && (dlna_src->head_response->ret_code != 201))
     {
-        GST_ERROR_OBJECT(dlna_src, "Error code received in HEAD response: %d %s\n",
+        GST_WARNING_OBJECT(dlna_src, "Error code received in HEAD response: %d %s\n",
                 dlna_src->head_response->ret_code, dlna_src->head_response->ret_msg);
-        if (dlna_src->uri) {
-            free(dlna_src->uri);
-        }
-        dlna_src->uri = NULL;
         return FALSE;
     }
     return TRUE;
