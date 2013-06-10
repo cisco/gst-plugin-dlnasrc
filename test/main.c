@@ -1245,6 +1245,8 @@ static void perform_test(CustomData* data)
     }
     else if (g_requested_rate == 0)
     {
+        g_usleep(g_wait_secs * 1000000L);
+
         g_print("%s - Pausing pipeline for %d secs\n", __FUNCTION__, g_wait_secs);
         set_pipeline_state (data, GST_STATE_PAUSED, g_state_change_timeout_secs);
 
