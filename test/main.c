@@ -565,7 +565,8 @@ static GstElement* create_simple_pipeline()
             NULL);
 
     // Link the elements together
-    if (!gst_element_link_many (src, passthru, sink,
+    //if (!gst_element_link_many (src, passthru, sink,
+    if (!gst_element_link_many (src, sink,
             NULL))
     {
         g_printerr ("Problems linking elements together\n");
