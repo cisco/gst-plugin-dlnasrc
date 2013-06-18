@@ -1465,7 +1465,7 @@ dlna_src_set_uri(GstDlnaSrc *dlna_src, const gchar* value)
         }
         else
         {
-            GST_INFO_OBJECT(dlna_src, "Origional http src pad did have parent: %s",
+            GST_INFO_OBJECT(dlna_src, "Original http src pad did have parent: %s",
                     GST_ELEMENT_NAME(gst_pad_get_parent(pad)));
         }
 
