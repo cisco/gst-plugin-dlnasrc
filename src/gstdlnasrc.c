@@ -1045,19 +1045,9 @@ dlna_src_handle_event_seek(GstDlnaSrc *dlna_src, GstPad* pad, GstEvent* event)
     g_object_set_property(G_OBJECT(dlna_src->http_src), "extra-headers", &struct_value);
     GST_LOG_OBJECT(dlna_src, "set extra hdrs of http src");
 
-    if (1)
-    {
-        GST_INFO_OBJECT(dlna_src,
-                "returning false to make sure souphttpsrc gets chance to process");
-        return FALSE;
-    }
-    else
-    {
-        // *TODO* - if we don't give soup src a chance we don't do what needs to be done
-        GST_INFO_OBJECT(dlna_src,
-                "returning true so souphttpsrc doesn't have to process");
-        return TRUE;
-    }
+    GST_INFO_OBJECT(dlna_src,
+            "returning false to make sure souphttpsrc gets chance to process");
+    return FALSE;
 }
 
 /**
