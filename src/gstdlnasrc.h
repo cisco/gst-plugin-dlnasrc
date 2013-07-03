@@ -36,12 +36,7 @@ G_BEGIN_DECLS
 #define GST_IS_DLNA_SRC_CLASS(klass) \
         (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_DLNA_SRC))
 
-#define VOLUME_MAX_DOUBLE 10.0
 #define PLAYSPEEDS_MAX_CNT 64
-
-#define DEFAULT_RX_URI  "http://0.0.0.0:4140"
-#define DEFAULT_RX_ADDR "0.0.0.0"
-#define DEFAULT_RX_PORT 4140
 
 typedef struct _GstDlnaSrc GstDlnaSrc;
 typedef struct _GstDlnaSrcClass GstDlnaSrcClass;
