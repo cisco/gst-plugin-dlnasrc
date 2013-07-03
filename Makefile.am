@@ -29,9 +29,3 @@ src_libgstdlnasrc_la_LIBTOOLFLAGS = --tag=disable-static
 
 # headers we need but don't want installed
 noinst_HEADERS = src/gstdlnasrc.h
-
-# test folder
-bin_PROGRAMS = test/test
-test_test_SOURCES = test/main.c
-test_test_CFLAGS = $(GST_CFLAGS)
-test_test_LDADD = $(GST_LIBS) -lm
