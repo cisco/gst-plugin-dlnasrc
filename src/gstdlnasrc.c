@@ -75,7 +75,6 @@ enum
 
 // Constant names for elements in this src
 #define ELEMENT_NAME_SOUP_HTTP_SRC "soup-http-source"
-//#define ELEMENT_NAME_FILE_SINK "file-sink"
 #define ELEMENT_NAME_DTCP_DECRYPTER "dtcp-decrypter"
 
 #define MAX_HTTP_BUF_SIZE 1024
@@ -390,7 +389,7 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
       gst_element_factory_make ("souphttpsrc", ELEMENT_NAME_SOUP_HTTP_SRC);
   if (!dlna_src->http_src) {
     GST_ERROR_OBJECT (dlna_src,
-        "The http soup source element could not be created.\n");
+        "The http soup source element could not be created.");
     return;
   }
   // Add source element to the src
@@ -538,7 +537,7 @@ gst_dlna_src_event (GstPad * pad, GstObject * parent, GstEvent * event)
     case GST_EVENT_FLUSH_START:
       GST_DEBUG_OBJECT (dlna_src, "Got src event: %s",
           GST_EVENT_TYPE_NAME (event));
-      break;                    // *TODO* - should we really exit when errors are encountered?
+      break;
 
     case GST_EVENT_FLUSH_STOP:
       GST_DEBUG_OBJECT (dlna_src, "Got src event: %s",
