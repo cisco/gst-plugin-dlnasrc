@@ -501,7 +501,7 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
         }
 
         // Convert GArray into GValue
-        memset (value, 0, sizeof (value));
+        memset (value, 0, sizeof (*value));
         g_value_init (value, G_TYPE_ARRAY);
         g_value_take_boxed (value, garray);
       }
