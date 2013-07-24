@@ -296,6 +296,9 @@ static gboolean dlna_src_formulate_extra_headers (GstDlnaSrc * dlna_src,
 static gboolean dlna_src_npt_to_nanos (GstDlnaSrc * dlna_src, gchar * string,
     guint64 * media_time_nanos);
 
+static gboolean dlna_src_bytes_to_secs (GstDlnaSrc * dlna_src, guint64 byte_position,
+        guint64* nano_secs);
+
 
 #define gst_dlna_src_parent_class parent_class
 
@@ -975,41 +978,44 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
   dlna_src->requested_start = start;
   dlna_src->requested_stop = stop;
 
-  // Create necessary extra headers for http src so change can be requested
-  GstStructure *extra_hdrs_struct = NULL;
+  if ((dlna_src->requested_rate != 1.0) || (dlna_src->requested_format == GST_FORMAT_TIME))
+  {
+      // Create necessary extra headers for http src so change can be requested
+      GstStructure *extra_hdrs_struct = NULL;
 
-  if (!dlna_src_formulate_extra_headers (dlna_src, dlna_src->requested_rate,
-          dlna_src->requested_format,
-          dlna_src->requested_start, &extra_hdrs_struct)) {
-    GST_ERROR_OBJECT (dlna_src, "Problem formulating extra headers");
-    // Returning true to prevent further processing
-    return TRUE;
-  }
-  if (extra_hdrs_struct == NULL) {
-    GST_ERROR_OBJECT (dlna_src, "Extra headers structure was NULL");
-    // Returning true to prevent further processing
-    return TRUE;
-  } else {
-    GST_LOG_OBJECT (dlna_src,
-        "Successfully formulated extra headers structure");
-  }
+      if (!dlna_src_formulate_extra_headers (dlna_src, dlna_src->requested_rate,
+              dlna_src->requested_format,
+              dlna_src->requested_start, &extra_hdrs_struct)) {
+        GST_ERROR_OBJECT (dlna_src, "Problem formulating extra headers");
+        // Returning true to prevent further processing
+        return TRUE;
+      }
+      if (extra_hdrs_struct == NULL) {
+        GST_ERROR_OBJECT (dlna_src, "Extra headers structure was NULL");
+        // Returning true to prevent further processing
+        return TRUE;
+      } else {
+        GST_LOG_OBJECT (dlna_src,
+            "Successfully formulated extra headers structure");
+      }
 
-  // Convert structure to GValue in order to set property
-  GValue struct_value = { 0 };
-  g_value_init (&struct_value, GST_TYPE_STRUCTURE);
-  gst_value_set_structure (&struct_value, extra_hdrs_struct);
-  const GstStructure *s = gst_value_get_structure (&struct_value);
-  if (s == NULL) {
-    GST_ERROR_OBJECT (dlna_src, "Value for extra headers was NULL");
-    return TRUE;
-  } else {
-    GST_LOG_OBJECT (dlna_src, "Got extra header struct from gvalue");
-  }
-  g_object_set_property (G_OBJECT (dlna_src->http_src), "extra-headers",
-      &struct_value);
+      // Convert structure to GValue in order to set property
+      GValue struct_value = { 0 };
+      g_value_init (&struct_value, GST_TYPE_STRUCTURE);
+      gst_value_set_structure (&struct_value, extra_hdrs_struct);
+      const GstStructure *s = gst_value_get_structure (&struct_value);
+      if (s == NULL) {
+        GST_ERROR_OBJECT (dlna_src, "Value for extra headers was NULL");
+        return TRUE;
+      } else {
+        GST_LOG_OBJECT (dlna_src, "Got extra header struct from gvalue");
+      }
+      g_object_set_property (G_OBJECT (dlna_src->http_src), "extra-headers",
+          &struct_value);
 
-  // *TODO* - is this necessary????
-  //gst_structure_free(extra_hdrs_struct);
+      // *TODO* - is this necessary????
+      //gst_structure_free(extra_hdrs_struct);
+  }
 
   GST_INFO_OBJECT (dlna_src,
       "returning false to make sure souphttpsrc gets chance to process");
@@ -1135,16 +1141,14 @@ dlna_src_formulate_extra_headers (GstDlnaSrc * dlna_src, gfloat rate,
     GstFormat format, guint64 start, GstStructure ** headers)
 {
   gchar *ps_field_name = "PlaySpeed.dlna.org";
-  gchar *ps_field_value_prefix = "speed = ";
+  gchar *ps_field_value_prefix = "speed=";
   gchar ps_field_value[64];
 
   gchar *ts_field_name = "TimeSeekRange.dlna.org";
-  gchar *ts_field_value_prefix = "npt = ";
+  gchar *ts_field_value_prefix = "npt=";
   gchar ts_field_value[64];
 
-  gchar *br_field_name = "Range";
-  gchar *br_field_value_prefix = "bytes = ";
-  gchar br_field_value[64];
+  guint64 start_npt = 0;
 
   // Setup header to request playspeed, only necessary if rate is not 1
   if (rate != 1.0) {
@@ -1174,55 +1178,44 @@ dlna_src_formulate_extra_headers (GstDlnaSrc * dlna_src, gfloat rate,
         "Not including playspeed header since rate = 1.0");
   }
 
+  // If start is in bytes, convert to time
   if (GST_FORMAT_BYTES == format) {
-    // Include range header if format is bytes
-    sprintf ((gchar *) & br_field_value[0], "%s%" G_GUINT64_FORMAT "-",
-        br_field_value_prefix, start);
-    GST_INFO_OBJECT (dlna_src, "Set range header value: %s", br_field_value);
-
-    // *TODO* - handle DTCP
-  } else if (GST_FORMAT_TIME == format) {
-    // Include time seek header if format is time
-    // Setup time seek header
-
-    // Convert supplied start time in nanosecs into seconds to use as npt value
-    gint startSecs = start / 1000000000L;
-
-    sprintf ((gchar *) & ts_field_value[0], "%s%d-", ts_field_value_prefix,
-        startSecs);
-    GST_INFO_OBJECT (dlna_src, "Set time seek header value: %s",
-        ts_field_value);
-  } else {
-    GST_ERROR_OBJECT (dlna_src, "Unsupported format type supplied: %d", format);
-    return FALSE;
+      if (!dlna_src_bytes_to_secs(dlna_src, start, &start_npt)) {
+          GST_WARNING_OBJECT (dlna_src,
+              "Unable to convert supplied byte position to time");
+          return FALSE;
+      }
+      GST_INFO_OBJECT (dlna_src,
+          "Converted start byte position of %" G_GUINT64_FORMAT " to %" G_GUINT64_FORMAT " nanosecs",
+          start, start_npt);
+      start = start_npt;
   }
+
+  // Convert supplied start time in nanosecs into seconds to use as npt value
+  gfloat startSecs = start / 1000000000L;
+
+  sprintf ((gchar *) & ts_field_value[0], "%s%.1f-", ts_field_value_prefix,
+          startSecs);
+  GST_INFO_OBJECT (dlna_src, "Set time seek header start time value: %s",
+          ts_field_value);
 
   // Create GstStructure & GValue which contains extra headers
   if (rate != 1.0) {
-    // Include playspeed header for either byte or time
-    if (GST_FORMAT_BYTES == format) {
-      *headers = gst_structure_new ("extraHdrsStruct",
-          ps_field_name,
-          G_TYPE_STRING,
-          &ps_field_value, br_field_name, G_TYPE_STRING, &br_field_value, NULL);
-    } else {
-      *headers = gst_structure_new ("extraHdrsStruct",
-          ps_field_name,
-          G_TYPE_STRING,
-          &ps_field_value, ts_field_name, G_TYPE_STRING, &ts_field_value, NULL);
-    }
+    // Include playspeed header
+    *headers = gst_structure_new ("extraHdrsStruct",
+      "transferMode.dlna.org", G_TYPE_STRING, "Streaming",
+      ps_field_name, G_TYPE_STRING, &ps_field_value,
+      ts_field_name, G_TYPE_STRING, &ts_field_value,
+      NULL);
   } else {
-    if (GST_FORMAT_BYTES == format) {
-      *headers = gst_structure_new ("extraHdrsStruct",
-          br_field_name, G_TYPE_STRING, &br_field_value, NULL);
-    } else {
-      *headers = gst_structure_new ("extraHdrsStruct",
-          ts_field_name, G_TYPE_STRING, &ts_field_value, NULL);
-    }
+    *headers = gst_structure_new ("extraHdrsStruct",
+      "transferMode.dlna.org", G_TYPE_STRING, "Streaming",
+      ts_field_name, G_TYPE_STRING, &ts_field_value,
+      NULL);
   }
 
   if (*headers == NULL) {
-    GST_ERROR_OBJECT (dlna_src, "Unable to create extra headers structure");
+    GST_WARNING_OBJECT (dlna_src, "Did not create extra headers structure");
     return FALSE;
   } else {
     GST_LOG_OBJECT (dlna_src, "Created extra headers structure");
@@ -3041,6 +3034,35 @@ dlna_src_npt_to_nanos (GstDlnaSrc * dlna_src, gchar * string,
   } else {
     GST_ERROR_OBJECT (dlna_src,
         "Problems converting npt str into nanosecs: %s\n", string);
+  }
+
+  return ret;
+}
+
+/**
+ * Converts supplied byte position to npt time in nanoseconds using values for total
+ * size in bytes and total duration in nanoseconds.
+ *
+ * @param   dlna_src        this element instance
+ * @param   byte_position   determine the npt for this byte position
+ * @param   nano_secs       npt in nanosecs which represents the supplied byte position
+ *
+ * @return  true if conversion was performed, false otherwise
+ */
+static gboolean
+dlna_src_bytes_to_secs (GstDlnaSrc * dlna_src, guint64 byte_position, guint64* nano_secs)
+{
+  gboolean ret = FALSE;
+
+  // Check for necessary info to perform conversion
+  if ((dlna_src->head_response != NULL) &&
+      (dlna_src->head_response->byte_seek_total > 0) &&
+      (dlna_src->head_response->time_seek_npt_duration > 0)) {
+
+      // Approximate time based on supplied byte position using total time and byte from HEAD response
+      *nano_secs = (byte_position * dlna_src->head_response->time_seek_npt_duration) /
+              dlna_src->head_response->byte_seek_total;
+      ret = TRUE;
   }
 
   return ret;
