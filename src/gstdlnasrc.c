@@ -955,7 +955,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
       (GstSeekType *) & stop_type, (gint64 *) & stop);
 
   GST_INFO_OBJECT (dlna_src,
-      "Got Seek event: rate: %3.1g, format: %s, flags: %d, start type: %d,  start: %"
+      "Got Seek event: rate: %3.1f, format: %s, flags: %d, start type: %d,  start: %"
       G_GUINT64_FORMAT ", stop type: %d, stop: %"
       G_GUINT64_FORMAT, rate, gst_format_get_name (format),
       flags, start_type, start, stop_type, stop);
