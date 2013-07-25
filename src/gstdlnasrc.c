@@ -296,9 +296,6 @@ static gboolean dlna_src_formulate_extra_headers (GstDlnaSrc * dlna_src,
 static gboolean dlna_src_npt_to_nanos (GstDlnaSrc * dlna_src, gchar * string,
     guint64 * media_time_nanos);
 
-static gboolean dlna_src_bytes_to_secs (GstDlnaSrc * dlna_src, guint64 byte_position,
-        guint64* nano_secs);
-
 
 #define gst_dlna_src_parent_class parent_class
 
@@ -978,7 +975,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
   dlna_src->requested_start = start;
   dlna_src->requested_stop = stop;
 
-  if ((dlna_src->requested_rate != 1.0) || (dlna_src->requested_format == GST_FORMAT_TIME))
+  if (dlna_src->requested_rate != 1.0)
   {
       // Create necessary extra headers for http src so change can be requested
       GstStructure *extra_hdrs_struct = NULL;
@@ -1144,12 +1141,6 @@ dlna_src_formulate_extra_headers (GstDlnaSrc * dlna_src, gfloat rate,
   gchar *ps_field_value_prefix = "speed=";
   gchar ps_field_value[64];
 
-  gchar *ts_field_name = "TimeSeekRange.dlna.org";
-  gchar *ts_field_value_prefix = "npt=";
-  gchar ts_field_value[64];
-
-  guint64 start_npt = 0;
-
   // Setup header to request playspeed, only necessary if rate is not 1
   if (rate != 1.0) {
     // Get string representation of rate
@@ -1173,45 +1164,14 @@ dlna_src_formulate_extra_headers (GstDlnaSrc * dlna_src, gfloat rate,
         rateStr);
     GST_INFO_OBJECT (dlna_src, "Set playspeed header value: %s",
         ps_field_value);
-  } else {
-    GST_INFO_OBJECT (dlna_src,
-        "Not including playspeed header since rate = 1.0");
-  }
 
-  // If start is in bytes, convert to time
-  if (GST_FORMAT_BYTES == format) {
-      if (!dlna_src_bytes_to_secs(dlna_src, start, &start_npt)) {
-          GST_WARNING_OBJECT (dlna_src,
-              "Unable to convert supplied byte position to time");
-          return FALSE;
-      }
-      GST_INFO_OBJECT (dlna_src,
-          "Converted start byte position of %" G_GUINT64_FORMAT " to %" G_GUINT64_FORMAT " nanosecs",
-          start, start_npt);
-      start = start_npt;
-  }
-
-  // Convert supplied start time in nanosecs into seconds to use as npt value
-  gfloat startSecs = start / 1000000000L;
-
-  sprintf ((gchar *) & ts_field_value[0], "%s%.1f-", ts_field_value_prefix,
-          startSecs);
-  GST_INFO_OBJECT (dlna_src, "Set time seek header start time value: %s",
-          ts_field_value);
-
-  // Create GstStructure & GValue which contains extra headers
-  if (rate != 1.0) {
-    // Include playspeed header
     *headers = gst_structure_new ("extraHdrsStruct",
       "transferMode.dlna.org", G_TYPE_STRING, "Streaming",
       ps_field_name, G_TYPE_STRING, &ps_field_value,
-      ts_field_name, G_TYPE_STRING, &ts_field_value,
       NULL);
   } else {
-    *headers = gst_structure_new ("extraHdrsStruct",
-      "transferMode.dlna.org", G_TYPE_STRING, "Streaming",
-      ts_field_name, G_TYPE_STRING, &ts_field_value,
-      NULL);
+    GST_INFO_OBJECT (dlna_src,
+        "Not including playspeed header since rate = 1.0");
   }
 
   if (*headers == NULL) {
@@ -3034,35 +2994,6 @@ dlna_src_npt_to_nanos (GstDlnaSrc * dlna_src, gchar * string,
   } else {
     GST_ERROR_OBJECT (dlna_src,
         "Problems converting npt str into nanosecs: %s\n", string);
-  }
-
-  return ret;
-}
-
-/**
- * Converts supplied byte position to npt time in nanoseconds using values for total
- * size in bytes and total duration in nanoseconds.
- *
- * @param   dlna_src        this element instance
- * @param   byte_position   determine the npt for this byte position
- * @param   nano_secs       npt in nanosecs which represents the supplied byte position
- *
- * @return  true if conversion was performed, false otherwise
- */
-static gboolean
-dlna_src_bytes_to_secs (GstDlnaSrc * dlna_src, guint64 byte_position, guint64* nano_secs)
-{
-  gboolean ret = FALSE;
-
-  // Check for necessary info to perform conversion
-  if ((dlna_src->head_response != NULL) &&
-      (dlna_src->head_response->byte_seek_total > 0) &&
-      (dlna_src->head_response->time_seek_npt_duration > 0)) {
-
-      // Approximate time based on supplied byte position using total time and byte from HEAD response
-      *nano_secs = (byte_position * dlna_src->head_response->time_seek_npt_duration) /
-              dlna_src->head_response->byte_seek_total;
-      ret = TRUE;
   }
 
   return ret;
