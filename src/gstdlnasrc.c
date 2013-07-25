@@ -1000,13 +1000,6 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
       GValue struct_value = { 0 };
       g_value_init (&struct_value, GST_TYPE_STRUCTURE);
       gst_value_set_structure (&struct_value, extra_headers_struct);
-      const GstStructure *s = gst_value_get_structure (&struct_value);
-      if (s == NULL) {
-        GST_ERROR_OBJECT (dlna_src, "Value for extra headers was NULL");
-        return TRUE;
-      } else {
-        GST_LOG_OBJECT (dlna_src, "Got extra header struct from gvalue");
-      }
       g_object_set_property (G_OBJECT (dlna_src->http_src), "extra-headers",
           &struct_value);
 
