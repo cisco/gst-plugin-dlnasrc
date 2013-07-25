@@ -66,7 +66,7 @@ static const char CRLF[] = "\r\n";
 static const char COLON[] = ":";
 
 // Constant strings identifiers for header fields in HEAD response
-static const char *HEAD_RESPONSE_HDRS[] = {
+static const char *HEAD_RESPONSE_HEADERS[] = {
   "HTTP/",                      // 0
   "VARY",                       // 1
   "TIMESEEKRANGE.DLNA.ORG",     // 2
@@ -81,58 +81,58 @@ static const char *HEAD_RESPONSE_HDRS[] = {
   "CACHE-CONTROL",              // 11
 };
 
-// Constants which represent indices in HEAD_RESPONSE_HDRS string array
-// NOTE: Needs to stay in sync with HEAD_RESPONSE_HDRS
-#define HDR_IDX_HTTP 0
-#define HDR_IDX_VARY 1
-#define HDR_IDX_TIMESEEKRANGE 2
-#define HDR_IDX_TRANSFERMODE 3
-#define HDR_IDX_DATE 4
-#define HDR_IDX_CONTENT_TYPE 5
-#define HDR_IDX_SERVER 6
-#define HDR_IDX_TRANSFER_ENCODING 7
-#define HDR_IDX_CONTENTFEATURES 8
-#define HDR_IDX_DTCP_RANGE 9
-#define HDR_IDX_PRAGMA 10
-#define HDR_IDX_CACHE_CONTROL 11
+// Constants which represent indices in HEAD_RESPONSE_HEADERS string array
+// NOTE: Needs to stay in sync with HEAD_RESPONSE_HEADERS
+#define HEADER_INDEX_HTTP 0
+#define HEADER_INDEX_VARY 1
+#define HEADER_INDEX_TIMESEEKRANGE 2
+#define HEADER_INDEX_TRANSFERMODE 3
+#define HEADER_INDEX_DATE 4
+#define HEADER_INDEX_CONTENT_TYPE 5
+#define HEADER_INDEX_SERVER 6
+#define HEADER_INDEX_TRANSFER_ENCODING 7
+#define HEADER_INDEX_CONTENTFEATURES 8
+#define HEADER_INDEX_DTCP_RANGE 9
+#define HEADER_INDEX_PRAGMA 10
+#define HEADER_INDEX_CACHE_CONTROL 11
 
-// Count of field headers in HEAD_RESPONSE_HDRS along with HDR_IDX_* constants
-static const gint HEAD_RESPONSE_HDRS_CNT = 12;
+// Count of field headers in HEAD_RESPONSE_HEADERS along with HEADER_INDEX_* constants
+static const gint HEAD_RESPONSE_HEADERS_CNT = 12;
 
 // Subfield headers within TIMESEEKRANGE.DLNA.ORG
-static const char *TIME_SEEK_HDRS[] = {
+static const char *TIME_SEEK_HEADERS[] = {
   "NPT",                        // 0
   "BYTES",                      // 1
 };
 
-#define HDR_IDX_NPT 0
-#define HDR_IDX_BYTES 1
+#define HEADER_INDEX_NPT 0
+#define HEADER_INDEX_BYTES 1
 
 // Subfield headers within CONTENTFEATURES.DLNA.ORG
-static const char *CONTENT_FEATURES_HDRS[] = {
+static const char *CONTENT_FEATURES_HEADERS[] = {
   "DLNA.ORG_PN",                // 0
   "DLNA.ORG_OP",                // 1
   "DLNA.ORG_PS",                // 2
   "DLNA.ORG_FLAGS",             // 3
 };
 
-#define HDR_IDX_PN 0
-#define HDR_IDX_OP 1
-#define HDR_IDX_PS 2
-#define HDR_IDX_FLAGS 3
+#define HEADER_INDEX_PN 0
+#define HEADER_INDEX_OP 1
+#define HEADER_INDEX_PS 2
+#define HEADER_INDEX_FLAGS 3
 
 // Subfield headers with CONTENT-TYPE
-static const char *CONTENT_TYPE_HDRS[] = {
+static const char *CONTENT_TYPE_HEADERS[] = {
   "DTCP1HOST",                  // 0
   "DTCP1PORT",                  // 1
   "CONTENTFORMAT",              // 2
   "APPLICATION/X-DTCP1"         // 3
 };
 
-#define HDR_IDX_DTCP_HOST 0
-#define HDR_IDX_DTCP_PORT 1
-#define HDR_IDX_CONTENT_FORMAT 2
-#define HDR_IDX_APP_DTCP 3
+#define HEADER_INDEX_DTCP_HOST 0
+#define HEADER_INDEX_DTCP_PORT 1
+#define HEADER_INDEX_CONTENT_FORMAT 2
+#define HEADER_INDEX_APP_DTCP 3
 
 
 /**
@@ -154,8 +154,8 @@ static const gint TM_B = 1 << 22;       //(Background Mode Flag)
 static const gint HTTP_STALLING = 1 << 21;      //(HTTP Connection Stalling Flag)
 static const gint DLNA_V15_FLAG = 1 << 20;      //(DLNA v1.5 versioning flag)
 static const gint LP_FLAG = 1 << 16;    //(Link Content Flag)
-static const gint CLEARTEXTBYTESEEK_FULL_FLAG = 1 << 15;        // Support for Full RADA ClearTextByteSeek hdr
-static const gint LOP_CLEARTEXTBYTES = 1 << 14; // Support for Limited RADA ClearTextByteSeek hdr
+static const gint CLEARTEXTBYTESEEK_FULL_FLAG = 1 << 15;        // Support for Full RADA ClearTextByteSeek header
+static const gint LOP_CLEARTEXTBYTES = 1 << 14; // Support for Limited RADA ClearTextByteSeek header
 
 static const int RESERVED_FLAGS_LENGTH = 24;
 
@@ -938,7 +938,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
       (GstSeekType *) & stop_type, (gint64 *) & stop);
 
   GST_INFO_OBJECT (dlna_src,
-      "Got Seek event: rate: %3.1g, format: %s, flags: %d, start type: %d,  start: %"
+      "Got Seek event: rate: %3.1f, format: %s, flags: %d, start type: %d,  start: %"
       G_GUINT64_FORMAT ", stop type: %d, stop: %"
       G_GUINT64_FORMAT, rate, gst_format_get_name (format),
       flags, start_type, start, stop_type, stop);
@@ -958,41 +958,26 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
   dlna_src->requested_start = start;
   dlna_src->requested_stop = stop;
 
-  // Create necessary extra headers for http src so change can be requested
-  GstStructure *extra_hdrs_struct = NULL;
+  if (dlna_src->requested_rate != 1.0) {
+    // Create necessary extra headers for http src so change can be requested
+    GstStructure *extra_headers_struct = NULL;
 
-  if (!dlna_src_formulate_extra_headers (dlna_src, dlna_src->requested_rate,
-          dlna_src->requested_format,
-          dlna_src->requested_start, &extra_hdrs_struct)) {
-    GST_ERROR_OBJECT (dlna_src, "Problem formulating extra headers");
-    // Returning true to prevent further processing
-    return TRUE;
-  }
-  if (extra_hdrs_struct == NULL) {
-    GST_ERROR_OBJECT (dlna_src, "Extra headers structure was NULL");
-    // Returning true to prevent further processing
-    return TRUE;
-  } else {
-    GST_LOG_OBJECT (dlna_src,
-        "Successfully formulated extra headers structure");
-  }
+    if (!dlna_src_formulate_extra_headers (dlna_src, dlna_src->requested_rate,
+            dlna_src->requested_format,
+            dlna_src->requested_start, &extra_headers_struct)) {
+      GST_ERROR_OBJECT (dlna_src, "Problem formulating extra headers");
+      // Returning true to prevent further processing
+      return TRUE;
+    }
+    // Convert structure to GValue in order to set property
+    GValue struct_value = G_VALUE_INIT;
+    g_value_init (&struct_value, GST_TYPE_STRUCTURE);
+    gst_value_set_structure (&struct_value, extra_headers_struct);
+    g_object_set_property (G_OBJECT (dlna_src->http_src), "extra-headers",
+        &struct_value);
 
-  // Convert structure to GValue in order to set property
-  GValue struct_value = { 0 };
-  g_value_init (&struct_value, GST_TYPE_STRUCTURE);
-  gst_value_set_structure (&struct_value, extra_hdrs_struct);
-  const GstStructure *s = gst_value_get_structure (&struct_value);
-  if (s == NULL) {
-    GST_ERROR_OBJECT (dlna_src, "Value for extra headers was NULL");
-    return TRUE;
-  } else {
-    GST_LOG_OBJECT (dlna_src, "Got extra header struct from gvalue");
+    gst_structure_free (extra_headers_struct);
   }
-  g_object_set_property (G_OBJECT (dlna_src->http_src), "extra-headers",
-      &struct_value);
-
-  // *TODO* - is this necessary????
-  //gst_structure_free(extra_hdrs_struct);
 
   GST_INFO_OBJECT (dlna_src,
       "returning false to make sure souphttpsrc gets chance to process");
@@ -1118,94 +1103,36 @@ dlna_src_formulate_extra_headers (GstDlnaSrc * dlna_src, gfloat rate,
     GstFormat format, guint64 start, GstStructure ** headers)
 {
   gchar *ps_field_name = "PlaySpeed.dlna.org";
-  gchar *ps_field_value_prefix = "speed = ";
+  gchar *ps_field_value_prefix = "speed=";
   gchar ps_field_value[64];
 
-  gchar *ts_field_name = "TimeSeekRange.dlna.org";
-  gchar *ts_field_value_prefix = "npt = ";
-  gchar ts_field_value[64];
-
-  gchar *br_field_name = "Range";
-  gchar *br_field_value_prefix = "bytes = ";
-  gchar br_field_value[64];
-
-  // Setup header to request playspeed, only necessary if rate is not 1
-  if (rate != 1.0) {
-    // Get string representation of rate
-    int i = 0;
-    char *rateStr = NULL;
-    for (i = 0;
-        i < dlna_src->head_response->content_features->playspeeds_cnt; i++) {
-      if (dlna_src->head_response->content_features->playspeeds[i] == rate) {
-        rateStr = dlna_src->head_response->content_features->playspeed_strs[i];
-        break;
-      }
+  // Get string representation of rate
+  int i = 0;
+  char *rateStr = NULL;
+  for (i = 0;
+      i < dlna_src->head_response->content_features->playspeeds_cnt; i++) {
+    if (dlna_src->head_response->content_features->playspeeds[i] == rate) {
+      rateStr = dlna_src->head_response->content_features->playspeed_strs[i];
+      break;
     }
-
-    if (rateStr == NULL) {
-      GST_ERROR_OBJECT (dlna_src,
-          "Unable to get string representation of rate: %lf", rate);
-      return FALSE;
-    }
-
-    sprintf ((gchar *) & ps_field_value[0], "%s%s", ps_field_value_prefix,
-        rateStr);
-    GST_INFO_OBJECT (dlna_src, "Set playspeed header value: %s",
-        ps_field_value);
-  } else {
-    GST_INFO_OBJECT (dlna_src,
-        "Not including playspeed header since rate = 1.0");
   }
 
-  if (GST_FORMAT_BYTES == format) {
-    // Include range header if format is bytes
-    sprintf ((gchar *) & br_field_value[0], "%s%" G_GUINT64_FORMAT "-",
-        br_field_value_prefix, start);
-    GST_INFO_OBJECT (dlna_src, "Set range header value: %s", br_field_value);
-
-    // *TODO* - handle DTCP
-  } else if (GST_FORMAT_TIME == format) {
-    // Include time seek header if format is time
-    // Setup time seek header
-
-    // Convert supplied start time in nanosecs into seconds to use as npt value
-    gint startSecs = start / 1000000000L;
-
-    sprintf ((gchar *) & ts_field_value[0], "%s%d-", ts_field_value_prefix,
-        startSecs);
-    GST_INFO_OBJECT (dlna_src, "Set time seek header value: %s",
-        ts_field_value);
-  } else {
-    GST_ERROR_OBJECT (dlna_src, "Unsupported format type supplied: %d", format);
+  if (rateStr == NULL) {
+    GST_ERROR_OBJECT (dlna_src,
+        "Unable to get string representation of rate: %lf", rate);
     return FALSE;
   }
 
-  // Create GstStructure & GValue which contains extra headers
-  if (rate != 1.0) {
-    // Include playspeed header for either byte or time
-    if (GST_FORMAT_BYTES == format) {
-      *headers = gst_structure_new ("extraHdrsStruct",
-          ps_field_name,
-          G_TYPE_STRING,
-          &ps_field_value, br_field_name, G_TYPE_STRING, &br_field_value, NULL);
-    } else {
-      *headers = gst_structure_new ("extraHdrsStruct",
-          ps_field_name,
-          G_TYPE_STRING,
-          &ps_field_value, ts_field_name, G_TYPE_STRING, &ts_field_value, NULL);
-    }
-  } else {
-    if (GST_FORMAT_BYTES == format) {
-      *headers = gst_structure_new ("extraHdrsStruct",
-          br_field_name, G_TYPE_STRING, &br_field_value, NULL);
-    } else {
-      *headers = gst_structure_new ("extraHdrsStruct",
-          ts_field_name, G_TYPE_STRING, &ts_field_value, NULL);
-    }
-  }
+  sprintf ((gchar *) & ps_field_value[0], "%s%s", ps_field_value_prefix,
+      rateStr);
+  GST_INFO_OBJECT (dlna_src, "Set playspeed header value: %s", ps_field_value);
+
+  *headers = gst_structure_new ("extraHeadersStruct",
+      "transferMode.dlna.org", G_TYPE_STRING, "Streaming",
+      ps_field_name, G_TYPE_STRING, &ps_field_value, NULL);
 
   if (*headers == NULL) {
-    GST_ERROR_OBJECT (dlna_src, "Unable to create extra headers structure");
+    GST_WARNING_OBJECT (dlna_src, "Did not create extra headers structure");
     return FALSE;
   } else {
     GST_LOG_OBJECT (dlna_src, "Created extra headers structure");
@@ -1819,8 +1746,8 @@ dlna_src_head_response_parse (GstDlnaSrc * dlna_src)
   }
 
   // Initialize array of strings used to store field values
-  char *fields[HEAD_RESPONSE_HDRS_CNT];
-  for (i = 0; i < HEAD_RESPONSE_HDRS_CNT; i++) {
+  char *fields[HEAD_RESPONSE_HEADERS_CNT];
+  for (i = 0; i < HEAD_RESPONSE_HEADERS_CNT; i++) {
     fields[i] = NULL;
   }
 
@@ -1842,7 +1769,7 @@ dlna_src_head_response_parse (GstDlnaSrc * dlna_src)
   }
 
   // Parse value from each field header string
-  for (i = 0; i < HEAD_RESPONSE_HDRS_CNT; i++) {
+  for (i = 0; i < HEAD_RESPONSE_HEADERS_CNT; i++) {
     if (fields[i] != NULL) {
       dlna_src_head_response_assign_field_value (dlna_src, i, fields[i]);
     }
@@ -1877,16 +1804,16 @@ dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src)
 
   // Initialize structs
   // {"HTTP", STRING_TYPE}
-  dlna_src->head_response->http_rev_idx = HDR_IDX_HTTP;
+  dlna_src->head_response->http_rev_idx = HEADER_INDEX_HTTP;
   dlna_src->head_response->http_rev = NULL;
   dlna_src->head_response->ret_code = 0;
   dlna_src->head_response->ret_msg = NULL;
 
   // {"TIMESEEKRANGE.DLNA.ORG", STRING_TYPE},
-  dlna_src->head_response->time_seek_idx = HDR_IDX_TIMESEEKRANGE;
+  dlna_src->head_response->time_seek_idx = HEADER_INDEX_TIMESEEKRANGE;
 
   // {"NPT", NPT_RANGE_TYPE},
-  dlna_src->head_response->npt_seek_idx = HDR_IDX_NPT;
+  dlna_src->head_response->npt_seek_idx = HEADER_INDEX_NPT;
   dlna_src->head_response->time_seek_npt_start_str = NULL;
   dlna_src->head_response->time_seek_npt_end_str = NULL;
   dlna_src->head_response->time_seek_npt_duration_str = NULL;
@@ -1895,63 +1822,64 @@ dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src)
   dlna_src->head_response->time_seek_npt_duration = 0;
 
   // {"BYTES", BYTE_RANGE_TYPE},
-  dlna_src->head_response->byte_seek_idx = HDR_IDX_BYTES;
+  dlna_src->head_response->byte_seek_idx = HEADER_INDEX_BYTES;
   dlna_src->head_response->byte_seek_start = 0;
   dlna_src->head_response->byte_seek_end = 0;
   dlna_src->head_response->byte_seek_total = 0;
 
   // {CONTENT RANGE DTCP, BYTE_RANGE_TYPE},
-  dlna_src->head_response->dtcp_range_idx = HDR_IDX_DTCP_RANGE;
+  dlna_src->head_response->dtcp_range_idx = HEADER_INDEX_DTCP_RANGE;
   dlna_src->head_response->dtcp_range_start = 0;
   dlna_src->head_response->dtcp_range_end = 0;
   dlna_src->head_response->dtcp_range_total = 0;
 
   // {"TRANSFERMODE.DLNA.ORG", STRING_TYPE}
-  dlna_src->head_response->transfer_mode_idx = HDR_IDX_TRANSFERMODE;
+  dlna_src->head_response->transfer_mode_idx = HEADER_INDEX_TRANSFERMODE;
   dlna_src->head_response->transfer_mode = NULL;
 
   // {"TRANSFER-ENCODING", STRING_TYPE}
-  dlna_src->head_response->transfer_encoding_idx = HDR_IDX_TRANSFER_ENCODING;
+  dlna_src->head_response->transfer_encoding_idx =
+      HEADER_INDEX_TRANSFER_ENCODING;
 
   dlna_src->head_response->transfer_encoding = NULL;
 
   // {"DATE", STRING_TYPE}
-  dlna_src->head_response->date_idx = HDR_IDX_DATE;
+  dlna_src->head_response->date_idx = HEADER_INDEX_DATE;
   dlna_src->head_response->date = NULL;
 
   // {"SERVER", STRING_TYPE}
-  dlna_src->head_response->server_idx = HDR_IDX_SERVER;
+  dlna_src->head_response->server_idx = HEADER_INDEX_SERVER;
   dlna_src->head_response->server = NULL;
 
   // {"CONTENT-TYPE", STRING_TYPE}
-  dlna_src->head_response->content_type_idx = HDR_IDX_CONTENT_TYPE;
+  dlna_src->head_response->content_type_idx = HEADER_INDEX_CONTENT_TYPE;
   dlna_src->head_response->content_type = NULL;
 
   // Addition subfields in CONTENT TYPE if dtcp encrypted
-  dlna_src->head_response->dtcp_host_idx = HDR_IDX_DTCP_HOST;
+  dlna_src->head_response->dtcp_host_idx = HEADER_INDEX_DTCP_HOST;
   dlna_src->head_response->dtcp_host = NULL;
-  dlna_src->head_response->dtcp_port_idx = HDR_IDX_DTCP_PORT;
+  dlna_src->head_response->dtcp_port_idx = HEADER_INDEX_DTCP_PORT;
   dlna_src->head_response->dtcp_port = -1;
-  dlna_src->head_response->content_format_idx = HDR_IDX_CONTENT_FORMAT;
+  dlna_src->head_response->content_format_idx = HEADER_INDEX_CONTENT_FORMAT;
 
   // {"CONTENTFEATURES.DLNA.ORG", STRING_TYPE},
-  dlna_src->head_response->content_features_idx = HDR_IDX_CONTENTFEATURES;
+  dlna_src->head_response->content_features_idx = HEADER_INDEX_CONTENTFEATURES;
 
   // {"DLNA.ORG_PN", STRING_TYPE}
-  dlna_src->head_response->content_features->profile_idx = HDR_IDX_PN;
+  dlna_src->head_response->content_features->profile_idx = HEADER_INDEX_PN;
   dlna_src->head_response->content_features->profile = NULL;
 
   // {"DLNA.ORG_OP", FLAG_TYPE}
-  dlna_src->head_response->content_features->operations_idx = HDR_IDX_OP;
+  dlna_src->head_response->content_features->operations_idx = HEADER_INDEX_OP;
   dlna_src->head_response->content_features->op_time_seek_supported = FALSE;
   dlna_src->head_response->content_features->op_range_supported = FALSE;
 
   // {"DLNA.ORG_PS", NUMERIC_TYPE}, // 13
-  dlna_src->head_response->content_features->playspeeds_idx = HDR_IDX_PS;
+  dlna_src->head_response->content_features->playspeeds_idx = HEADER_INDEX_PS;
   dlna_src->head_response->content_features->playspeeds_cnt = 0;
 
   // {"DLNA.ORG_FLAGS", FLAG_TYPE} // 14
-  dlna_src->head_response->content_features->flags_idx = HDR_IDX_FLAGS;
+  dlna_src->head_response->content_features->flags_idx = HEADER_INDEX_FLAGS;
   dlna_src->head_response->content_features->flag_sender_paced_set = FALSE;
   dlna_src->head_response->content_features->flag_limited_time_seek_set = FALSE;
   dlna_src->head_response->content_features->flag_limited_byte_seek_set = FALSE;
@@ -1988,8 +1916,8 @@ dlna_src_head_response_get_field_idx (GstDlnaSrc * dlna_src, gchar * field_str)
 
   gint idx = -1;
   int i = 0;
-  for (i = 0; i < HEAD_RESPONSE_HDRS_CNT; i++) {
-    if (strstr (field_str, HEAD_RESPONSE_HDRS[i]) != NULL) {
+  for (i = 0; i < HEAD_RESPONSE_HEADERS_CNT; i++) {
+    if (strstr (field_str, HEAD_RESPONSE_HEADERS[i]) != NULL) {
       idx = i;
       break;
     }
@@ -2013,7 +1941,7 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src, gint idx,
 {
   GST_LOG_OBJECT (dlna_src,
       "Store value received in HEAD response field for field %d - %s",
-      idx, HEAD_RESPONSE_HDRS[idx]);
+      idx, HEAD_RESPONSE_HEADERS[idx]);
 
   gboolean rc = TRUE;
 
@@ -2024,41 +1952,41 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src, gint idx,
 
   // Get value based on index
   switch (idx) {
-    case HDR_IDX_TRANSFERMODE:
+    case HEADER_INDEX_TRANSFERMODE:
       dlna_src->head_response->transfer_mode =
           g_strdup ((strstr (field_str, ":") + 1));
       break;
 
-    case HDR_IDX_DATE:
+    case HEADER_INDEX_DATE:
       dlna_src->head_response->date = g_strdup ((strstr (field_str, ":") + 1));
       break;
 
-    case HDR_IDX_CONTENT_TYPE:
+    case HEADER_INDEX_CONTENT_TYPE:
       if (!dlna_src_head_response_parse_content_type (dlna_src, idx, field_str)) {
         GST_WARNING_OBJECT (dlna_src,
-            "Problems with HEAD response field hdr %s, value: %s",
-            HEAD_RESPONSE_HDRS[idx], field_str);
+            "Problems with HEAD response field header %s, value: %s",
+            HEAD_RESPONSE_HEADERS[idx], field_str);
       }
       break;
 
-    case HDR_IDX_SERVER:
+    case HEADER_INDEX_SERVER:
       dlna_src->head_response->server =
           g_strdup ((strstr (field_str, ":") + 1));
       break;
 
-    case HDR_IDX_TRANSFER_ENCODING:
+    case HEADER_INDEX_TRANSFER_ENCODING:
       dlna_src->head_response->transfer_encoding =
           g_strdup ((strstr (field_str, ":") + 1));
       break;
 
-    case HDR_IDX_HTTP:
+    case HEADER_INDEX_HTTP:
       strcat (field_str, "\n");
       if ((ret_code =
               sscanf (field_str, "%s %d %[^\n]", tmp1, &int_value, tmp2)) != 3)
       {
         GST_WARNING_OBJECT (dlna_src,
-            "Problems with HEAD response field hdr %s, idx: %d, value: %s, retcode: %d, tmp: %s, %s",
-            HEAD_RESPONSE_HDRS[idx], idx, field_str, ret_code, tmp1, tmp2);
+            "Problems with HEAD response field header %s, idx: %d, value: %s, retcode: %d, tmp: %s, %s",
+            HEAD_RESPONSE_HEADERS[idx], idx, field_str, ret_code, tmp1, tmp2);
       } else {
         dlna_src->head_response->http_rev = g_strdup (tmp1);
         dlna_src->head_response->ret_code = int_value;
@@ -2066,34 +1994,34 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src, gint idx,
       }
       break;
 
-    case HDR_IDX_TIMESEEKRANGE:
+    case HEADER_INDEX_TIMESEEKRANGE:
       if (!dlna_src_head_response_parse_time_seek (dlna_src, idx, field_str)) {
         GST_WARNING_OBJECT (dlna_src,
-            "Problems with HEAD response field hdr %s, value: %s",
-            HEAD_RESPONSE_HDRS[idx], field_str);
+            "Problems with HEAD response field header %s, value: %s",
+            HEAD_RESPONSE_HEADERS[idx], field_str);
       }
       break;
 
-    case HDR_IDX_CONTENTFEATURES:
+    case HEADER_INDEX_CONTENTFEATURES:
       if (!dlna_src_head_response_parse_content_features
           (dlna_src, idx, field_str)) {
         GST_WARNING_OBJECT (dlna_src,
-            "Problems with HEAD response field hdr %s, value: %s",
-            HEAD_RESPONSE_HDRS[idx], field_str);
+            "Problems with HEAD response field header %s, value: %s",
+            HEAD_RESPONSE_HEADERS[idx], field_str);
       }
       break;
 
-    case HDR_IDX_DTCP_RANGE:
+    case HEADER_INDEX_DTCP_RANGE:
       if (!dlna_src_head_response_parse_dtcp_range (dlna_src, idx, field_str)) {
         GST_WARNING_OBJECT (dlna_src,
-            "Problems with HEAD response field hdr %s, value: %s",
-            HEAD_RESPONSE_HDRS[idx], field_str);
+            "Problems with HEAD response field header %s, value: %s",
+            HEAD_RESPONSE_HEADERS[idx], field_str);
       }
       break;
 
-    case HDR_IDX_VARY:
-    case HDR_IDX_PRAGMA:
-    case HDR_IDX_CACHE_CONTROL:
+    case HEADER_INDEX_VARY:
+    case HEADER_INDEX_PRAGMA:
+    case HEADER_INDEX_CACHE_CONTROL:
       // Ignore field values
       break;
 
@@ -2141,7 +2069,7 @@ dlna_src_head_response_parse_time_seek (GstDlnaSrc * dlna_src, gint idx,
 
   // *TODO* - need more sophisticated parsing of NPT to handle different formats
   // Extract start and end NPT
-  tmp_str2 = strstr (field_str, TIME_SEEK_HDRS[HDR_IDX_NPT]);
+  tmp_str2 = strstr (field_str, TIME_SEEK_HEADERS[HEADER_INDEX_NPT]);
   tmp_str1 = strstr (tmp_str2, "=");
   if (tmp_str1 != NULL) {
     tmp_str1++;
@@ -2150,8 +2078,8 @@ dlna_src_head_response_parse_time_seek (GstDlnaSrc * dlna_src, gint idx,
             sscanf (tmp_str1, "%[^-]-%[^/]/%s %s", tmp1, tmp2, tmp3,
                 tmp4)) != 4) {
       GST_WARNING_OBJECT (dlna_src,
-          "Problems parsing NPT from HEAD response field hdr %s, value: %s, retcode: %d, tmp: %s, %s, %s",
-          HEAD_RESPONSE_HDRS[idx], tmp_str1, ret_code, tmp1, tmp2, tmp3);
+          "Problems parsing NPT from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s, %s",
+          HEAD_RESPONSE_HEADERS[idx], tmp_str1, ret_code, tmp1, tmp2, tmp3);
     } else {
       dlna_src->head_response->time_seek_npt_start_str = g_strdup (tmp1);
       dlna_src->head_response->time_seek_npt_end_str = g_strdup (tmp2);
@@ -2169,12 +2097,12 @@ dlna_src_head_response_parse_time_seek (GstDlnaSrc * dlna_src, gint idx,
     }
   } else {
     GST_WARNING_OBJECT (dlna_src,
-        "No NPT found in time seek range HEAD response field hdr %s, idx: %d, value: %s",
-        HEAD_RESPONSE_HDRS[idx], idx, field_str);
+        "No NPT found in time seek range HEAD response field header %s, idx: %d, value: %s",
+        HEAD_RESPONSE_HEADERS[idx], idx, field_str);
   }
 
   // Extract start and end BYTES
-  tmp_str2 = strstr (field_str, TIME_SEEK_HDRS[HDR_IDX_BYTES]);
+  tmp_str2 = strstr (field_str, TIME_SEEK_HEADERS[HEADER_INDEX_BYTES]);
   if (tmp_str2 != NULL) {
     tmp_str1 = strstr (tmp_str2, "=");
     if (tmp_str1 != NULL) {
@@ -2185,10 +2113,10 @@ dlna_src_head_response_parse_time_seek (GstDlnaSrc * dlna_src, gint idx,
                   "%" G_GUINT64_FORMAT "-%" G_GUINT64_FORMAT "/%"
                   G_GUINT64_FORMAT, &ullong1, &ullong2, &ullong3)) != 3) {
         GST_WARNING_OBJECT (dlna_src,
-            "Problems parsing BYTES from HEAD response field hdr %s, idx: %d, value: %s, retcode: %d, ullong: %"
+            "Problems parsing BYTES from HEAD response field headr %s, idx: %d, value: %s, retcode: %d, ullong: %"
             G_GUINT64_FORMAT ", %" G_GUINT64_FORMAT
             ", %" G_GUINT64_FORMAT,
-            HEAD_RESPONSE_HDRS[idx], idx, tmp_str1,
+            HEAD_RESPONSE_HEADERS[idx], idx, tmp_str1,
             ret_code, ullong1, ullong2, ullong3);
       } else {
         dlna_src->head_response->byte_seek_start = ullong1;
@@ -2197,13 +2125,13 @@ dlna_src_head_response_parse_time_seek (GstDlnaSrc * dlna_src, gint idx,
       }
     } else {
       GST_WARNING_OBJECT (dlna_src,
-          "No BYTES= found in time seek range HEAD response field hdr %s, idx: %d, value: %s",
-          HEAD_RESPONSE_HDRS[idx], idx, field_str);
+          "No BYTES= found in time seek range HEAD response field header %s, idx: %d, value: %s",
+          HEAD_RESPONSE_HEADERS[idx], idx, field_str);
     }
   } else {
     GST_WARNING_OBJECT (dlna_src,
-        "No BYTES= found in time seek range HEAD response field hdr %s, idx: %d, value: %s",
-        HEAD_RESPONSE_HDRS[idx], idx, field_str);
+        "No BYTES= found in time seek range HEAD response field header %s, idx: %d, value: %s",
+        HEAD_RESPONSE_HEADERS[idx], idx, field_str);
   }
   return TRUE;
 }
@@ -2231,18 +2159,19 @@ dlna_src_head_response_parse_dtcp_range (GstDlnaSrc * dlna_src, gint idx,
   guint64 ullong3 = 0;
 
   // Extract start and end BYTES same format as TIME SEEK BYTES header
-  tmp_str2 = strstr (field_str, TIME_SEEK_HDRS[HDR_IDX_BYTES]);
+  tmp_str2 = strstr (field_str, TIME_SEEK_HEADERS[HEADER_INDEX_BYTES]);
   if (tmp_str2 != NULL) {
-    tmp_str1 = tmp_str2 + strlen (TIME_SEEK_HDRS[HDR_IDX_BYTES] + 1) + 1;
+    tmp_str1 =
+        tmp_str2 + strlen (TIME_SEEK_HEADERS[HEADER_INDEX_BYTES] + 1) + 1;
     // *TODO* - add logic to deal with '*'
     if ((ret_code =
             sscanf (tmp_str1,
                 "%" G_GUINT64_FORMAT "-%" G_GUINT64_FORMAT "/%"
                 G_GUINT64_FORMAT, &ullong1, &ullong2, &ullong3)) != 3) {
       GST_WARNING_OBJECT (dlna_src,
-          "Problems parsing BYTES from HEAD response field hdr %s, idx: %d, value: %s, retcode: %d, ullong: %"
+          "Problems parsing BYTES from HEAD response field header %s, idx: %d, value: %s, retcode: %d, ullong: %"
           G_GUINT64_FORMAT ", %" G_GUINT64_FORMAT ", %"
-          G_GUINT64_FORMAT, HEAD_RESPONSE_HDRS[idx], idx,
+          G_GUINT64_FORMAT, HEAD_RESPONSE_HEADERS[idx], idx,
           tmp_str1, ret_code, ullong1, ullong2, ullong3);
     } else {
       dlna_src->head_response->dtcp_range_start = ullong1;
@@ -2251,8 +2180,8 @@ dlna_src_head_response_parse_dtcp_range (GstDlnaSrc * dlna_src, gint idx,
     }
   } else {
     GST_WARNING_OBJECT (dlna_src,
-        "No BYTES= found in dtcp range HEAD response field hdr %s, idx: %d, value: %s",
-        HEAD_RESPONSE_HDRS[idx], idx, field_str);
+        "No BYTES= found in dtcp range HEAD response field header %s, idx: %d, value: %s",
+        HEAD_RESPONSE_HEADERS[idx], idx, field_str);
   }
   return TRUE;
 }
@@ -2282,7 +2211,7 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
   gchar *ps_str = NULL;
   gchar *flags_str = NULL;
 
-  gchar *tmp_str2 = strstr (field_str, HEAD_RESPONSE_HDRS[idx]);
+  gchar *tmp_str2 = strstr (field_str, HEAD_RESPONSE_HEADERS[idx]);
   gchar *tmp_str1 = strstr (tmp_str2, ":");
   if (tmp_str1 != NULL) {
     // Increment ptr to get pass ":"
@@ -2293,30 +2222,34 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
     while (tokens != NULL) {
       // "DLNA.ORG_PN"
       if ((tmp_str2 =
-              strstr (tokens, CONTENT_FEATURES_HDRS[HDR_IDX_PN])) != NULL) {
+              strstr (tokens,
+                  CONTENT_FEATURES_HEADERS[HEADER_INDEX_PN])) != NULL) {
         GST_LOG_OBJECT (dlna_src, "Found field: %s",
-            CONTENT_FEATURES_HDRS[HDR_IDX_PN]);
+            CONTENT_FEATURES_HEADERS[HEADER_INDEX_PN]);
         pn_str = tokens;
       }
       // "DLNA.ORG_OP"
       else if ((tmp_str2 =
-              strstr (tokens, CONTENT_FEATURES_HDRS[HDR_IDX_OP])) != NULL) {
+              strstr (tokens,
+                  CONTENT_FEATURES_HEADERS[HEADER_INDEX_OP])) != NULL) {
         GST_LOG_OBJECT (dlna_src, "Found field: %s",
-            CONTENT_FEATURES_HDRS[HDR_IDX_OP]);
+            CONTENT_FEATURES_HEADERS[HEADER_INDEX_OP]);
         op_str = tokens;
       }
       // "DLNA.ORG_PS"
       else if ((tmp_str2 =
-              strstr (tokens, CONTENT_FEATURES_HDRS[HDR_IDX_PS])) != NULL) {
+              strstr (tokens,
+                  CONTENT_FEATURES_HEADERS[HEADER_INDEX_PS])) != NULL) {
         GST_LOG_OBJECT (dlna_src, "Found field: %s",
-            CONTENT_FEATURES_HDRS[HDR_IDX_PS]);
+            CONTENT_FEATURES_HEADERS[HEADER_INDEX_PS]);
         ps_str = tokens;
       }
       // "DLNA.ORG_FLAGS"
       else if ((tmp_str2 =
-              strstr (tokens, CONTENT_FEATURES_HDRS[HDR_IDX_FLAGS])) != NULL) {
+              strstr (tokens,
+                  CONTENT_FEATURES_HEADERS[HEADER_INDEX_FLAGS])) != NULL) {
         GST_LOG_OBJECT (dlna_src, "Found field: %s",
-            CONTENT_FEATURES_HDRS[HDR_IDX_FLAGS]);
+            CONTENT_FEATURES_HEADERS[HEADER_INDEX_FLAGS]);
         flags_str = tokens;
       } else {
         GST_WARNING_OBJECT (dlna_src, "Unrecognized sub field:%s", tokens);
@@ -2376,8 +2309,8 @@ dlna_src_head_response_parse_profile (GstDlnaSrc * dlna_src, gint idx,
 
   if ((ret_code = sscanf (field_str, "%[^=]=%s", tmp1, tmp2)) != 2) {
     GST_WARNING_OBJECT (dlna_src,
-        "Problems parsing DLNA.ORG_PN from HEAD response field hdr %s, value: %s, retcode: %d, tmp: %s, %s",
-        HEAD_RESPONSE_HDRS[idx], field_str, ret_code, tmp1, tmp2);
+        "Problems parsing DLNA.ORG_PN from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s",
+        HEAD_RESPONSE_HEADERS[idx], field_str, ret_code, tmp1, tmp2);
   } else {
     dlna_src->head_response->content_features->profile = g_strdup (tmp2);
   }
@@ -2406,8 +2339,8 @@ dlna_src_head_response_parse_operations (GstDlnaSrc * dlna_src, gint idx,
 
   if ((ret_code = sscanf (field_str, "%[^=]=%s", tmp1, tmp2)) != 2) {
     GST_WARNING_OBJECT (dlna_src,
-        "Problems parsing DLNA.ORG_OP from HEAD response field hdr %s, value: %s, retcode: %d, tmp: %s, %s",
-        HEAD_RESPONSE_HDRS[idx], field_str, ret_code, tmp1, tmp2);
+        "Problems parsing DLNA.ORG_OP from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s",
+        HEAD_RESPONSE_HEADERS[idx], field_str, ret_code, tmp1, tmp2);
   } else {
     GST_LOG_OBJECT (dlna_src, "OP Field value: %s", tmp2);
 
@@ -2474,8 +2407,8 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src, gint idx,
 
   if ((ret_code = sscanf (field_str, "%[^=]=%s", tmp1, tmp2)) != 2) {
     GST_WARNING_OBJECT (dlna_src,
-        "Problems parsing DLNA.ORG_PS from HEAD response field hdr %s, value: %s, retcode: %d, tmp: %s, %s",
-        HEAD_RESPONSE_HDRS[idx], field_str, ret_code, tmp1, tmp2);
+        "Problems parsing DLNA.ORG_PS from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s",
+        HEAD_RESPONSE_HEADERS[idx], field_str, ret_code, tmp1, tmp2);
     return FALSE;
   } else {
     GST_LOG_OBJECT (dlna_src, "PS Field value: %s", tmp2);
@@ -2488,8 +2421,7 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src, gint idx,
       GST_LOG_OBJECT (dlna_src, "Found PS: %s", playspeeds);
 
       // Store string representation
-      dlna_src->head_response->content_features->
-          playspeed_strs
+      dlna_src->head_response->content_features->playspeed_strs
           [dlna_src->head_response->content_features->playspeeds_cnt]
           = g_strdup (playspeeds);
 
@@ -2502,8 +2434,9 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src, gint idx,
               playspeeds);
           return FALSE;
         } else {
-          dlna_src->head_response->content_features->playspeeds[dlna_src->
-              head_response->content_features->playspeeds_cnt] = rate;
+          dlna_src->head_response->content_features->
+              playspeeds[dlna_src->head_response->content_features->
+              playspeeds_cnt] = rate;
         }
       } else {
         // Handle conversion of fractional values
@@ -2515,8 +2448,9 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src, gint idx,
         } else {
           rate = (gfloat) n / (gfloat) d;
 
-          dlna_src->head_response->content_features->playspeeds[dlna_src->
-              head_response->content_features->playspeeds_cnt] = rate;
+          dlna_src->head_response->content_features->
+              playspeeds[dlna_src->head_response->content_features->
+              playspeeds_cnt] = rate;
         }
 
       }
@@ -2551,8 +2485,8 @@ dlna_src_head_response_parse_flags (GstDlnaSrc * dlna_src, gint idx,
 
   if ((ret_code = sscanf (field_str, "%[^=]=%s", tmp1, tmp2)) != 2) {
     GST_WARNING_OBJECT (dlna_src,
-        "Problems parsing DLNA.ORG_FLAGS from HEAD response field hdr %s, value: %s, retcode: %d, tmp: %s, %s",
-        HEAD_RESPONSE_HDRS[idx], field_str, ret_code, tmp1, tmp2);
+        "Problems parsing DLNA.ORG_FLAGS from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s",
+        HEAD_RESPONSE_HEADERS[idx], field_str, ret_code, tmp1, tmp2);
   } else {
     GST_LOG_OBJECT (dlna_src, "FLAGS Field value: %s", tmp2);
 
@@ -2625,7 +2559,7 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src, gint idx,
     // DTCP1HOST
     // DTCP1PORT
     // CONTENTFORMAT
-    gchar *tmp_str2 = strstr (field_str, HEAD_RESPONSE_HDRS[idx]);
+    gchar *tmp_str2 = strstr (field_str, HEAD_RESPONSE_HEADERS[idx]);
     gchar *tmp_str1 = strstr (tmp_str2, ":");
     if (tmp_str1 != NULL) {
       // Increment ptr to get pass ":"
@@ -2637,45 +2571,48 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src, gint idx,
         // DTCP1HOST
         if ((tmp_str2 =
                 strstr (tokens,
-                    CONTENT_TYPE_HDRS[HDR_IDX_DTCP_HOST])) != NULL) {
+                    CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_HOST])) != NULL) {
           GST_LOG_OBJECT (dlna_src, "Found field: %s",
-              CONTENT_TYPE_HDRS[HDR_IDX_DTCP_HOST]);
+              CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_HOST]);
           dlna_src->head_response->dtcp_host =
               g_strdup ((strstr (tmp_str2, "=") + 1));
         }
         // DTCP1PORT
         else if ((tmp_str2 =
                 strstr (tokens,
-                    CONTENT_TYPE_HDRS[HDR_IDX_DTCP_PORT])) != NULL) {
+                    CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_PORT])) != NULL) {
           if ((ret_code = sscanf (tmp_str2, "%[^=]=%d", tmp1,
                       &dlna_src->head_response->dtcp_port)) != 2) {
             GST_WARNING_OBJECT (dlna_src,
-                "Problems parsing DTCP PORT from HEAD response field hdr %s, value: %s, retcode: %d, tmp: %s",
-                HEAD_RESPONSE_HDRS[idx], tmp_str2, ret_code, tmp1);
+                "Problems parsing DTCP PORT from HEAD response field header %s, value: %s, retcode: %d, tmp: %s",
+                HEAD_RESPONSE_HEADERS[idx], tmp_str2, ret_code, tmp1);
           } else {
             GST_LOG_OBJECT (dlna_src, "Found field: %s",
-                CONTENT_TYPE_HDRS[HDR_IDX_DTCP_PORT]);
+                CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_PORT]);
           }
         }
         // CONTENTFORMAT
         else if ((tmp_str2 =
                 strstr (tokens,
-                    CONTENT_TYPE_HDRS[HDR_IDX_CONTENT_FORMAT])) != NULL) {
+                    CONTENT_TYPE_HEADERS[HEADER_INDEX_CONTENT_FORMAT])) !=
+            NULL) {
           if ((ret_code =
                   sscanf (tmp_str2, "%[^=]=\"%[^\"]%s", tmp1, tmp2,
                       tmp3)) != 3) {
             GST_WARNING_OBJECT (dlna_src,
-                "Problems parsing DTCP CONTENT FORMAT from HEAD response field hdr %s, value: %s, retcode: %d, tmp: %s, %s, %s",
-                HEAD_RESPONSE_HDRS[idx], tmp_str2, ret_code, tmp1, tmp2, tmp3);
+                "Problems parsing DTCP CONTENT FORMAT from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s, %s",
+                HEAD_RESPONSE_HEADERS[idx], tmp_str2, ret_code, tmp1, tmp2,
+                tmp3);
           } else {
             GST_LOG_OBJECT (dlna_src, "Found field: %s",
-                CONTENT_TYPE_HDRS[HDR_IDX_DTCP_PORT]);
+                CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_PORT]);
             dlna_src->head_response->content_type = g_strdup (tmp2);
           }
         }
         //  APPLICATION/X-DTCP1
         else if ((tmp_str2 =
-                strstr (tokens, CONTENT_TYPE_HDRS[HDR_IDX_APP_DTCP])) != NULL) {
+                strstr (tokens,
+                    CONTENT_TYPE_HEADERS[HEADER_INDEX_APP_DTCP])) != NULL) {
           // Ignore this field
         } else {
           GST_WARNING_OBJECT (dlna_src, "Unrecognized sub field:%s", tokens);
@@ -2886,89 +2823,88 @@ dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src)
 
   strcat (structStr, "Time Seek Supported?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->op_time_seek_supported) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          op_time_seek_supported) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Range Supported?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->op_range_supported) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          op_range_supported) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Sender Paced?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_sender_paced_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_sender_paced_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Limited Time Seek?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_limited_time_seek_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_limited_time_seek_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Limited Byte Seek?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_limited_byte_seek_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_limited_byte_seek_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Play Container?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_play_container_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_play_container_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "S0 Increasing?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_so_increasing_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_so_increasing_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Sn Increasing?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_sn_increasing_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_sn_increasing_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "RTSP Pause?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_rtsp_pause_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_rtsp_pause_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Streaming Mode Supported?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_streaming_mode_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_streaming_mode_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Interactive Mode Supported?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_interactive_mode_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_interactive_mode_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Background Mode Supported?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_background_mode_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_background_mode_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Connection Stalling Supported?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_stalling_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_stalling_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "DLNA Ver. 1.5?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_dlna_v15_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_dlna_v15_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Link Protected?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_link_protected_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_link_protected_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Full Clear Text?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_full_clear_text_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_full_clear_text_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Limited Clear Text?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_limited_clear_text_set) ? "TRUE\n" :
-      "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_limited_clear_text_set) ? "TRUE\n" : "FALSE\n");
 
   // Copy local string to struct str
   dlna_src->head_response->struct_str = g_strdup (structStr);
