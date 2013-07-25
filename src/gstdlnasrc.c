@@ -975,36 +975,25 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
   dlna_src->requested_start = start;
   dlna_src->requested_stop = stop;
 
-  if (dlna_src->requested_rate != 1.0)
-  {
-      // Create necessary extra headers for http src so change can be requested
-      GstStructure *extra_headers_struct = NULL;
+  if (dlna_src->requested_rate != 1.0) {
+    // Create necessary extra headers for http src so change can be requested
+    GstStructure *extra_headers_struct = NULL;
 
-      if (!dlna_src_formulate_extra_headers (dlna_src, dlna_src->requested_rate,
-              dlna_src->requested_format,
-              dlna_src->requested_start, &extra_headers_struct)) {
-        GST_ERROR_OBJECT (dlna_src, "Problem formulating extra headers");
-        // Returning true to prevent further processing
-        return TRUE;
-      }
-      if (extra_headers_struct == NULL) {
-        GST_ERROR_OBJECT (dlna_src, "Extra headers structure was NULL");
-        // Returning true to prevent further processing
-        return TRUE;
-      } else {
-        GST_LOG_OBJECT (dlna_src,
-            "Successfully formulated extra headers structure");
-      }
+    if (!dlna_src_formulate_extra_headers (dlna_src, dlna_src->requested_rate,
+            dlna_src->requested_format,
+            dlna_src->requested_start, &extra_headers_struct)) {
+      GST_ERROR_OBJECT (dlna_src, "Problem formulating extra headers");
+      // Returning true to prevent further processing
+      return TRUE;
+    }
+    // Convert structure to GValue in order to set property
+    GValue struct_value = G_VALUE_INIT;
+    g_value_init (&struct_value, GST_TYPE_STRUCTURE);
+    gst_value_set_structure (&struct_value, extra_headers_struct);
+    g_object_set_property (G_OBJECT (dlna_src->http_src), "extra-headers",
+        &struct_value);
 
-      // Convert structure to GValue in order to set property
-      GValue struct_value = { 0 };
-      g_value_init (&struct_value, GST_TYPE_STRUCTURE);
-      gst_value_set_structure (&struct_value, extra_headers_struct);
-      g_object_set_property (G_OBJECT (dlna_src->http_src), "extra-headers",
-          &struct_value);
-
-      // *TODO* - is this necessary????
-      //gst_structure_free(extra_headers_struct);
+    gst_structure_free (extra_headers_struct);
   }
 
   GST_INFO_OBJECT (dlna_src,
@@ -1134,38 +1123,30 @@ dlna_src_formulate_extra_headers (GstDlnaSrc * dlna_src, gfloat rate,
   gchar *ps_field_value_prefix = "speed=";
   gchar ps_field_value[64];
 
-  // Setup header to request playspeed, only necessary if rate is not 1
-  if (rate != 1.0) {
-    // Get string representation of rate
-    int i = 0;
-    char *rateStr = NULL;
-    for (i = 0;
-        i < dlna_src->head_response->content_features->playspeeds_cnt; i++) {
-      if (dlna_src->head_response->content_features->playspeeds[i] == rate) {
-        rateStr = dlna_src->head_response->content_features->playspeed_strs[i];
-        break;
-      }
+  // Get string representation of rate
+  int i = 0;
+  char *rateStr = NULL;
+  for (i = 0;
+      i < dlna_src->head_response->content_features->playspeeds_cnt; i++) {
+    if (dlna_src->head_response->content_features->playspeeds[i] == rate) {
+      rateStr = dlna_src->head_response->content_features->playspeed_strs[i];
+      break;
     }
-
-    if (rateStr == NULL) {
-      GST_ERROR_OBJECT (dlna_src,
-          "Unable to get string representation of rate: %lf", rate);
-      return FALSE;
-    }
-
-    sprintf ((gchar *) & ps_field_value[0], "%s%s", ps_field_value_prefix,
-        rateStr);
-    GST_INFO_OBJECT (dlna_src, "Set playspeed header value: %s",
-        ps_field_value);
-
-    *headers = gst_structure_new ("extraHeadersStruct",
-      "transferMode.dlna.org", G_TYPE_STRING, "Streaming",
-      ps_field_name, G_TYPE_STRING, &ps_field_value,
-      NULL);
-  } else {
-    GST_INFO_OBJECT (dlna_src,
-        "Not including playspeed header since rate = 1.0");
   }
+
+  if (rateStr == NULL) {
+    GST_ERROR_OBJECT (dlna_src,
+        "Unable to get string representation of rate: %lf", rate);
+    return FALSE;
+  }
+
+  sprintf ((gchar *) & ps_field_value[0], "%s%s", ps_field_value_prefix,
+      rateStr);
+  GST_INFO_OBJECT (dlna_src, "Set playspeed header value: %s", ps_field_value);
+
+  *headers = gst_structure_new ("extraHeadersStruct",
+      "transferMode.dlna.org", G_TYPE_STRING, "Streaming",
+      ps_field_name, G_TYPE_STRING, &ps_field_value, NULL);
 
   if (*headers == NULL) {
     GST_WARNING_OBJECT (dlna_src, "Did not create extra headers structure");
@@ -1874,7 +1855,8 @@ dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src)
   dlna_src->head_response->transfer_mode = NULL;
 
   // {"TRANSFER-ENCODING", STRING_TYPE}
-  dlna_src->head_response->transfer_encoding_idx = HEADER_INDEX_TRANSFER_ENCODING;
+  dlna_src->head_response->transfer_encoding_idx =
+      HEADER_INDEX_TRANSFER_ENCODING;
 
   dlna_src->head_response->transfer_encoding = NULL;
 
@@ -2196,7 +2178,8 @@ dlna_src_head_response_parse_dtcp_range (GstDlnaSrc * dlna_src, gint idx,
   // Extract start and end BYTES same format as TIME SEEK BYTES header
   tmp_str2 = strstr (field_str, TIME_SEEK_HEADERS[HEADER_INDEX_BYTES]);
   if (tmp_str2 != NULL) {
-    tmp_str1 = tmp_str2 + strlen (TIME_SEEK_HEADERS[HEADER_INDEX_BYTES] + 1) + 1;
+    tmp_str1 =
+        tmp_str2 + strlen (TIME_SEEK_HEADERS[HEADER_INDEX_BYTES] + 1) + 1;
     // *TODO* - add logic to deal with '*'
     if ((ret_code =
             sscanf (tmp_str1,
@@ -2256,28 +2239,32 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
     while (tokens != NULL) {
       // "DLNA.ORG_PN"
       if ((tmp_str2 =
-              strstr (tokens, CONTENT_FEATURES_HEADERS[HEADER_INDEX_PN])) != NULL) {
+              strstr (tokens,
+                  CONTENT_FEATURES_HEADERS[HEADER_INDEX_PN])) != NULL) {
         GST_LOG_OBJECT (dlna_src, "Found field: %s",
             CONTENT_FEATURES_HEADERS[HEADER_INDEX_PN]);
         pn_str = tokens;
       }
       // "DLNA.ORG_OP"
       else if ((tmp_str2 =
-              strstr (tokens, CONTENT_FEATURES_HEADERS[HEADER_INDEX_OP])) != NULL) {
+              strstr (tokens,
+                  CONTENT_FEATURES_HEADERS[HEADER_INDEX_OP])) != NULL) {
         GST_LOG_OBJECT (dlna_src, "Found field: %s",
             CONTENT_FEATURES_HEADERS[HEADER_INDEX_OP]);
         op_str = tokens;
       }
       // "DLNA.ORG_PS"
       else if ((tmp_str2 =
-              strstr (tokens, CONTENT_FEATURES_HEADERS[HEADER_INDEX_PS])) != NULL) {
+              strstr (tokens,
+                  CONTENT_FEATURES_HEADERS[HEADER_INDEX_PS])) != NULL) {
         GST_LOG_OBJECT (dlna_src, "Found field: %s",
             CONTENT_FEATURES_HEADERS[HEADER_INDEX_PS]);
         ps_str = tokens;
       }
       // "DLNA.ORG_FLAGS"
       else if ((tmp_str2 =
-              strstr (tokens, CONTENT_FEATURES_HEADERS[HEADER_INDEX_FLAGS])) != NULL) {
+              strstr (tokens,
+                  CONTENT_FEATURES_HEADERS[HEADER_INDEX_FLAGS])) != NULL) {
         GST_LOG_OBJECT (dlna_src, "Found field: %s",
             CONTENT_FEATURES_HEADERS[HEADER_INDEX_FLAGS]);
         flags_str = tokens;
@@ -2451,8 +2438,7 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src, gint idx,
       GST_LOG_OBJECT (dlna_src, "Found PS: %s", playspeeds);
 
       // Store string representation
-      dlna_src->head_response->content_features->
-          playspeed_strs
+      dlna_src->head_response->content_features->playspeed_strs
           [dlna_src->head_response->content_features->playspeeds_cnt]
           = g_strdup (playspeeds);
 
@@ -2465,8 +2451,9 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src, gint idx,
               playspeeds);
           return FALSE;
         } else {
-          dlna_src->head_response->content_features->playspeeds[dlna_src->
-              head_response->content_features->playspeeds_cnt] = rate;
+          dlna_src->head_response->content_features->
+              playspeeds[dlna_src->head_response->content_features->
+              playspeeds_cnt] = rate;
         }
       } else {
         // Handle conversion of fractional values
@@ -2478,8 +2465,9 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src, gint idx,
         } else {
           rate = (gfloat) n / (gfloat) d;
 
-          dlna_src->head_response->content_features->playspeeds[dlna_src->
-              head_response->content_features->playspeeds_cnt] = rate;
+          dlna_src->head_response->content_features->
+              playspeeds[dlna_src->head_response->content_features->
+              playspeeds_cnt] = rate;
         }
 
       }
@@ -2623,13 +2611,15 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src, gint idx,
         // CONTENTFORMAT
         else if ((tmp_str2 =
                 strstr (tokens,
-                    CONTENT_TYPE_HEADERS[HEADER_INDEX_CONTENT_FORMAT])) != NULL) {
+                    CONTENT_TYPE_HEADERS[HEADER_INDEX_CONTENT_FORMAT])) !=
+            NULL) {
           if ((ret_code =
                   sscanf (tmp_str2, "%[^=]=\"%[^\"]%s", tmp1, tmp2,
                       tmp3)) != 3) {
             GST_WARNING_OBJECT (dlna_src,
                 "Problems parsing DTCP CONTENT FORMAT from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s, %s",
-                HEAD_RESPONSE_HEADERS[idx], tmp_str2, ret_code, tmp1, tmp2, tmp3);
+                HEAD_RESPONSE_HEADERS[idx], tmp_str2, ret_code, tmp1, tmp2,
+                tmp3);
           } else {
             GST_LOG_OBJECT (dlna_src, "Found field: %s",
                 CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_PORT]);
@@ -2638,7 +2628,8 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src, gint idx,
         }
         //  APPLICATION/X-DTCP1
         else if ((tmp_str2 =
-                strstr (tokens, CONTENT_TYPE_HEADERS[HEADER_INDEX_APP_DTCP])) != NULL) {
+                strstr (tokens,
+                    CONTENT_TYPE_HEADERS[HEADER_INDEX_APP_DTCP])) != NULL) {
           // Ignore this field
         } else {
           GST_WARNING_OBJECT (dlna_src, "Unrecognized sub field:%s", tokens);
@@ -2849,89 +2840,88 @@ dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src)
 
   strcat (structStr, "Time Seek Supported?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->op_time_seek_supported) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          op_time_seek_supported) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Range Supported?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->op_range_supported) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          op_range_supported) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Sender Paced?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_sender_paced_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_sender_paced_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Limited Time Seek?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_limited_time_seek_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_limited_time_seek_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Limited Byte Seek?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_limited_byte_seek_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_limited_byte_seek_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Play Container?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_play_container_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_play_container_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "S0 Increasing?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_so_increasing_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_so_increasing_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Sn Increasing?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_sn_increasing_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_sn_increasing_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "RTSP Pause?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_rtsp_pause_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_rtsp_pause_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Streaming Mode Supported?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_streaming_mode_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_streaming_mode_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Interactive Mode Supported?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_interactive_mode_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_interactive_mode_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Background Mode Supported?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_background_mode_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_background_mode_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Connection Stalling Supported?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_stalling_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_stalling_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "DLNA Ver. 1.5?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_dlna_v15_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_dlna_v15_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Link Protected?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_link_protected_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_link_protected_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Full Clear Text?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_full_clear_text_set) ? "TRUE\n" : "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_full_clear_text_set) ? "TRUE\n" : "FALSE\n");
 
   strcat (structStr, "Limited Clear Text?: ");
   strcat (structStr,
-      (dlna_src->head_response->
-          content_features->flag_limited_clear_text_set) ? "TRUE\n" :
-      "FALSE\n");
+      (dlna_src->head_response->content_features->
+          flag_limited_clear_text_set) ? "TRUE\n" : "FALSE\n");
 
   // Copy local string to struct str
   dlna_src->head_response->struct_str = g_strdup (structStr);
