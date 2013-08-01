@@ -2965,12 +2965,6 @@ dlna_src_npt_to_nanos (GstDlnaSrc * dlna_src, gchar * string,
   return ret;
 }
 
-/* 
- * The following section supports the GStreamer auto plugging infrastructure. 
- * Set to 0 if this is done on a package level using (ie gstelements.[hc])
- */
-#if 1
-
 /* entry point to initialize the plug-in
  * initialize the plug-in itself
  * register the element factories and other features
@@ -2992,6 +2986,24 @@ dlna_src_init (GstPlugin * dlna_src)
       GST_TYPE_DLNA_SRC);
 }
 
+/* gstreamer looks for this structure to register eisss
+ *
+ * exchange the string 'Template eiss' with your eiss description
+ */
+GST_PLUGIN_DEFINE (GST_VERSION_MAJOR,
+    GST_VERSION_MINOR,
+    dlnasrc,
+    "DLNA HTTP Source",
+    (GstPluginInitFunc) dlna_src_init,
+    VERSION, "LGPL", "gst-cablelabs_ri", "http://gstreamer.net/")
+
+
+/*
+ * The following section supports the GStreamer auto plugging infrastructure.
+ * Set to 0 if this is done on a package level using (ie gstelements.[hc])
+ */
+#if 0
+
 /* PACKAGE: this is usually set by autotools depending on some _INIT macro
  * in configure.ac and then written into and defined in config.h, but we can
  * just set it ourselves here in case someone doesn't use autotools to
@@ -3001,17 +3013,6 @@ dlna_src_init (GstPlugin * dlna_src)
 #define PACKAGE "dlnasrc"
 #endif
 
-/* gstreamer looks for this structure to register eisss
- *
- * exchange the string 'Template eiss' with your eiss description
- */
-GST_PLUGIN_DEFINE (GST_VERSION_MAJOR,
-    GST_VERSION_MINOR,
-    dlnasrc,
-    "MPEG+DLNA Decoder",
-    (GstPluginInitFunc) dlna_src_init,
-    VERSION, "LGPL", "gst-cablelabs_ri", "http://gstreamer.net/")
-#endif
 /*
   Function for marshaling the callback arguments into a function closure.
 
@@ -3083,3 +3084,5 @@ gst_play_marshal_BOXED__OBJECT_BOXED (GClosure * closure,
 
   g_value_take_boxed (return_value, v_return);
 }
+#endif
+
