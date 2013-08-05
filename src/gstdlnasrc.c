@@ -705,7 +705,7 @@ dlna_src_handle_query_seeking (GstDlnaSrc * dlna_src, GstQuery * query)
   // Make sure a URI has been set and HEAD response received
   if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
       (dlna_src->head_response->content_features == NULL)) {
-    GST_ERROR_OBJECT (dlna_src,
+    GST_WARNING_OBJECT (dlna_src,
         "No URI and/or HEAD response info, unable to handle query");
     return FALSE;
   }
@@ -926,7 +926,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
   // Make sure a URI has been set and HEAD response received
   if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
       (dlna_src->head_response->content_features == NULL)) {
-    GST_ERROR_OBJECT (dlna_src,
+    GST_WARNING_OBJECT (dlna_src,
         "No URI and/or HEAD response info, event handled");
     return TRUE;
   }
@@ -1535,7 +1535,7 @@ dlna_src_open_socket (GstDlnaSrc * dlna_src)
 
   struct addrinfo *srvrInfo = NULL;
   if (0 != (ret = getaddrinfo (dlna_src->uri_addr, portStr, &hints, &srvrInfo))) {
-    GST_ERROR_OBJECT (dlna_src, "getaddrinfo[%s] using addr %s, port %d\n",
+    GST_WARNING_OBJECT (dlna_src, "getaddrinfo[%s] using addr %s, port %d\n",
         gai_strerror (ret), dlna_src->uri_addr, dlna_src->uri_port);
     return FALSE;
   }
@@ -1544,7 +1544,7 @@ dlna_src_open_socket (GstDlnaSrc * dlna_src)
   for (pSrvr = srvrInfo; pSrvr != NULL; pSrvr = pSrvr->ai_next) {
     if (0 > (dlna_src->sock = socket (pSrvr->ai_family,
                 pSrvr->ai_socktype, pSrvr->ai_protocol))) {
-      GST_ERROR_OBJECT (dlna_src, "socket() failed?");
+      GST_WARNING_OBJECT (dlna_src, "socket() failed?");
       continue;
     }
 
