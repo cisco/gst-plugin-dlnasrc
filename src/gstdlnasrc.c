@@ -1989,7 +1989,7 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src, gint idx,
       break;
 
     case HEADER_INDEX_CONTENT_LENGTH:
-      if ((ret_code = sscanf (field_str, "%[^:]:%llu", tmp1, &guint64_value)) != 2) {
+      if ((ret_code = sscanf (field_str, "%[^:]:%" G_GUINT64_FORMAT, tmp1, &guint64_value)) != 2) {
         GST_WARNING_OBJECT (dlna_src,
               "Problems parsing Content Length from HEAD response field header %s, value: %s, retcode: %d",
               HEAD_RESPONSE_HEADERS[idx], field_str, ret_code);
