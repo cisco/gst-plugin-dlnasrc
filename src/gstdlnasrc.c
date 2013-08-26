@@ -79,6 +79,8 @@ static const char *HEAD_RESPONSE_HEADERS[] = {
   "CONTENT-RANGE.DTCP.COM",     // 9
   "PRAGMA",                     // 10
   "CACHE-CONTROL",              // 11
+  "CONTENT-LENGTH",             // 12
+  "ACCEPT-RANGES"               // 13
 };
 
 // Constants which represent indices in HEAD_RESPONSE_HEADERS string array
@@ -95,15 +97,20 @@ static const char *HEAD_RESPONSE_HEADERS[] = {
 #define HEADER_INDEX_DTCP_RANGE 9
 #define HEADER_INDEX_PRAGMA 10
 #define HEADER_INDEX_CACHE_CONTROL 11
+#define HEADER_INDEX_CONTENT_LENGTH 12
+#define HEADER_INDEX_ACCEPT_RANGES 13
 
 // Count of field headers in HEAD_RESPONSE_HEADERS along with HEADER_INDEX_* constants
-static const gint HEAD_RESPONSE_HEADERS_CNT = 12;
+static const gint HEAD_RESPONSE_HEADERS_CNT = 14;
 
 // Subfield headers within TIMESEEKRANGE.DLNA.ORG
 static const char *TIME_SEEK_HEADERS[] = {
   "NPT",                        // 0
   "BYTES",                      // 1
 };
+
+// Subfield headers within ACCEPT-RANGES
+static const char *ACCEPT_RANGES_NONE = "NONE";
 
 #define HEADER_INDEX_NPT 0
 #define HEADER_INDEX_BYTES 1
@@ -375,6 +382,7 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
         "The http soup source element could not be created.");
     return;
   }
+
   // Add source element to the src
   gst_bin_add (GST_BIN (&dlna_src->bin), dlna_src->http_src);
 
@@ -947,6 +955,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
   if (!dlna_src_is_change_valid
       (dlna_src, rate, format, start, start_type, stop, stop_type)) {
     GST_ERROR_OBJECT (dlna_src, "Requested change is invalid, event handled");
+
     return TRUE;
   }
   // *TODO* - is this needed here??? Assign play rate to supplied rate
@@ -1851,6 +1860,15 @@ dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src)
   dlna_src->head_response->server_idx = HEADER_INDEX_SERVER;
   dlna_src->head_response->server = NULL;
 
+  // {"CONTENT-LENGTH", NUMERIC_TYPE}
+  dlna_src->head_response->content_length_idx = HEADER_INDEX_CONTENT_LENGTH;
+  dlna_src->head_response->content_length = 0;
+
+  // {"ACCEPT-RANGES", STRING_TYPE}
+  dlna_src->head_response->accept_ranges_idx = HEADER_INDEX_ACCEPT_RANGES;
+  dlna_src->head_response->accept_ranges = NULL;
+  dlna_src->head_response->accept_byte_ranges = TRUE;
+
   // {"CONTENT-TYPE", STRING_TYPE}
   dlna_src->head_response->content_type_idx = HEADER_INDEX_CONTENT_TYPE;
   dlna_src->head_response->content_type = NULL;
@@ -1949,6 +1967,7 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src, gint idx,
   char tmp2[32];
   gint int_value = 0;
   gint ret_code = 0;
+  guint64 guint64_value = 0;
 
   // Get value based on index
   switch (idx) {
@@ -1968,6 +1987,23 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src, gint idx,
             HEAD_RESPONSE_HEADERS[idx], field_str);
       }
       break;
+
+    case HEADER_INDEX_CONTENT_LENGTH:
+      if ((ret_code = sscanf (field_str, "%[^:]:%llu", tmp1, &guint64_value)) != 2) {
+        GST_WARNING_OBJECT (dlna_src,
+              "Problems parsing Content Length from HEAD response field header %s, value: %s, retcode: %d",
+              HEAD_RESPONSE_HEADERS[idx], field_str, ret_code);
+      } else {
+        dlna_src->head_response->content_length = guint64_value;
+      }
+      break;
+
+    case HEADER_INDEX_ACCEPT_RANGES:
+       dlna_src->head_response->accept_ranges =
+           g_strdup ((strstr (field_str, ":") + 1));
+       if (strcmp(dlna_src->head_response->accept_ranges, ACCEPT_RANGES_NONE) == 0)
+         dlna_src->head_response->accept_byte_ranges = FALSE;
+       break;
 
     case HEADER_INDEX_SERVER:
       dlna_src->head_response->server =
@@ -2696,6 +2732,20 @@ dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src)
   strcat (structStr, "Date: ");
   if (dlna_src->head_response->date != NULL)
     strcat (structStr, dlna_src->head_response->date);
+  strcat (structStr, "\n");
+
+  strcat (structStr, "Content Length: ");
+  if (dlna_src->head_response->content_length != 0) {
+    (void) memset ((gchar *) & tmpStr, 0, sizeof (tmpStr));
+    sprintf (tmpStr, "%" G_GUINT64_FORMAT,
+          dlna_src->head_response->content_length);
+    strcat (structStr, tmpStr);
+  }
+  strcat (structStr, "\n");
+
+  strcat (structStr, "Accept Ranges: ");
+  if (dlna_src->head_response->accept_ranges != NULL)
+    strcat (structStr, dlna_src->head_response->accept_ranges);
   strcat (structStr, "\n");
 
   strcat (structStr, "Content Type: ");
