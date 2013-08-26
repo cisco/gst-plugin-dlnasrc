@@ -1770,7 +1770,7 @@ dlna_src_head_response_parse (GstDlnaSrc * dlna_src)
     if (idx != -1) {
       fields[idx] = tokens;
     } else {
-      GST_WARNING_OBJECT (dlna_src, "No Idx found for Field:%s", tokens);
+      GST_INFO_OBJECT (dlna_src, "No Idx found for Field:%s", tokens);
     }
 
     // Go on to next field
