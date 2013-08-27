@@ -643,8 +643,7 @@ dlna_src_handle_query_duration (GstDlnaSrc * dlna_src, GstQuery * query)
   GST_LOG_OBJECT (dlna_src, "Called");
 
   // Make sure a URI has been set and HEAD response received
-  if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
-      (dlna_src->head_response->content_features == NULL)) {
+  if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL)) {
     GST_INFO_OBJECT (dlna_src,
         "No URI and/or HEAD response info, unable to handle query");
     return FALSE;
@@ -654,36 +653,49 @@ dlna_src_handle_query_duration (GstDlnaSrc * dlna_src, GstQuery * query)
 
   if (format == GST_FORMAT_BYTES) {
     // Total duration of stream available?, report this if it is known
-    if (dlna_src->head_response->content_features->op_range_supported) {
+    if ((dlna_src->head_response->content_features != NULL) &&
+        (dlna_src->head_response->content_features->op_range_supported)) {
       gst_query_set_duration (query, GST_FORMAT_BYTES,
           dlna_src->head_response->byte_seek_total);
       ret = TRUE;
 
-      GST_INFO_OBJECT (dlna_src,
+      GST_DEBUG_OBJECT (dlna_src,
           "Duration in bytes for this content on the server: %"
           G_GUINT64_FORMAT, dlna_src->head_response->byte_seek_total);
     } else {
-      GST_INFO_OBJECT (dlna_src,
-          "Duration in bytes not available for content item");
+      // Check if server supplied content-length
+      if (dlna_src->head_response->content_length > 0) {
+        gst_query_set_duration (query, GST_FORMAT_BYTES,
+            dlna_src->head_response->content_length);
+        ret = TRUE;
+
+        GST_DEBUG_OBJECT (dlna_src,
+            "Server supplied content-length header: %"
+            G_GUINT64_FORMAT, dlna_src->head_response->content_length);
+      } else {
+        GST_DEBUG_OBJECT (dlna_src,
+            "Duration in bytes not available for content item");
+      }
     }
   } else if (format == GST_FORMAT_TIME) {
-    if (dlna_src->head_response->content_features->op_time_seek_supported) {
+    if ((dlna_src->head_response->content_features != NULL) &&
+        (dlna_src->head_response->content_features->op_time_seek_supported)) {
       gst_query_set_duration (query, GST_FORMAT_TIME,
           dlna_src->head_response->time_seek_npt_duration);
       ret = TRUE;
 
-      GST_INFO_OBJECT (dlna_src,
+      GST_DEBUG_OBJECT (dlna_src,
           "Duration in media time for this content on the server, npt: %s, nanosecs: %"
           G_GUINT64_FORMAT,
           dlna_src->head_response->time_seek_npt_duration_str,
           dlna_src->head_response->time_seek_npt_duration);
     } else {
-      GST_INFO_OBJECT (dlna_src,
+      GST_DEBUG_OBJECT (dlna_src,
           "Duration in media time not available for content item");
     }
   } else {
     // Can not handle other format types, returning false
-    GST_INFO_OBJECT (dlna_src,
+    GST_DEBUG_OBJECT (dlna_src,
         "Got duration query with non-supported format type: %s, passing to default handler",
         gst_format_get_name (format));
   }
@@ -710,8 +722,7 @@ dlna_src_handle_query_seeking (GstDlnaSrc * dlna_src, GstQuery * query)
   GST_DEBUG_OBJECT (dlna_src, "Called");
 
   // Make sure a URI has been set and HEAD response received
-  if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
-      (dlna_src->head_response->content_features == NULL)) {
+  if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL)) {
     GST_INFO_OBJECT (dlna_src,
         "No URI and/or HEAD response info, unable to handle query");
     return FALSE;
@@ -722,7 +733,8 @@ dlna_src_handle_query_seeking (GstDlnaSrc * dlna_src, GstQuery * query)
 
   if ((format == GST_FORMAT_BYTES) || (format == GST_FORMAT_DEFAULT)) {
     // Determine if this server supports byte based seeks for this content
-    if (dlna_src->head_response->content_features->op_range_supported) {
+    if ((dlna_src->head_response->content_features != NULL) &&
+        (dlna_src->head_response->content_features->op_range_supported)) {
       // *TODO* - add check for DTCP since range will be different
 
       // Set results of query but don't do actual seek
@@ -731,35 +743,47 @@ dlna_src_handle_query_seeking (GstDlnaSrc * dlna_src, GstQuery * query)
           dlna_src->head_response->byte_seek_end);
       ret = TRUE;
 
-      GST_INFO_OBJECT (dlna_src,
+      GST_DEBUG_OBJECT (dlna_src,
           "Byte seeks supported for this content by the server, start %"
           G_GUINT64_FORMAT ", end %" G_GUINT64_FORMAT,
           dlna_src->head_response->byte_seek_start,
           dlna_src->head_response->byte_seek_end);
     } else {
-      GST_INFO_OBJECT (dlna_src,
-          "Seeking in bytes not available for content item");
+      // Check if server accepts byte range requests
+      if (dlna_src->head_response->accept_byte_ranges) {
+        gst_query_set_seeking (query, GST_FORMAT_BYTES, TRUE, 0,
+            dlna_src->head_response->content_length);
+        ret = TRUE;
+
+        GST_DEBUG_OBJECT (dlna_src,
+            "Server accepts byte range requests, start 0, end %"
+            G_GUINT64_FORMAT, dlna_src->head_response->content_length);
+      } else {
+        GST_DEBUG_OBJECT (dlna_src,
+            "Seeking in bytes not available for content item");
+      }
     }
   } else if (format == GST_FORMAT_TIME) {
-    if (dlna_src->head_response->content_features->op_time_seek_supported) {
+    if ((dlna_src->head_response->content_features != NULL) &&
+        (dlna_src->head_response->content_features->op_time_seek_supported)) {
       // Set results of query but don't do actual seek???
       gst_query_set_seeking (query, GST_FORMAT_TIME, TRUE,
           dlna_src->head_response->time_seek_npt_start,
           dlna_src->head_response->time_seek_npt_end);
       ret = TRUE;
 
-      GST_INFO_OBJECT (dlna_src,
+      GST_DEBUG_OBJECT (dlna_src,
           "Time based seeks supported for this content by the server, start %"
           G_GUINT64_FORMAT ", end %" G_GUINT64_FORMAT,
           dlna_src->head_response->time_seek_npt_start,
           dlna_src->head_response->time_seek_npt_end);
     } else {
-      GST_INFO_OBJECT (dlna_src,
+      GST_DEBUG_OBJECT (dlna_src,
           "Seeking in media time not available for content item");
     }
   } else {
     // Can not handle other format types, returning false
-    GST_INFO_OBJECT (dlna_src,
+    GST_DEBUG_OBJECT (dlna_src,
         "Got seeking query with non-supported format type: %s, passing to default handler",
         GST_QUERY_TYPE_NAME (query));
   }
@@ -787,8 +811,7 @@ dlna_src_handle_query_segment (GstDlnaSrc * dlna_src, GstQuery * query)
   GST_LOG_OBJECT (dlna_src, "Called");
 
   // Make sure a URI has been set and HEAD response received
-  if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
-      (dlna_src->head_response->content_features == NULL)) {
+  if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL)) {
     GST_INFO_OBJECT (dlna_src,
         "No URI and/or HEAD response info, unable to handle query");
     return FALSE;
@@ -798,7 +821,8 @@ dlna_src_handle_query_segment (GstDlnaSrc * dlna_src, GstQuery * query)
 
   if (format == GST_FORMAT_BYTES) {
     // Determine if this server supports byte based seeks for this content
-    if (dlna_src->head_response->content_features->op_range_supported) {
+    if ((dlna_src->head_response->content_features != NULL) &&
+        (dlna_src->head_response->content_features->op_range_supported)) {
       // *TODO* - add check for DTCP since range will be different
 
       gst_query_set_segment (query, dlna_src->rate, GST_FORMAT_BYTES,
@@ -806,36 +830,48 @@ dlna_src_handle_query_segment (GstDlnaSrc * dlna_src, GstQuery * query)
           dlna_src->head_response->byte_seek_end);
       ret = TRUE;
 
-      GST_INFO_OBJECT (dlna_src,
+      GST_DEBUG_OBJECT (dlna_src,
           "Segment info in bytes for this content, rate %f, start %"
           G_GUINT64_FORMAT ", end %" G_GUINT64_FORMAT,
           dlna_src->rate,
           dlna_src->head_response->byte_seek_start,
           dlna_src->head_response->byte_seek_end);
     } else {
-      GST_INFO_OBJECT (dlna_src,
-          "Segment info in bytes not available for content item");
+      // Check if server accepts byte range requests
+      if (dlna_src->head_response->accept_byte_ranges) {
+        gst_query_set_segment (query, dlna_src->rate, GST_FORMAT_BYTES,
+            0, dlna_src->head_response->content_length);
+        ret = TRUE;
+
+        GST_DEBUG_OBJECT (dlna_src,
+            "Segment info based on content length, start 0, end %"
+            G_GUINT64_FORMAT, dlna_src->head_response->content_length);
+      } else {
+        GST_DEBUG_OBJECT (dlna_src,
+            "Segment info in bytes not available for content item");
+      }
     }
   } else if (format == GST_FORMAT_TIME) {
-    if (dlna_src->head_response->content_features->op_time_seek_supported) {
+    if ((dlna_src->head_response->content_features != NULL) &&
+        (dlna_src->head_response->content_features->op_time_seek_supported)) {
       gst_query_set_segment (query, dlna_src->rate, GST_FORMAT_TIME,
           dlna_src->head_response->time_seek_npt_start,
           dlna_src->head_response->time_seek_npt_end);
       ret = TRUE;
 
-      GST_INFO_OBJECT (dlna_src,
+      GST_DEBUG_OBJECT (dlna_src,
           "Time based segment info for this content by the server, rate %f, start %"
           G_GUINT64_FORMAT ", end %" G_GUINT64_FORMAT,
           dlna_src->rate,
           dlna_src->head_response->time_seek_npt_start,
           dlna_src->head_response->time_seek_npt_end);
     } else {
-      GST_INFO_OBJECT (dlna_src,
+      GST_DEBUG_OBJECT (dlna_src,
           "Segment info in media time not available for content item");
     }
   } else {
     // Can not handle other format types, returning false
-    GST_INFO_OBJECT (dlna_src,
+    GST_DEBUG_OBJECT (dlna_src,
         "Got segment query with non-supported format type: %s, passing to default handler",
         GST_QUERY_TYPE_NAME (query));
   }
@@ -872,7 +908,7 @@ dlna_src_handle_query_convert (GstDlnaSrc * dlna_src, GstQuery * query)
   gst_query_parse_convert (query, &src_fmt, &src_val, &dest_fmt, &dest_val);
 
   // Print out info about conversion that has been requested
-  GST_INFO_OBJECT (dlna_src,
+  GST_DEBUG_OBJECT (dlna_src,
       "Got conversion query: src fmt: %s, dest fmt: %s, src val: %"
       G_GUINT64_FORMAT ", dest: val %" G_GUINT64_FORMAT,
       gst_format_get_name (src_fmt),
@@ -931,8 +967,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
   gint64 stop;
 
   // Make sure a URI has been set and HEAD response received
-  if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL) ||
-      (dlna_src->head_response->content_features == NULL)) {
+  if ((dlna_src->uri == NULL) || (dlna_src->head_response == NULL)) {
     GST_INFO_OBJECT (dlna_src,
         "No URI and/or HEAD response info, event handled");
     return TRUE;
@@ -987,7 +1022,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
     gst_structure_free (extra_headers_struct);
   }
 
-  GST_INFO_OBJECT (dlna_src,
+  GST_DEBUG_OBJECT (dlna_src,
       "returning false to make sure souphttpsrc gets chance to process");
   return FALSE;
 }
@@ -1027,8 +1062,10 @@ dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
   if (format == GST_FORMAT_BYTES) {
     // Verify start byte is within range
     // *TODO* - add support for DTCP
-    if ((start < dlna_src->head_response->byte_seek_start) ||
-        (start > dlna_src->head_response->byte_seek_end)) {
+    if ((dlna_src->head_response->content_features != NULL) &&
+        (dlna_src->head_response->content_features->op_range_supported) &&
+        ((start < dlna_src->head_response->byte_seek_start) ||
+            (start > dlna_src->head_response->byte_seek_end))) {
       GST_WARNING_OBJECT (dlna_src,
           "Specified start byte %" G_GUINT64_FORMAT
           " is not valid, valid range: %" G_GUINT64_FORMAT
@@ -1036,11 +1073,22 @@ dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
           dlna_src->head_response->byte_seek_start,
           dlna_src->head_response->byte_seek_end);
       return FALSE;
+    } else {
+      if ((!dlna_src->head_response->accept_byte_ranges) ||
+          (start > dlna_src->head_response->content_length)) {
+        GST_WARNING_OBJECT (dlna_src,
+            "Specified start time %" G_GUINT64_FORMAT
+            " is not valid, valid range: 0 to %" G_GUINT64_FORMAT, start,
+            dlna_src->head_response->content_length);
+        return FALSE;
+      }
     }
   } else if (format == GST_FORMAT_TIME) {
     // Verify start time is within range
-    if ((start < dlna_src->head_response->time_seek_npt_start) ||
-        (start > dlna_src->head_response->time_seek_npt_end)) {
+    if ((dlna_src->head_response->content_features != NULL) &&
+        (dlna_src->head_response->content_features->op_time_seek_supported) &&
+        ((start < dlna_src->head_response->time_seek_npt_start) ||
+            (start > dlna_src->head_response->time_seek_npt_end))) {
       GST_WARNING_OBJECT (dlna_src,
           "Specified start time %" G_GUINT64_FORMAT
           " is not valid, valid range: %" G_GUINT64_FORMAT
@@ -1076,7 +1124,9 @@ dlna_src_is_rate_supported (GstDlnaSrc * dlna_src, gfloat rate)
 
   // Make sure server supports time seeks since that will be required when
   // requesting rate change
-  if (!dlna_src->head_response->content_features->op_time_seek_supported) {
+  if ((dlna_src->head_response == NULL) ||
+      (dlna_src->head_response->content_features == NULL) ||
+      (!dlna_src->head_response->content_features->op_time_seek_supported)) {
     GST_WARNING_OBJECT (dlna_src,
         "Unable to change rate, not supported by server");
     return FALSE;
