@@ -788,9 +788,9 @@ dlna_src_handle_query_seeking (GstDlnaSrc * dlna_src, GstQuery * query)
 
       GST_DEBUG_OBJECT (dlna_src,
           "Time based seeks supported for this content by the server, start %"
-          G_GUINT64_FORMAT ", end %" G_GUINT64_FORMAT,
-          dlna_src->head_response->time_seek_npt_start,
-          dlna_src->head_response->time_seek_npt_end);
+          GST_TIME_FORMAT ", end %" GST_TIME_FORMAT,
+          GST_TIME_ARGS(dlna_src->head_response->time_seek_npt_start),
+          GST_TIME_ARGS(dlna_src->head_response->time_seek_npt_end));
     } else {
       GST_DEBUG_OBJECT (dlna_src,
           "Seeking in media time not available for content item");
@@ -878,10 +878,10 @@ dlna_src_handle_query_segment (GstDlnaSrc * dlna_src, GstQuery * query)
 
       GST_DEBUG_OBJECT (dlna_src,
           "Time based segment info for this content by the server, rate %f, start %"
-          G_GUINT64_FORMAT ", end %" G_GUINT64_FORMAT,
+          GST_TIME_FORMAT ", end %" GST_TIME_FORMAT,
           dlna_src->rate,
-          dlna_src->head_response->time_seek_npt_start,
-          dlna_src->head_response->time_seek_npt_end);
+          GST_TIME_ARGS(dlna_src->head_response->time_seek_npt_start),
+          GST_TIME_ARGS(dlna_src->head_response->time_seek_npt_end));
     } else {
       GST_DEBUG_OBJECT (dlna_src,
           "Segment info in media time not available for content item");
@@ -1125,19 +1125,19 @@ dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
         ((start < dlna_src->head_response->time_seek_npt_start) ||
             (start > dlna_src->head_response->time_seek_npt_end))) {
       GST_WARNING_OBJECT (dlna_src,
-          "Specified start time %" G_GUINT64_FORMAT
-          " is not valid, valid range: %" G_GUINT64_FORMAT
-          " to %" G_GUINT64_FORMAT, start,
-          dlna_src->head_response->time_seek_npt_start,
-          dlna_src->head_response->time_seek_npt_end);
+          "Specified start time %" GST_TIME_FORMAT
+          " is not valid, valid range: %" GST_TIME_FORMAT
+          " to %" GST_TIME_FORMAT, GST_TIME_ARGS(start),
+          GST_TIME_ARGS(dlna_src->head_response->time_seek_npt_start),
+          GST_TIME_ARGS(dlna_src->head_response->time_seek_npt_end));
       return FALSE;
     } else {
       GST_INFO_OBJECT (dlna_src,
-          "Specified start time %" G_GUINT64_FORMAT
-          " is valid, valid range: %" G_GUINT64_FORMAT
-          " to %" G_GUINT64_FORMAT, start,
-          dlna_src->head_response->time_seek_npt_start,
-          dlna_src->head_response->time_seek_npt_end);
+          "Specified start time %" GST_TIME_FORMAT
+          " is valid, valid range: %" GST_TIME_FORMAT
+          " to %" GST_TIME_FORMAT, GST_TIME_ARGS(start),
+          GST_TIME_ARGS(dlna_src->head_response->time_seek_npt_start),
+          GST_TIME_ARGS(dlna_src->head_response->time_seek_npt_end));
     }
   } else {
     GST_WARNING_OBJECT (dlna_src, "Supplied format type is not supported: %d",
