@@ -168,6 +168,10 @@ static const gint LOP_CLEARTEXTBYTES = 1 << 14; // Support for Limited RADA Clea
 
 static const int RESERVED_FLAGS_LENGTH = 24;
 
+#define HTTP_STATUS_OK 200
+#define HTTP_STATUS_CREATED 201
+#define HTTP_STATUS_PARTIAL 206
+
 // Description of a pad that the element will (or might) create and use
 //
 static GstStaticPadTemplate gst_dlna_src_pad_template = GST_STATIC_PAD_TEMPLATE ("src", // name for pad
@@ -1537,10 +1541,10 @@ dlna_src_head_request (GstDlnaSrc * dlna_src, gint64 start_npt,
     GST_WARNING_OBJECT (dlna_src, "Problems parsing HEAD response");
     return FALSE;
   }
-  // Make sure return code from HEAD response is OK
-  if ((dlna_src->head_response->ret_code != 200) &&
-      (dlna_src->head_response->ret_code != 201) &&
-      (dlna_src->head_response->ret_code != 206)) {
+  // Make sure return code from HEAD response is some form of success
+  if ((dlna_src->head_response->ret_code != HTTP_STATUS_OK) &&
+      (dlna_src->head_response->ret_code != HTTP_STATUS_CREATED) &&
+      (dlna_src->head_response->ret_code != HTTP_STATUS_PARTIAL)) {
     GST_WARNING_OBJECT (dlna_src,
         "Error code received in HEAD response: %d %s",
         dlna_src->head_response->ret_code, dlna_src->head_response->ret_msg);
