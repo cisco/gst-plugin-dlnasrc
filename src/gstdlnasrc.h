@@ -126,9 +126,13 @@ struct _GstDlnaSrcHeadResponse
     gint accept_ranges_idx;
     gboolean accept_byte_ranges;
 
+    gchar* content_range;
+    gint content_range_idx;
+
     const gchar* time_seek_hdr;
     gint time_seek_idx;
 
+    gboolean time_seek_response_received;
     gchar* time_seek_npt_start_str;
     gchar* time_seek_npt_end_str;
     gchar* time_seek_npt_duration_str;
