@@ -80,9 +80,7 @@ struct _GstDlnaSrc
     guint uri_port;
     gint sock;
 
-    gchar *head_request_str;
-    gchar *head_response_str;
-    GstDlnaSrcHeadResponse* head_response;
+    GstDlnaSrcHeadResponse* server_info;
 
     // Current playback rate
     gfloat rate;
@@ -107,9 +105,6 @@ struct _GstDlnaSrc
 
 struct _GstDlnaSrcHeadResponse
 {
-    gchar *head_response_uppercase_str;
-    gchar* struct_str;
-
     gchar* http_rev;
     gint http_rev_idx;
 
