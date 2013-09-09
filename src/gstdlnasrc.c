@@ -229,6 +229,9 @@ static gboolean dlna_src_open_socket (GstDlnaSrc * dlna_src);
 
 static gboolean dlna_src_close_socket (GstDlnaSrc * dlna_src);
 
+static void dlna_src_head_response_free (GstDlnaSrc * dlna_src,
+    GstDlnaSrcHeadResponse * head_response);
+
 static gboolean dlna_src_head_response_parse (GstDlnaSrc * dlna_src,
     gchar * head_response_str, GstDlnaSrcHeadResponse ** head_response);
 
@@ -973,6 +976,9 @@ dlna_src_handle_query_convert (GstDlnaSrc * dlna_src, GstQuery * query)
   // Return results in query
   gst_query_set_convert (query, src_fmt, src_val, dest_fmt, dest_val);
 
+  // Free head response structure
+  dlna_src_head_response_free (dlna_src, head_response);
+
   return ret;
 }
 
@@ -1217,7 +1223,7 @@ dlna_src_formulate_extra_headers (GstDlnaSrc * dlna_src, gfloat rate,
 {
   gchar *ps_field_name = "PlaySpeed.dlna.org";
   gchar *ps_field_value_prefix = "speed=";
-  gchar ps_field_value[64];
+  gchar ps_field_value[64] = { 0 };
 
   // Get string representation of rate
   int i = 0;
@@ -1467,8 +1473,7 @@ dlna_src_dtcp_setup (GstDlnaSrc * dlna_src)
 static gboolean
 dlna_src_init_uri (GstDlnaSrc * dlna_src, const gchar * value)
 {
-  gchar struct_str[2048];
-  (void) memset (struct_str, 0, sizeof (struct_str));
+  gchar struct_str[2048] = { 0 };
 
   // Set the uri in the src
   if (dlna_src->uri) {
@@ -1548,9 +1553,64 @@ dlna_src_init_uri (GstDlnaSrc * dlna_src, const gchar * value)
       GST_INFO_OBJECT (dlna_src,
           "Second HEAD response did not return time seek range info");
     }
+    dlna_src_head_response_free (dlna_src, head_response);
   }
 
   return TRUE;
+}
+
+/**
+ * Free the memory allocated to store head response.
+ *
+ * @param   dlna_src        this instance of element
+ * @param   head_response   free memory associated with this struct
+ */
+static void
+dlna_src_head_response_free (GstDlnaSrc * dlna_src,
+    GstDlnaSrcHeadResponse * head_response)
+{
+  int i = 0;
+  if (head_response) {
+    if (head_response->content_features) {
+      if (head_response->content_features->profile)
+        g_free (head_response->content_features->profile);
+
+      if (head_response->content_features->playspeeds_cnt > 0) {
+        for (i = 0; i < head_response->content_features->playspeeds_cnt; i++)
+          g_free (head_response->content_features->playspeed_strs[i]);
+      }
+      g_free (head_response->content_features);
+    }
+
+    if (head_response->http_rev)
+      g_free (head_response->http_rev);
+    if (head_response->ret_msg)
+      g_free (head_response->ret_msg);
+    if (head_response->accept_ranges)
+      g_free (head_response->accept_ranges);
+    if (head_response->content_range)
+      g_free (head_response->content_range);
+    if (head_response->time_seek_npt_start_str)
+      g_free (head_response->time_seek_npt_start_str);
+    if (head_response->time_seek_npt_end_str)
+      g_free (head_response->time_seek_npt_end_str);
+    if (head_response->time_seek_npt_duration_str)
+      g_free (head_response->time_seek_npt_duration_str);
+    if (head_response->transfer_mode)
+      g_free (head_response->transfer_mode);
+    if (head_response->transfer_encoding)
+      g_free (head_response->transfer_encoding);
+    if (head_response->date)
+      g_free (head_response->date);
+    if (head_response->server)
+      g_free (head_response->server);
+    if (head_response->content_type)
+      g_free (head_response->content_type);
+    if (head_response->dtcp_host)
+      g_free (head_response->dtcp_host);
+
+    g_free (head_response);
+  }
 }
 
 /**
@@ -1568,10 +1628,8 @@ dlna_src_head_request (GstDlnaSrc * dlna_src,
     gint64 start_npt, gint64 start_byte, gboolean include_range_header,
     GstDlnaSrcHeadResponse ** head_response)
 {
-  gchar head_request_str[MAX_HTTP_BUF_SIZE];
-  (void) memset (head_request_str, 0, sizeof (head_request_str));
-  gchar head_response_str[MAX_HTTP_BUF_SIZE];
-  (void) memset (head_response_str, 0, sizeof (head_request_str));
+  gchar head_request_str[MAX_HTTP_BUF_SIZE] = { 0 };
+  gchar head_response_str[MAX_HTTP_BUF_SIZE] = { 0 };
 
   // Open socket to send HEAD request
   if (!dlna_src_open_socket (dlna_src)) {
@@ -1794,22 +1852,21 @@ dlna_src_head_request_formulate (GstDlnaSrc * dlna_src,
 {
   GST_LOG_OBJECT (dlna_src, "Formulating head request");
 
-  gchar tmpStr[32];
+  gchar tmpStr[32] = { 0 };
 
   strcpy (head_request_str, "HEAD ");
 
-  strcat (head_request_str, dlna_src->uri);
+  strncat (head_request_str, dlna_src->uri, strlen (dlna_src->uri));
 
   strcat (head_request_str, " HTTP/1.1");
   strcat (head_request_str, CRLF);
 
   strcat (head_request_str, "HOST: ");
-  strcat (head_request_str, dlna_src->uri_addr);
+  strncat (head_request_str, dlna_src->uri_addr, strlen (dlna_src->uri_addr));
   strcat (head_request_str, ":");
 
-  (void) memset ((gchar *) & tmpStr, 0, sizeof (tmpStr));
   sprintf (tmpStr, "%d", dlna_src->uri_port);
-  strcat (head_request_str, tmpStr);
+  strncat (head_request_str, tmpStr, strlen (tmpStr));
   strcat (head_request_str, CRLF);
 
   // Include request to get content features
@@ -1831,14 +1888,12 @@ dlna_src_head_request_formulate (GstDlnaSrc * dlna_src,
   // Include either starting npt or byte
   if (start_byte != 0) {
     strcat (head_request_str, "bytes=");
-    (void) memset ((gchar *) & tmpStr, 0, sizeof (tmpStr));
     sprintf (tmpStr, "%" G_GUINT64_FORMAT, start_byte);
-    strcat (head_request_str, tmpStr);
+    strncat (head_request_str, tmpStr, strlen (tmpStr));
   } else {
     strcat (head_request_str, "npt=");
-    (void) memset ((gchar *) & tmpStr, 0, sizeof (tmpStr));
     sprintf (tmpStr, "%" G_GUINT64_FORMAT, start_npt);
-    strcat (head_request_str, tmpStr);
+    strncat (head_request_str, tmpStr, strlen (tmpStr));
   }
   strcat (head_request_str, "-");
   strcat (head_request_str, CRLF);
@@ -1908,8 +1963,7 @@ static gboolean
 dlna_src_head_response_parse (GstDlnaSrc * dlna_src, gchar * head_response_str,
     GstDlnaSrcHeadResponse ** head_response)
 {
-  gchar struct_str[2048];
-  (void) memset (struct_str, 0, sizeof (struct_str));
+  gchar struct_str[2048] = { 0 };
 
   // Initialize structure to hold parsed HEAD Response
   if (!dlna_src_head_response_init_struct (dlna_src, head_response)) {
@@ -1930,20 +1984,20 @@ dlna_src_head_response_parse (GstDlnaSrc * dlna_src, gchar * head_response_str,
   }
 
   // Tokenize HEAD response into individual field values using CRLF as delim
-  char *tokens = strtok (head_response_str, CRLF);
-  while (tokens != NULL) {
-    // Look for field header contained in this string
-    gint idx = dlna_src_head_response_get_field_idx (dlna_src, tokens);
+  gchar **tokens = g_strsplit (head_response_str, CRLF, 0);
+  gchar **ptr;
+  for (ptr = tokens; *ptr; ptr++) {
+    if (strlen (*ptr) > 0) {
+      // Look for field header contained in this string
+      gint idx = dlna_src_head_response_get_field_idx (dlna_src, *ptr);
 
-    // If found field header, extract value
-    if (idx != -1) {
-      fields[idx] = tokens;
-    } else {
-      GST_INFO_OBJECT (dlna_src, "No Idx found for Field:%s", tokens);
+      // If found field header, extract value
+      if (idx != -1) {
+        fields[idx] = *ptr;
+      } else {
+        GST_INFO_OBJECT (dlna_src, "No Idx found for Field:%s", *ptr);
+      }
     }
-
-    // Go on to next field
-    tokens = strtok (NULL, CRLF);
   }
 
   // Parse value from each field header string
@@ -1953,6 +2007,7 @@ dlna_src_head_response_parse (GstDlnaSrc * dlna_src, gchar * head_response_str,
           fields[i]);
     }
   }
+  g_strfreev (tokens);
 
   // Print out results of HEAD request
   if (!dlna_src_head_response_struct_to_str (dlna_src, *head_response,
@@ -2107,7 +2162,8 @@ dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src,
 static gint
 dlna_src_head_response_get_field_idx (GstDlnaSrc * dlna_src, gchar * field_str)
 {
-  GST_LOG_OBJECT (dlna_src, "Determine associated HEAD response field");
+  GST_DEBUG_OBJECT (dlna_src, "Determine associated HEAD response field: %s",
+      field_str);
 
   gint idx = -1;
   int i = 0;
@@ -2140,8 +2196,8 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
 
   gboolean rc = TRUE;
 
-  char tmp1[32];
-  char tmp2[32];
+  char tmp1[32] = { 0 };
+  char tmp2[32] = { 0 };
   gint int_value = 0;
   gint ret_code = 0;
   guint64 guint64_value = 0;
@@ -2280,10 +2336,10 @@ static gboolean
 dlna_src_head_response_parse_time_seek (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, gint idx, gchar * field_str)
 {
-  char tmp1[32];
-  char tmp2[32];
-  char tmp3[32];
-  char tmp4[132];
+  char tmp1[32] = { 0 };
+  char tmp2[32] = { 0 };
+  char tmp3[32] = { 0 };
+  char tmp4[132] = { 0 };
   char *tmp_str1 = NULL;
   char *tmp_str2 = NULL;
   gint ret_code = 0;
@@ -2485,6 +2541,7 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
   gchar *op_str = NULL;
   gchar *ps_str = NULL;
   gchar *flags_str = NULL;
+  gchar **tokens = NULL;
 
   gchar *tmp_str2 = strstr (field_str, HEAD_RESPONSE_HEADERS[idx]);
   gchar *tmp_str1 = strstr (tmp_str2, ":");
@@ -2493,45 +2550,46 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
     tmp_str1++;
 
     // Split into parts using ";" as delmin
-    char *tokens = strtok (tmp_str1, ";");
-    while (tokens != NULL) {
-      // "DLNA.ORG_PN"
-      if ((tmp_str2 =
-              strstr (tokens,
-                  CONTENT_FEATURES_HEADERS[HEADER_INDEX_PN])) != NULL) {
-        GST_LOG_OBJECT (dlna_src, "Found field: %s",
-            CONTENT_FEATURES_HEADERS[HEADER_INDEX_PN]);
-        pn_str = tokens;
-      }
-      // "DLNA.ORG_OP"
-      else if ((tmp_str2 =
-              strstr (tokens,
-                  CONTENT_FEATURES_HEADERS[HEADER_INDEX_OP])) != NULL) {
-        GST_LOG_OBJECT (dlna_src, "Found field: %s",
-            CONTENT_FEATURES_HEADERS[HEADER_INDEX_OP]);
-        op_str = tokens;
-      }
-      // "DLNA.ORG_PS"
-      else if ((tmp_str2 =
-              strstr (tokens,
-                  CONTENT_FEATURES_HEADERS[HEADER_INDEX_PS])) != NULL) {
-        GST_LOG_OBJECT (dlna_src, "Found field: %s",
-            CONTENT_FEATURES_HEADERS[HEADER_INDEX_PS]);
-        ps_str = tokens;
-      }
-      // "DLNA.ORG_FLAGS"
-      else if ((tmp_str2 =
-              strstr (tokens,
-                  CONTENT_FEATURES_HEADERS[HEADER_INDEX_FLAGS])) != NULL) {
-        GST_LOG_OBJECT (dlna_src, "Found field: %s",
-            CONTENT_FEATURES_HEADERS[HEADER_INDEX_FLAGS]);
-        flags_str = tokens;
-      } else {
-        GST_WARNING_OBJECT (dlna_src, "Unrecognized sub field:%s", tokens);
-      }
+    tokens = g_strsplit (tmp_str1, ";", 0);
+    gchar **ptr;
+    for (ptr = tokens; *ptr; ptr++) {
+      if (strlen (*ptr) > 0) {
 
-      // Go on to next field
-      tokens = strtok (NULL, ";");
+        // "DLNA.ORG_PN"
+        if ((tmp_str2 =
+                strstr (*ptr,
+                    CONTENT_FEATURES_HEADERS[HEADER_INDEX_PN])) != NULL) {
+          GST_LOG_OBJECT (dlna_src, "Found field: %s",
+              CONTENT_FEATURES_HEADERS[HEADER_INDEX_PN]);
+          pn_str = *ptr;
+        }
+        // "DLNA.ORG_OP"
+        else if ((tmp_str2 =
+                strstr (*ptr,
+                    CONTENT_FEATURES_HEADERS[HEADER_INDEX_OP])) != NULL) {
+          GST_LOG_OBJECT (dlna_src, "Found field: %s",
+              CONTENT_FEATURES_HEADERS[HEADER_INDEX_OP]);
+          op_str = *ptr;
+        }
+        // "DLNA.ORG_PS"
+        else if ((tmp_str2 =
+                strstr (*ptr,
+                    CONTENT_FEATURES_HEADERS[HEADER_INDEX_PS])) != NULL) {
+          GST_LOG_OBJECT (dlna_src, "Found field: %s",
+              CONTENT_FEATURES_HEADERS[HEADER_INDEX_PS]);
+          ps_str = *ptr;
+        }
+        // "DLNA.ORG_FLAGS"
+        else if ((tmp_str2 =
+                strstr (*ptr,
+                    CONTENT_FEATURES_HEADERS[HEADER_INDEX_FLAGS])) != NULL) {
+          GST_LOG_OBJECT (dlna_src, "Found field: %s",
+              CONTENT_FEATURES_HEADERS[HEADER_INDEX_FLAGS]);
+          flags_str = *ptr;
+        } else {
+          GST_WARNING_OBJECT (dlna_src, "Unrecognized sub field:%s", *ptr);
+        }
+      }
     }
   }
 
@@ -2563,6 +2621,7 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
           flags_str);
     }
   }
+  g_strfreev (tokens);
   return TRUE;
 }
 
@@ -2582,8 +2641,8 @@ dlna_src_head_response_parse_profile (GstDlnaSrc * dlna_src,
   GST_LOG_OBJECT (dlna_src, "Found PN Field: %s", field_str);
   gint ret_code = 0;
 
-  gchar tmp1[256];
-  gchar tmp2[256];
+  gchar tmp1[256] = { 0 };
+  gchar tmp2[256] = { 0 };
 
   if ((ret_code = sscanf (field_str, "%[^=]=%s", tmp1, tmp2)) != 2) {
     GST_WARNING_OBJECT (dlna_src,
@@ -2611,8 +2670,8 @@ dlna_src_head_response_parse_operations (GstDlnaSrc * dlna_src,
   GST_LOG_OBJECT (dlna_src, "Found OP Field: %s", field_str);
   gint ret_code = 0;
 
-  gchar tmp1[256];
-  gchar tmp2[256];
+  gchar tmp1[256] = { 0 };
+  gchar tmp2[256] = { 0 };
 
   if ((ret_code = sscanf (field_str, "%[^=]=%s", tmp1, tmp2)) != 2) {
     GST_WARNING_OBJECT (dlna_src,
@@ -2673,13 +2732,13 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src,
   GST_LOG_OBJECT (dlna_src, "Found PS Field: %s", field_str);
 
   gint ret_code = 0;
-  char *save_ptr;
 
-  gchar tmp1[256];
-  gchar tmp2[256];
+  gchar tmp1[256] = { 0 };
+  gchar tmp2[256] = { 0 };
   gfloat rate = 0;
   int d;
   int n;
+  gchar **tokens;
 
   if ((ret_code = sscanf (field_str, "%[^=]=%s", tmp1, tmp2)) != 2) {
     GST_WARNING_OBJECT (dlna_src,
@@ -2690,49 +2749,47 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src,
     GST_LOG_OBJECT (dlna_src, "PS Field value: %s", tmp2);
 
     // Tokenize list of comma separated playspeeds
-    char *playspeeds = strtok_r (tmp2, ",", &save_ptr);
-    while ((playspeeds != NULL) &&
-        (head_response->content_features->playspeeds_cnt <
-            PLAYSPEEDS_MAX_CNT)) {
-      GST_LOG_OBJECT (dlna_src, "Found PS: %s", playspeeds);
+    tokens = g_strsplit (tmp2, ",", PLAYSPEEDS_MAX_CNT);
+    gchar **ptr;
+    for (ptr = tokens; *ptr; ptr++) {
+      if (strlen (*ptr) > 0) {
+        GST_LOG_OBJECT (dlna_src, "Found PS: %s", *ptr);
 
-      // Store string representation
-      head_response->content_features->playspeed_strs
-          [head_response->content_features->playspeeds_cnt]
-          = g_strdup (playspeeds);
+        // Store string representation
+        head_response->content_features->playspeed_strs
+            [head_response->content_features->playspeeds_cnt]
+            = g_strdup (*ptr);
 
-      // Check if this is a non-fractional value
-      if (strstr (playspeeds, "/") == NULL) {
-        // Convert str to numeric value
-        if ((ret_code = sscanf (playspeeds, "%f", &rate)) != 1) {
-          GST_WARNING_OBJECT (dlna_src,
-              "Problems converting playspeed %s into numeric value",
-              playspeeds);
-          return FALSE;
+        // Check if this is a non-fractional value
+        if (strstr (*ptr, "/") == NULL) {
+          // Convert str to numeric value
+          if ((ret_code = sscanf (*ptr, "%f", &rate)) != 1) {
+            GST_WARNING_OBJECT (dlna_src,
+                "Problems converting playspeed %s into numeric value", *ptr);
+            return FALSE;
+          } else {
+            head_response->content_features->playspeeds[head_response->
+                content_features->playspeeds_cnt] = rate;
+          }
         } else {
-          head_response->content_features->playspeeds[head_response->
-              content_features->playspeeds_cnt] = rate;
-        }
-      } else {
-        // Handle conversion of fractional values
-        if ((ret_code = sscanf (playspeeds, "%d/%d", &n, &d)) != 2) {
-          GST_WARNING_OBJECT (dlna_src,
-              "Problems converting fractional playspeed %s into numeric value",
-              playspeeds);
-          return FALSE;
-        } else {
-          rate = (gfloat) n / (gfloat) d;
+          // Handle conversion of fractional values
+          if ((ret_code = sscanf (*ptr, "%d/%d", &n, &d)) != 2) {
+            GST_WARNING_OBJECT (dlna_src,
+                "Problems converting fractional playspeed %s into numeric value",
+                *ptr);
+            return FALSE;
+          } else {
+            rate = (gfloat) n / (gfloat) d;
 
-          head_response->content_features->playspeeds[head_response->
-              content_features->playspeeds_cnt] = rate;
-        }
+            head_response->content_features->playspeeds[head_response->
+                content_features->playspeeds_cnt] = rate;
+          }
 
+        }
+        head_response->content_features->playspeeds_cnt++;
       }
-      head_response->content_features->playspeeds_cnt++;
-
-      // Go on to next field
-      playspeeds = strtok_r (NULL, ",", &save_ptr);
     }
+    g_strfreev (tokens);
   }
 
   return TRUE;
@@ -2754,8 +2811,8 @@ dlna_src_head_response_parse_flags (GstDlnaSrc * dlna_src,
   GST_LOG_OBJECT (dlna_src, "Found Flags Field: %s", field_str);
   gint ret_code = 0;
 
-  gchar tmp1[256];
-  gchar tmp2[256];
+  gchar tmp1[256] = { 0 };
+  gchar tmp2[256] = { 0 };
 
   if ((ret_code = sscanf (field_str, "%[^=]=%s", tmp1, tmp2)) != 2) {
     GST_WARNING_OBJECT (dlna_src,
@@ -2818,9 +2875,10 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
 {
   GST_LOG_OBJECT (dlna_src, "Found Content Type Field: %s", field_str);
   gint ret_code = 0;
-  gchar tmp1[32];
-  gchar tmp2[32];
-  gchar tmp3[32];
+  gchar tmp1[32] = { 0 };
+  gchar tmp2[32] = { 0 };
+  gchar tmp3[32] = { 0 };
+  gchar **tokens = NULL;
 
   // If not DTCP content, this field is mime-type
   if (strstr (field_str, "DTCP") == NULL) {
@@ -2839,60 +2897,61 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
       tmp_str1++;
 
       // Split into parts using ";" as delmin
-      char *tokens = strtok (tmp_str1, ";");
-      while (tokens != NULL) {
-        // DTCP1HOST
-        if ((tmp_str2 =
-                strstr (tokens,
-                    CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_HOST])) != NULL) {
-          GST_LOG_OBJECT (dlna_src, "Found field: %s",
-              CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_HOST]);
-          head_response->dtcp_host = g_strdup ((strstr (tmp_str2, "=") + 1));
-        }
-        // DTCP1PORT
-        else if ((tmp_str2 =
-                strstr (tokens,
-                    CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_PORT])) != NULL) {
-          if ((ret_code = sscanf (tmp_str2, "%[^=]=%d", tmp1,
-                      &head_response->dtcp_port)) != 2) {
-            GST_WARNING_OBJECT (dlna_src,
-                "Problems parsing DTCP PORT from HEAD response field header %s, value: %s, retcode: %d, tmp: %s",
-                HEAD_RESPONSE_HEADERS[idx], tmp_str2, ret_code, tmp1);
-          } else {
+      tokens = g_strsplit (tmp_str1, ";", 0);
+      gchar **ptr;
+      for (ptr = tokens; *ptr; ptr++) {
+        if (strlen (*ptr) > 0) {
+          // DTCP1HOST
+          if ((tmp_str2 =
+                  strstr (*ptr,
+                      CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_HOST])) != NULL) {
             GST_LOG_OBJECT (dlna_src, "Found field: %s",
-                CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_PORT]);
+                CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_HOST]);
+            head_response->dtcp_host = g_strdup ((strstr (tmp_str2, "=") + 1));
+          }
+          // DTCP1PORT
+          else if ((tmp_str2 =
+                  strstr (*ptr,
+                      CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_PORT])) != NULL) {
+            if ((ret_code = sscanf (tmp_str2, "%[^=]=%d", tmp1,
+                        &head_response->dtcp_port)) != 2) {
+              GST_WARNING_OBJECT (dlna_src,
+                  "Problems parsing DTCP PORT from HEAD response field header %s, value: %s, retcode: %d, tmp: %s",
+                  HEAD_RESPONSE_HEADERS[idx], tmp_str2, ret_code, tmp1);
+            } else {
+              GST_LOG_OBJECT (dlna_src, "Found field: %s",
+                  CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_PORT]);
+            }
+          }
+          // CONTENTFORMAT
+          else if ((tmp_str2 =
+                  strstr (*ptr,
+                      CONTENT_TYPE_HEADERS[HEADER_INDEX_CONTENT_FORMAT])) !=
+              NULL) {
+            if ((ret_code =
+                    sscanf (tmp_str2, "%[^=]=\"%[^\"]%s", tmp1, tmp2,
+                        tmp3)) != 3) {
+              GST_WARNING_OBJECT (dlna_src,
+                  "Problems parsing DTCP CONTENT FORMAT from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s, %s",
+                  HEAD_RESPONSE_HEADERS[idx], tmp_str2, ret_code, tmp1, tmp2,
+                  tmp3);
+            } else {
+              GST_LOG_OBJECT (dlna_src, "Found field: %s",
+                  CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_PORT]);
+              head_response->content_type = g_strdup (tmp2);
+            }
+          }
+          //  APPLICATION/X-DTCP1
+          else if ((tmp_str2 =
+                  strstr (*ptr,
+                      CONTENT_TYPE_HEADERS[HEADER_INDEX_APP_DTCP])) != NULL) {
+            // Ignore this field
+          } else {
+            GST_WARNING_OBJECT (dlna_src, "Unrecognized sub field:%s", *ptr);
           }
         }
-        // CONTENTFORMAT
-        else if ((tmp_str2 =
-                strstr (tokens,
-                    CONTENT_TYPE_HEADERS[HEADER_INDEX_CONTENT_FORMAT])) !=
-            NULL) {
-          if ((ret_code =
-                  sscanf (tmp_str2, "%[^=]=\"%[^\"]%s", tmp1, tmp2,
-                      tmp3)) != 3) {
-            GST_WARNING_OBJECT (dlna_src,
-                "Problems parsing DTCP CONTENT FORMAT from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s, %s",
-                HEAD_RESPONSE_HEADERS[idx], tmp_str2, ret_code, tmp1, tmp2,
-                tmp3);
-          } else {
-            GST_LOG_OBJECT (dlna_src, "Found field: %s",
-                CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_PORT]);
-            head_response->content_type = g_strdup (tmp2);
-          }
-        }
-        //  APPLICATION/X-DTCP1
-        else if ((tmp_str2 =
-                strstr (tokens,
-                    CONTENT_TYPE_HEADERS[HEADER_INDEX_APP_DTCP])) != NULL) {
-          // Ignore this field
-        } else {
-          GST_WARNING_OBJECT (dlna_src, "Unrecognized sub field:%s", tokens);
-        }
-
-        // Go on to next field
-        tokens = strtok (NULL, ";");
       }
+      g_strfreev (tokens);
     }
   }
   return TRUE;
@@ -2942,72 +3001,76 @@ dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
 {
   GST_DEBUG_OBJECT (dlna_src, "Formatting HEAD Response struct");
 
-  gchar tmpStr[32];
+  gchar tmpStr[32] = { 0 };
 
   strcpy (struct_str, "\nHTTP Version: ");
   if (head_response->http_rev != NULL)
-    strcat (struct_str, head_response->http_rev);
+    strncat (struct_str, head_response->http_rev,
+        strlen (head_response->http_rev));
   strcat (struct_str, "\n");
 
   strcat (struct_str, "HEAD Ret Code: ");
-  (void) memset ((gchar *) & tmpStr, 0, sizeof (tmpStr));
   sprintf (tmpStr, "%d", head_response->ret_code);
-  strcat (struct_str, tmpStr);
+  strncat (struct_str, tmpStr, strlen (tmpStr));
   strcat (struct_str, "\n");
 
   strcat (struct_str, "HEAD Ret Msg: ");
   if (head_response->ret_msg != NULL)
-    strcat (struct_str, head_response->ret_msg);
+    strncat (struct_str, head_response->ret_msg,
+        strlen (head_response->ret_msg));
   strcat (struct_str, "\n");
 
   strcat (struct_str, "Server: ");
   if (head_response->server != NULL)
-    strcat (struct_str, head_response->server);
+    strncat (struct_str, head_response->server, strlen (head_response->server));
   strcat (struct_str, "\n");
 
   strcat (struct_str, "Date: ");
   if (head_response->date != NULL)
-    strcat (struct_str, head_response->date);
+    strncat (struct_str, head_response->date, strlen (head_response->date));
   strcat (struct_str, "\n");
 
   strcat (struct_str, "Content Length: ");
   if (head_response->content_length != 0) {
-    (void) memset ((gchar *) & tmpStr, 0, sizeof (tmpStr));
     sprintf (tmpStr, "%" G_GUINT64_FORMAT, head_response->content_length);
-    strcat (struct_str, tmpStr);
+    strncat (struct_str, tmpStr, strlen (tmpStr));
   }
   strcat (struct_str, "\n");
 
   strcat (struct_str, "Accept Ranges: ");
   if (head_response->accept_ranges != NULL)
-    strcat (struct_str, head_response->accept_ranges);
+    strncat (struct_str, head_response->accept_ranges,
+        strlen (head_response->accept_ranges));
   strcat (struct_str, "\n");
 
   strcat (struct_str, "Content Type: ");
   if (head_response->content_type != NULL)
-    strcat (struct_str, head_response->content_type);
+    strncat (struct_str, head_response->content_type,
+        strlen (head_response->content_type));
   strcat (struct_str, "\n");
 
   if (head_response->dtcp_host != NULL) {
     strcat (struct_str, "DTCP Host: ");
-    strcat (struct_str, head_response->dtcp_host);
+    strncat (struct_str, head_response->dtcp_host,
+        strlen (head_response->dtcp_host));
     strcat (struct_str, "\n");
 
     strcat (struct_str, "DTCP Port: ");
-    (void) memset ((gchar *) & tmpStr, 0, sizeof (tmpStr));
     sprintf (tmpStr, "%d", head_response->dtcp_port);
-    strcat (struct_str, tmpStr);
+    strncat (struct_str, tmpStr, strlen (tmpStr));
     strcat (struct_str, "\n");
   }
 
   strcat (struct_str, "HTTP Transfer Encoding: ");
   if (head_response->transfer_encoding != NULL)
-    strcat (struct_str, head_response->transfer_encoding);
+    strncat (struct_str, head_response->transfer_encoding,
+        strlen (head_response->transfer_encoding));
   strcat (struct_str, "\n");
 
   strcat (struct_str, "DLNA Transfer Mode: ");
   if (head_response->transfer_mode != NULL)
-    strcat (struct_str, head_response->transfer_mode);
+    strncat (struct_str, head_response->transfer_mode,
+        strlen (head_response->transfer_mode));
   strcat (struct_str, "\n");
 
   strcat (struct_str, "Time Seek Response Received: ");
@@ -3017,87 +3080,82 @@ dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
   if (head_response->time_seek_response_received) {
     strcat (struct_str, "Time Seek NPT Start: ");
     if (head_response->time_seek_npt_start_str != NULL) {
-      strcat (struct_str, head_response->time_seek_npt_start_str);
-      (void) memset ((gchar *) & tmpStr, 0, sizeof (tmpStr));
+      strncat (struct_str, head_response->time_seek_npt_start_str,
+          strlen (head_response->time_seek_npt_start_str));
       sprintf (tmpStr, " - %" G_GUINT64_FORMAT,
           head_response->time_seek_npt_start);
-      strcat (struct_str, tmpStr);
+      strncat (struct_str, tmpStr, strlen (tmpStr));
     }
     strcat (struct_str, "\n");
 
     strcat (struct_str, "Time Seek NPT End: ");
     if (head_response->time_seek_npt_end_str != NULL) {
-      strcat (struct_str, head_response->time_seek_npt_end_str);
-      (void) memset ((gchar *) & tmpStr, 0, sizeof (tmpStr));
+      strncat (struct_str, head_response->time_seek_npt_end_str,
+          strlen (head_response->time_seek_npt_end_str));
       sprintf (tmpStr, " - %" G_GUINT64_FORMAT,
           head_response->time_seek_npt_end);
-      strcat (struct_str, tmpStr);
+      strncat (struct_str, tmpStr, strlen (tmpStr));
     }
     strcat (struct_str, "\n");
 
     strcat (struct_str, "Time Seek NPT Duration: ");
     if (head_response->time_seek_npt_duration_str != NULL) {
-      strcat (struct_str, head_response->time_seek_npt_duration_str);
-      (void) memset ((gchar *) & tmpStr, 0, sizeof (tmpStr));
+      strncat (struct_str, head_response->time_seek_npt_duration_str,
+          strlen (head_response->time_seek_npt_duration_str));
       sprintf (tmpStr, " - %" G_GUINT64_FORMAT,
           head_response->time_seek_npt_duration);
-      strcat (struct_str, tmpStr);
+      strncat (struct_str, tmpStr, strlen (tmpStr));
     }
     strcat (struct_str, "\n");
 
     strcat (struct_str, "Byte Seek Start: ");
-    (void) memset ((gchar *) & tmpStr, 0, sizeof (tmpStr));
     sprintf (tmpStr, "%" G_GUINT64_FORMAT, head_response->byte_seek_start);
-    strcat (struct_str, tmpStr);
+    strncat (struct_str, tmpStr, strlen (tmpStr));
     strcat (struct_str, "\n");
 
     strcat (struct_str, "Byte Seek End: ");
-    (void) memset ((gchar *) & tmpStr, 0, sizeof (tmpStr));
     sprintf (tmpStr, "%" G_GUINT64_FORMAT, head_response->byte_seek_end);
-    strcat (struct_str, tmpStr);
+    strncat (struct_str, tmpStr, strlen (tmpStr));
     strcat (struct_str, "\n");
 
     strcat (struct_str, "Byte Seek Total: ");
-    (void) memset ((gchar *) & tmpStr, 0, sizeof (tmpStr));
     sprintf (tmpStr, "%" G_GUINT64_FORMAT, head_response->byte_seek_total);
-    strcat (struct_str, tmpStr);
+    strncat (struct_str, tmpStr, strlen (tmpStr));
     strcat (struct_str, "\n");
   }
   if (head_response->dtcp_range_total != 0) {
     strcat (struct_str, "DTCP Range Start: ");
-    (void) memset ((gchar *) & tmpStr, 0, sizeof (tmpStr));
     sprintf (tmpStr, "%" G_GUINT64_FORMAT, head_response->dtcp_range_start);
-    strcat (struct_str, tmpStr);
+    strncat (struct_str, tmpStr, strlen (tmpStr));
     strcat (struct_str, "\n");
 
     strcat (struct_str, "DTCP Range End: ");
-    (void) memset ((gchar *) & tmpStr, 0, sizeof (tmpStr));
     sprintf (tmpStr, "%" G_GUINT64_FORMAT, head_response->dtcp_range_end);
-    strcat (struct_str, tmpStr);
+    strncat (struct_str, tmpStr, strlen (tmpStr));
     strcat (struct_str, "\n");
 
     strcat (struct_str, "DTCP Range Total: ");
-    (void) memset ((gchar *) & tmpStr, 0, sizeof (tmpStr));
     sprintf (tmpStr, "%" G_GUINT64_FORMAT, head_response->dtcp_range_total);
-    strcat (struct_str, tmpStr);
+    strncat (struct_str, tmpStr, strlen (tmpStr));
     strcat (struct_str, "\n");
   }
 
   strcat (struct_str, "DLNA Profile: ");
   if (head_response->content_features->profile != NULL)
-    strcat (struct_str, head_response->content_features->profile);
+    strncat (struct_str, head_response->content_features->profile,
+        strlen (head_response->content_features->profile));
   strcat (struct_str, "\n");
 
   strcat (struct_str, "Supported Playspeed Cnt: ");
-  (void) memset ((gchar *) & tmpStr, 0, sizeof (tmpStr));
   sprintf (tmpStr, "%d", head_response->content_features->playspeeds_cnt);
-  strcat (struct_str, tmpStr);
+  strncat (struct_str, tmpStr, strlen (tmpStr));
   strcat (struct_str, "\n");
 
   strcat (struct_str, "Playspeeds: ");
   gint i = 0;
   for (i = 0; i < head_response->content_features->playspeeds_cnt; i++) {
-    strcat (struct_str, head_response->content_features->playspeed_strs[i]);
+    strncat (struct_str, head_response->content_features->playspeed_strs[i],
+        strlen (head_response->content_features->playspeed_strs[i]));
     strcat (struct_str, ", ");
   }
   strcat (struct_str, "\n");
