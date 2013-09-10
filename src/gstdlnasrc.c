@@ -2310,12 +2310,6 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
       break;
 
     case HEADER_INDEX_HTTP:
-      /*
-         if (g_strlcat (field_str, "\n", field_str_max_size) >= field_str_max_size) {
-         GST_WARNING_OBJECT (dlna_src,
-         "Overflow - field string size %d", field_str_max_size);
-         break;
-         } */
       if ((ret_code =
               sscanf (field_str, "%31s %d %31[^\n]", tmp1, &int_value,
                   tmp2)) != 3) {
