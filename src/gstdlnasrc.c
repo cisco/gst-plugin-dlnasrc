@@ -60,7 +60,7 @@ enum
 #define ELEMENT_NAME_SOUP_HTTP_SRC "soup-http-source"
 #define ELEMENT_NAME_DTCP_DECRYPTER "dtcp-decrypter"
 
-#define MAX_HTTP_BUF_SIZE 1024
+#define MAX_HTTP_BUF_SIZE 2048
 static const char CRLF[] = "\r\n";
 
 static const char COLON[] = ":";
@@ -219,8 +219,8 @@ static gboolean dlna_src_head_request (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse ** head_response);
 
 static gboolean dlna_src_head_request_formulate (GstDlnaSrc * dlna_src,
-    gchar * head_request_str, gint64 start_npt, gint64 start_byte,
-    gboolean include_range_header);
+    gchar * head_request_str, size_t head_request_max_size, gint64 start_npt,
+    gint64 start_byte, gboolean include_range_header);
 
 static gboolean dlna_src_head_request_issue (GstDlnaSrc * dlna_src,
     gchar * head_request_str, gchar * head_response_str);
@@ -282,7 +282,8 @@ static gboolean dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse ** head_response);
 
 static gboolean dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
-    GstDlnaSrcHeadResponse * head_response, gchar * struct_str);
+    GstDlnaSrcHeadResponse * head_response, gchar * struct_str,
+    size_t struct_str_max_size);
 
 static gboolean dlna_src_handle_event_seek (GstDlnaSrc * dlna_src,
     GstPad * pad, GstEvent * event);
@@ -1241,7 +1242,7 @@ dlna_src_formulate_extra_headers (GstDlnaSrc * dlna_src, gfloat rate,
     return FALSE;
   }
 
-  sprintf ((gchar *) & ps_field_value[0], "%s%s", ps_field_value_prefix,
+  g_snprintf ((gchar *) & ps_field_value[0], 64, "%s%s", ps_field_value_prefix,
       rateStr);
   GST_INFO_OBJECT (dlna_src, "Set playspeed header value: %s", ps_field_value);
 
@@ -1321,7 +1322,7 @@ static gboolean
 dlna_src_set_uri (GstDlnaSrc * dlna_src, const gchar * value)
 {
   // Determine if this is a new URI or just another request using same URI
-  if ((dlna_src->uri == NULL) || (strcmp (value, dlna_src->uri) != 0)) {
+  if ((dlna_src->uri == NULL) || (g_strcmp0 (value, dlna_src->uri) != 0)) {
     if (dlna_src->uri == NULL) {
       GST_DEBUG_OBJECT (dlna_src, "Need to initialize due to NULL URI");
     } else {
@@ -1473,7 +1474,7 @@ dlna_src_dtcp_setup (GstDlnaSrc * dlna_src)
 static gboolean
 dlna_src_init_uri (GstDlnaSrc * dlna_src, const gchar * value)
 {
-  gchar struct_str[2048] = { 0 };
+  gchar struct_str[MAX_HTTP_BUF_SIZE] = { 0 };
 
   // Set the uri in the src
   if (dlna_src->uri) {
@@ -1541,7 +1542,7 @@ dlna_src_init_uri (GstDlnaSrc * dlna_src, const gchar * value)
       dlna_src->server_info->byte_seek_total = head_response->byte_seek_total;
 
       if (!dlna_src_head_response_struct_to_str (dlna_src,
-              dlna_src->server_info, struct_str)) {
+              dlna_src->server_info, struct_str, MAX_HTTP_BUF_SIZE)) {
         GST_WARNING_OBJECT (dlna_src,
             "Unable format head response struct into string issue after second HEAD request");
       } else {
@@ -1639,7 +1640,7 @@ dlna_src_head_request (GstDlnaSrc * dlna_src,
   }
   // Formulate HEAD request
   if (!dlna_src_head_request_formulate (dlna_src, head_request_str,
-          start_npt, start_byte, include_range_header)) {
+          MAX_HTTP_BUF_SIZE, start_npt, start_byte, include_range_header)) {
     GST_WARNING_OBJECT (dlna_src, "Problems formulating HEAD request");
     return FALSE;
   }
@@ -1699,7 +1700,7 @@ dlna_src_parse_uri (GstDlnaSrc * dlna_src)
   gchar *protocol = gst_uri_get_protocol (dlna_src->uri);
 
   if (NULL != protocol) {
-    if (strcmp (protocol, "http") == 0) {
+    if (g_strcmp0 (protocol, "http") == 0) {
       if (NULL != (addr = gst_uri_get_location (dlna_src->uri))) {
         if (NULL != (p = strchr (addr, ':'))) {
           *p = 0;               // so that the addr is null terminated where the address ends.
@@ -1709,11 +1710,11 @@ dlna_src_parse_uri (GstDlnaSrc * dlna_src)
         }
         // If address is changing, free old
         if (NULL != dlna_src->uri_addr
-            && 0 != strcmp (dlna_src->uri_addr, addr)) {
+            && 0 != g_strcmp0 (dlna_src->uri_addr, addr)) {
           g_free (dlna_src->uri_addr);
         }
         if (NULL == dlna_src->uri_addr
-            || 0 != strcmp (dlna_src->uri_addr, addr)) {
+            || 0 != g_strcmp0 (dlna_src->uri_addr, addr)) {
           dlna_src->uri_addr = g_strdup (addr);
         }
         GST_DEBUG_OBJECT (dlna_src, "New addr set: \"%s\".",
@@ -1768,7 +1769,7 @@ dlna_src_open_socket (GstDlnaSrc * dlna_src)
   gint ret = 0;
   gchar portStr[8] = { 0 };
   if (dlna_src->uri_port > 0) {
-    snprintf (portStr, sizeof (portStr), "%d", dlna_src->uri_port);
+    g_snprintf (portStr, 8, "%d", dlna_src->uri_port);
   }
 
   struct addrinfo *srvrInfo = NULL;
@@ -1847,61 +1848,112 @@ dlna_src_close_socket (GstDlnaSrc * dlna_src)
  */
 static gboolean
 dlna_src_head_request_formulate (GstDlnaSrc * dlna_src,
-    gchar * head_request_str, gint64 start_npt, gint64 start_byte,
-    gboolean include_range_header)
+    gchar * head_request_str, size_t head_request_max_size, gint64 start_npt,
+    gint64 start_byte, gboolean include_range_header)
 {
   GST_LOG_OBJECT (dlna_src, "Formulating head request");
 
   gchar tmpStr[32] = { 0 };
+  size_t tmp_str_max_size = 32;
 
-  strcpy (head_request_str, "HEAD ");
+  g_strlcpy (head_request_str, "HEAD ", head_request_max_size);
 
-  strncat (head_request_str, dlna_src->uri, strlen (dlna_src->uri));
+  if (g_strlcat (head_request_str, dlna_src->uri,
+          head_request_max_size) >= head_request_max_size)
+    goto overflow;
 
-  strcat (head_request_str, " HTTP/1.1");
-  strcat (head_request_str, CRLF);
+  if (g_strlcat (head_request_str, " HTTP/1.1",
+          head_request_max_size) >= head_request_max_size)
+    goto overflow;
+  if (g_strlcat (head_request_str, CRLF,
+          head_request_max_size) >= head_request_max_size)
+    goto overflow;
 
-  strcat (head_request_str, "HOST: ");
-  strncat (head_request_str, dlna_src->uri_addr, strlen (dlna_src->uri_addr));
-  strcat (head_request_str, ":");
+  if (g_strlcat (head_request_str, "HOST: ",
+          head_request_max_size) >= head_request_max_size)
+    goto overflow;
+  if (g_strlcat (head_request_str, dlna_src->uri_addr,
+          head_request_max_size) >= head_request_max_size)
+    goto overflow;
+  if (g_strlcat (head_request_str, ":",
+          head_request_max_size) >= head_request_max_size)
+    goto overflow;
 
-  sprintf (tmpStr, "%d", dlna_src->uri_port);
-  strncat (head_request_str, tmpStr, strlen (tmpStr));
-  strcat (head_request_str, CRLF);
+  g_snprintf (tmpStr, tmp_str_max_size, "%d", dlna_src->uri_port);
+  if (g_strlcat (head_request_str, tmpStr,
+          head_request_max_size) >= head_request_max_size)
+    goto overflow;
+  if (g_strlcat (head_request_str, CRLF,
+          head_request_max_size) >= head_request_max_size)
+    goto overflow;
 
   // Include request to get content features
-  strcat (head_request_str, "getcontentFeatures.dlna.org: 1");
-  strcat (head_request_str, CRLF);
+  if (g_strlcat (head_request_str, "getcontentFeatures.dlna.org: 1",
+          head_request_max_size) >= head_request_max_size)
+    goto overflow;
+  if (g_strlcat (head_request_str, CRLF,
+          head_request_max_size) >= head_request_max_size)
+    goto overflow;
 
   // Include available seek range
-  strcat (head_request_str, "getAvailableSeekRange.dlna.org: 1");
-  strcat (head_request_str, CRLF);
+  if (g_strlcat (head_request_str, "getAvailableSeekRange.dlna.org: 1",
+          head_request_max_size) >= head_request_max_size)
+    goto overflow;
+  if (g_strlcat (head_request_str, CRLF,
+          head_request_max_size) >= head_request_max_size)
+    goto overflow;
 
   // Include range incase server does not support time seek
   if (include_range_header) {
-    strcat (head_request_str, "Range: bytes=0-");
-    strcat (head_request_str, CRLF);
+    if (g_strlcat (head_request_str, "Range: bytes=0-",
+            head_request_max_size) >= head_request_max_size)
+      goto overflow;
+    if (g_strlcat (head_request_str, CRLF,
+            head_request_max_size) >= head_request_max_size)
+      goto overflow;
   }
   // Include time seek range
-  strcat (head_request_str, "TimeSeekRange.dlna.org: ");
+  if (g_strlcat (head_request_str, "TimeSeekRange.dlna.org: ",
+          head_request_max_size) >= head_request_max_size)
+    goto overflow;
 
   // Include either starting npt or byte
   if (start_byte != 0) {
-    strcat (head_request_str, "bytes=");
-    sprintf (tmpStr, "%" G_GUINT64_FORMAT, start_byte);
-    strncat (head_request_str, tmpStr, strlen (tmpStr));
+    if (g_strlcat (head_request_str, "bytes=",
+            head_request_max_size) >= head_request_max_size)
+      goto overflow;
+    g_snprintf (tmpStr, tmp_str_max_size, "%" G_GUINT64_FORMAT, start_byte);
+    if (g_strlcat (head_request_str, tmpStr,
+            head_request_max_size) >= head_request_max_size)
+      goto overflow;
   } else {
-    strcat (head_request_str, "npt=");
-    sprintf (tmpStr, "%" G_GUINT64_FORMAT, start_npt);
-    strncat (head_request_str, tmpStr, strlen (tmpStr));
+    if (g_strlcat (head_request_str, "npt=",
+            head_request_max_size) >= head_request_max_size)
+      goto overflow;
+    g_snprintf (tmpStr, tmp_str_max_size, "%" G_GUINT64_FORMAT, start_npt);
+    if (g_strlcat (head_request_str, tmpStr,
+            head_request_max_size) >= head_request_max_size)
+      goto overflow;
   }
-  strcat (head_request_str, "-");
-  strcat (head_request_str, CRLF);
+  if (g_strlcat (head_request_str, "-",
+          head_request_max_size) >= head_request_max_size)
+    goto overflow;
+  if (g_strlcat (head_request_str, CRLF,
+          head_request_max_size) >= head_request_max_size)
+    goto overflow;
 
   // Add termination characters for overall request
-  strcat (head_request_str, CRLF);
+  if (g_strlcat (head_request_str, CRLF,
+          head_request_max_size) >= head_request_max_size)
+    goto overflow;
 
   return TRUE;
+
+overflow:
+  GST_ERROR_OBJECT (dlna_src,
+      "Overflow - exceeded head request string size of: %d",
+      head_request_max_size);
+  return FALSE;
 }
 
 /**
@@ -1963,7 +2015,7 @@ static gboolean
 dlna_src_head_response_parse (GstDlnaSrc * dlna_src, gchar * head_response_str,
     GstDlnaSrcHeadResponse ** head_response)
 {
-  gchar struct_str[2048] = { 0 };
+  gchar struct_str[MAX_HTTP_BUF_SIZE] = { 0 };
 
   // Initialize structure to hold parsed HEAD Response
   if (!dlna_src_head_response_init_struct (dlna_src, head_response)) {
@@ -2011,7 +2063,7 @@ dlna_src_head_response_parse (GstDlnaSrc * dlna_src, gchar * head_response_str,
 
   // Print out results of HEAD request
   if (!dlna_src_head_response_struct_to_str (dlna_src, *head_response,
-          struct_str)) {
+          struct_str, MAX_HTTP_BUF_SIZE)) {
     GST_ERROR_OBJECT (dlna_src,
         "Problems converting HEAD response struct to string");
     return FALSE;
@@ -2223,7 +2275,7 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
 
     case HEADER_INDEX_CONTENT_LENGTH:
       if ((ret_code =
-              sscanf (field_str, "%[^:]:%" G_GUINT64_FORMAT, tmp1,
+              sscanf (field_str, "%31[^:]:%" G_GUINT64_FORMAT, tmp1,
                   &guint64_value)) != 2) {
         GST_WARNING_OBJECT (dlna_src,
             "Problems parsing Content Length from HEAD response field header %s, value: %s, retcode: %d",
@@ -2235,7 +2287,7 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
 
     case HEADER_INDEX_ACCEPT_RANGES:
       head_response->accept_ranges = g_strdup ((strstr (field_str, ":") + 1));
-      if (strcmp (head_response->accept_ranges, ACCEPT_RANGES_NONE) == 0)
+      if (g_strcmp0 (head_response->accept_ranges, ACCEPT_RANGES_NONE) == 0)
         head_response->accept_byte_ranges = FALSE;
       break;
 
@@ -2258,10 +2310,15 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
       break;
 
     case HEADER_INDEX_HTTP:
-      strcat (field_str, "\n");
+      /*
+         if (g_strlcat (field_str, "\n", field_str_max_size) >= field_str_max_size) {
+         GST_WARNING_OBJECT (dlna_src,
+         "Overflow - field string size %d", field_str_max_size);
+         break;
+         } */
       if ((ret_code =
-              sscanf (field_str, "%s %d %[^\n]", tmp1, &int_value, tmp2)) != 3)
-      {
+              sscanf (field_str, "%31s %d %31[^\n]", tmp1, &int_value,
+                  tmp2)) != 3) {
         GST_WARNING_OBJECT (dlna_src,
             "Problems with HEAD response field header %s, idx: %d, value: %s, retcode: %d, tmp: %s, %s",
             HEAD_RESPONSE_HEADERS[idx], idx, field_str, ret_code, tmp1, tmp2);
@@ -2352,7 +2409,7 @@ dlna_src_head_response_parse_time_seek (GstDlnaSrc * dlna_src,
     tmp_str1++;
     // *TODO* - add logic to deal with '*'
     if ((ret_code =
-            sscanf (tmp_str1, "%[^-]-%[^/]/%s %s", tmp1, tmp2, tmp3,
+            sscanf (tmp_str1, "%31[^-]-%31[^/]/%31s %131s", tmp1, tmp2, tmp3,
                 tmp4)) != 4) {
       GST_WARNING_OBJECT (dlna_src,
           "Problems parsing NPT from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s, %s",
@@ -2644,7 +2701,7 @@ dlna_src_head_response_parse_profile (GstDlnaSrc * dlna_src,
   gchar tmp1[256] = { 0 };
   gchar tmp2[256] = { 0 };
 
-  if ((ret_code = sscanf (field_str, "%[^=]=%s", tmp1, tmp2)) != 2) {
+  if ((ret_code = sscanf (field_str, "%255[^=]=%255s", tmp1, tmp2)) != 2) {
     GST_WARNING_OBJECT (dlna_src,
         "Problems parsing DLNA.ORG_PN from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s",
         HEAD_RESPONSE_HEADERS[idx], field_str, ret_code, tmp1, tmp2);
@@ -2673,7 +2730,7 @@ dlna_src_head_response_parse_operations (GstDlnaSrc * dlna_src,
   gchar tmp1[256] = { 0 };
   gchar tmp2[256] = { 0 };
 
-  if ((ret_code = sscanf (field_str, "%[^=]=%s", tmp1, tmp2)) != 2) {
+  if ((ret_code = sscanf (field_str, "%255[^=]=%255s", tmp1, tmp2)) != 2) {
     GST_WARNING_OBJECT (dlna_src,
         "Problems parsing DLNA.ORG_OP from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s",
         HEAD_RESPONSE_HEADERS[idx], field_str, ret_code, tmp1, tmp2);
@@ -2740,7 +2797,7 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src,
   int n;
   gchar **tokens;
 
-  if ((ret_code = sscanf (field_str, "%[^=]=%s", tmp1, tmp2)) != 2) {
+  if ((ret_code = sscanf (field_str, "%255[^=]=%255s", tmp1, tmp2)) != 2) {
     GST_WARNING_OBJECT (dlna_src,
         "Problems parsing DLNA.ORG_PS from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s",
         HEAD_RESPONSE_HEADERS[idx], field_str, ret_code, tmp1, tmp2);
@@ -2768,8 +2825,9 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src,
                 "Problems converting playspeed %s into numeric value", *ptr);
             return FALSE;
           } else {
-            head_response->content_features->playspeeds[head_response->
-                content_features->playspeeds_cnt] = rate;
+            head_response->content_features->
+                playspeeds[head_response->content_features->playspeeds_cnt] =
+                rate;
           }
         } else {
           // Handle conversion of fractional values
@@ -2781,8 +2839,9 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src,
           } else {
             rate = (gfloat) n / (gfloat) d;
 
-            head_response->content_features->playspeeds[head_response->
-                content_features->playspeeds_cnt] = rate;
+            head_response->content_features->
+                playspeeds[head_response->content_features->playspeeds_cnt] =
+                rate;
           }
 
         }
@@ -2814,7 +2873,7 @@ dlna_src_head_response_parse_flags (GstDlnaSrc * dlna_src,
   gchar tmp1[256] = { 0 };
   gchar tmp2[256] = { 0 };
 
-  if ((ret_code = sscanf (field_str, "%[^=]=%s", tmp1, tmp2)) != 2) {
+  if ((ret_code = sscanf (field_str, "%255[^=]=%255s", tmp1, tmp2)) != 2) {
     GST_WARNING_OBJECT (dlna_src,
         "Problems parsing DLNA.ORG_FLAGS from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s",
         HEAD_RESPONSE_HEADERS[idx], field_str, ret_code, tmp1, tmp2);
@@ -2913,7 +2972,7 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
           else if ((tmp_str2 =
                   strstr (*ptr,
                       CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_PORT])) != NULL) {
-            if ((ret_code = sscanf (tmp_str2, "%[^=]=%d", tmp1,
+            if ((ret_code = sscanf (tmp_str2, "%31[^=]=%d", tmp1,
                         &head_response->dtcp_port)) != 2) {
               GST_WARNING_OBJECT (dlna_src,
                   "Problems parsing DTCP PORT from HEAD response field header %s, value: %s, retcode: %d, tmp: %s",
@@ -2929,7 +2988,7 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
                       CONTENT_TYPE_HEADERS[HEADER_INDEX_CONTENT_FORMAT])) !=
               NULL) {
             if ((ret_code =
-                    sscanf (tmp_str2, "%[^=]=\"%[^\"]%s", tmp1, tmp2,
+                    sscanf (tmp_str2, "%31[^=]=\"%31[^\"]%31s", tmp1, tmp2,
                         tmp3)) != 3) {
               GST_WARNING_OBJECT (dlna_src,
                   "Problems parsing DTCP CONTENT FORMAT from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s, %s",
@@ -2997,255 +3056,468 @@ dlna_src_head_response_is_flag_set (GstDlnaSrc * dlna_src, gchar * flags_str,
  */
 static gboolean
 dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
-    GstDlnaSrcHeadResponse * head_response, gchar * struct_str)
+    GstDlnaSrcHeadResponse * head_response, gchar * struct_str,
+    size_t struct_str_max_size)
 {
   GST_DEBUG_OBJECT (dlna_src, "Formatting HEAD Response struct");
 
   gchar tmpStr[32] = { 0 };
+  size_t tmp_str_max_size = 32;
 
-  strcpy (struct_str, "\nHTTP Version: ");
+  g_strlcpy (struct_str, "\nHTTP Version: ", struct_str_max_size);
   if (head_response->http_rev != NULL)
-    strncat (struct_str, head_response->http_rev,
-        strlen (head_response->http_rev));
-  strcat (struct_str, "\n");
+    if (g_strlcat (struct_str, head_response->http_rev,
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+  if (g_strlcat (struct_str, "\n", struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "HEAD Ret Code: ");
-  sprintf (tmpStr, "%d", head_response->ret_code);
-  strncat (struct_str, tmpStr, strlen (tmpStr));
-  strcat (struct_str, "\n");
+  if (g_strlcat (struct_str, "HEAD Ret Code: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  g_snprintf (tmpStr, tmp_str_max_size, "%d", head_response->ret_code);
+  if (g_strlcat (struct_str, tmpStr,
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  if (g_strlcat (struct_str, "\n", struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "HEAD Ret Msg: ");
+  if (g_strlcat (struct_str, "HEAD Ret Msg: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
   if (head_response->ret_msg != NULL)
-    strncat (struct_str, head_response->ret_msg,
-        strlen (head_response->ret_msg));
-  strcat (struct_str, "\n");
+    if (g_strlcat (struct_str, head_response->ret_msg,
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+  if (g_strlcat (struct_str, "\n", struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Server: ");
+  if (g_strlcat (struct_str, "Server: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
   if (head_response->server != NULL)
-    strncat (struct_str, head_response->server, strlen (head_response->server));
-  strcat (struct_str, "\n");
+    if (g_strlcat (struct_str, head_response->server,
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+  if (g_strlcat (struct_str, "\n", struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Date: ");
+  if (g_strlcat (struct_str, "Date: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
   if (head_response->date != NULL)
-    strncat (struct_str, head_response->date, strlen (head_response->date));
-  strcat (struct_str, "\n");
+    if (g_strlcat (struct_str, head_response->date,
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+  if (g_strlcat (struct_str, "\n", struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Content Length: ");
+  if (g_strlcat (struct_str, "Content Length: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
   if (head_response->content_length != 0) {
-    sprintf (tmpStr, "%" G_GUINT64_FORMAT, head_response->content_length);
-    strncat (struct_str, tmpStr, strlen (tmpStr));
+    g_snprintf (tmpStr, tmp_str_max_size, "%" G_GUINT64_FORMAT,
+        head_response->content_length);
+    if (g_strlcat (struct_str, tmpStr,
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
   }
-  strcat (struct_str, "\n");
+  if (g_strlcat (struct_str, "\n", struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Accept Ranges: ");
+  if (g_strlcat (struct_str, "Accept Ranges: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
   if (head_response->accept_ranges != NULL)
-    strncat (struct_str, head_response->accept_ranges,
-        strlen (head_response->accept_ranges));
-  strcat (struct_str, "\n");
+    if (g_strlcat (struct_str, head_response->accept_ranges,
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+  if (g_strlcat (struct_str, "\n", struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Content Type: ");
+  if (g_strlcat (struct_str, "Content Type: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
   if (head_response->content_type != NULL)
-    strncat (struct_str, head_response->content_type,
-        strlen (head_response->content_type));
-  strcat (struct_str, "\n");
+    if (g_strlcat (struct_str, head_response->content_type,
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+  if (g_strlcat (struct_str, "\n", struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
   if (head_response->dtcp_host != NULL) {
-    strcat (struct_str, "DTCP Host: ");
-    strncat (struct_str, head_response->dtcp_host,
-        strlen (head_response->dtcp_host));
-    strcat (struct_str, "\n");
+    if (g_strlcat (struct_str, "DTCP Host: ",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+    if (g_strlcat (struct_str, head_response->dtcp_host,
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+    if (g_strlcat (struct_str, "\n",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
 
-    strcat (struct_str, "DTCP Port: ");
-    sprintf (tmpStr, "%d", head_response->dtcp_port);
-    strncat (struct_str, tmpStr, strlen (tmpStr));
-    strcat (struct_str, "\n");
+    if (g_strlcat (struct_str, "DTCP Port: ",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+    g_snprintf (tmpStr, tmp_str_max_size, "%d", head_response->dtcp_port);
+    if (g_strlcat (struct_str, tmpStr,
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+    if (g_strlcat (struct_str, "\n",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
   }
 
-  strcat (struct_str, "HTTP Transfer Encoding: ");
+  if (g_strlcat (struct_str, "HTTP Transfer Encoding: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
   if (head_response->transfer_encoding != NULL)
-    strncat (struct_str, head_response->transfer_encoding,
-        strlen (head_response->transfer_encoding));
-  strcat (struct_str, "\n");
+    if (g_strlcat (struct_str, head_response->transfer_encoding,
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+  if (g_strlcat (struct_str, "\n", struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "DLNA Transfer Mode: ");
+  if (g_strlcat (struct_str, "DLNA Transfer Mode: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
   if (head_response->transfer_mode != NULL)
-    strncat (struct_str, head_response->transfer_mode,
-        strlen (head_response->transfer_mode));
-  strcat (struct_str, "\n");
+    if (g_strlcat (struct_str, head_response->transfer_mode,
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+  if (g_strlcat (struct_str, "\n", struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Time Seek Response Received: ");
-  strcat (struct_str,
-      (head_response->time_seek_response_received) ? "TRUE\n" : "FALSE\n");
+  if (g_strlcat (struct_str, "Time Seek Response Received: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  if (g_strlcat (struct_str,
+          (head_response->time_seek_response_received) ? "TRUE\n" : "FALSE\n",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
   if (head_response->time_seek_response_received) {
-    strcat (struct_str, "Time Seek NPT Start: ");
+    if (g_strlcat (struct_str, "Time Seek NPT Start: ",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
     if (head_response->time_seek_npt_start_str != NULL) {
-      strncat (struct_str, head_response->time_seek_npt_start_str,
-          strlen (head_response->time_seek_npt_start_str));
-      sprintf (tmpStr, " - %" G_GUINT64_FORMAT,
+      if (g_strlcat (struct_str, head_response->time_seek_npt_start_str,
+              struct_str_max_size) >= struct_str_max_size)
+        goto overflow;
+      g_snprintf (tmpStr, tmp_str_max_size, " - %" G_GUINT64_FORMAT,
           head_response->time_seek_npt_start);
-      strncat (struct_str, tmpStr, strlen (tmpStr));
+      if (g_strlcat (struct_str, tmpStr,
+              struct_str_max_size) >= struct_str_max_size)
+        goto overflow;
     }
-    strcat (struct_str, "\n");
+    if (g_strlcat (struct_str, "\n",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
 
-    strcat (struct_str, "Time Seek NPT End: ");
+    if (g_strlcat (struct_str, "Time Seek NPT End: ",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
     if (head_response->time_seek_npt_end_str != NULL) {
-      strncat (struct_str, head_response->time_seek_npt_end_str,
-          strlen (head_response->time_seek_npt_end_str));
-      sprintf (tmpStr, " - %" G_GUINT64_FORMAT,
+      if (g_strlcat (struct_str, head_response->time_seek_npt_end_str,
+              struct_str_max_size) >= struct_str_max_size)
+        goto overflow;
+      g_snprintf (tmpStr, tmp_str_max_size, " - %" G_GUINT64_FORMAT,
           head_response->time_seek_npt_end);
-      strncat (struct_str, tmpStr, strlen (tmpStr));
+      if (g_strlcat (struct_str, tmpStr,
+              struct_str_max_size) >= struct_str_max_size)
+        goto overflow;
     }
-    strcat (struct_str, "\n");
+    if (g_strlcat (struct_str, "\n",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
 
-    strcat (struct_str, "Time Seek NPT Duration: ");
+    if (g_strlcat (struct_str, "Time Seek NPT Duration: ",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
     if (head_response->time_seek_npt_duration_str != NULL) {
-      strncat (struct_str, head_response->time_seek_npt_duration_str,
-          strlen (head_response->time_seek_npt_duration_str));
-      sprintf (tmpStr, " - %" G_GUINT64_FORMAT,
+      if (g_strlcat (struct_str, head_response->time_seek_npt_duration_str,
+              struct_str_max_size) >= struct_str_max_size)
+        goto overflow;
+      g_snprintf (tmpStr, tmp_str_max_size, " - %" G_GUINT64_FORMAT,
           head_response->time_seek_npt_duration);
-      strncat (struct_str, tmpStr, strlen (tmpStr));
+      if (g_strlcat (struct_str, tmpStr,
+              struct_str_max_size) >= struct_str_max_size)
+        goto overflow;
     }
-    strcat (struct_str, "\n");
+    if (g_strlcat (struct_str, "\n",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
 
-    strcat (struct_str, "Byte Seek Start: ");
-    sprintf (tmpStr, "%" G_GUINT64_FORMAT, head_response->byte_seek_start);
-    strncat (struct_str, tmpStr, strlen (tmpStr));
-    strcat (struct_str, "\n");
+    if (g_strlcat (struct_str, "Byte Seek Start: ",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+    g_snprintf (tmpStr, tmp_str_max_size, "%" G_GUINT64_FORMAT,
+        head_response->byte_seek_start);
+    if (g_strlcat (struct_str, tmpStr,
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+    if (g_strlcat (struct_str, "\n",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
 
-    strcat (struct_str, "Byte Seek End: ");
-    sprintf (tmpStr, "%" G_GUINT64_FORMAT, head_response->byte_seek_end);
-    strncat (struct_str, tmpStr, strlen (tmpStr));
-    strcat (struct_str, "\n");
+    if (g_strlcat (struct_str, "Byte Seek End: ",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+    g_snprintf (tmpStr, tmp_str_max_size, "%" G_GUINT64_FORMAT,
+        head_response->byte_seek_end);
+    if (g_strlcat (struct_str, tmpStr,
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+    if (g_strlcat (struct_str, "\n",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
 
-    strcat (struct_str, "Byte Seek Total: ");
-    sprintf (tmpStr, "%" G_GUINT64_FORMAT, head_response->byte_seek_total);
-    strncat (struct_str, tmpStr, strlen (tmpStr));
-    strcat (struct_str, "\n");
+    if (g_strlcat (struct_str, "Byte Seek Total: ",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+    g_snprintf (tmpStr, tmp_str_max_size, "%" G_GUINT64_FORMAT,
+        head_response->byte_seek_total);
+    if (g_strlcat (struct_str, tmpStr,
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+    if (g_strlcat (struct_str, "\n",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
   }
   if (head_response->dtcp_range_total != 0) {
-    strcat (struct_str, "DTCP Range Start: ");
-    sprintf (tmpStr, "%" G_GUINT64_FORMAT, head_response->dtcp_range_start);
-    strncat (struct_str, tmpStr, strlen (tmpStr));
-    strcat (struct_str, "\n");
+    if (g_strlcat (struct_str, "DTCP Range Start: ",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+    g_snprintf (tmpStr, tmp_str_max_size, "%" G_GUINT64_FORMAT,
+        head_response->dtcp_range_start);
+    if (g_strlcat (struct_str, tmpStr,
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+    if (g_strlcat (struct_str, "\n",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
 
-    strcat (struct_str, "DTCP Range End: ");
-    sprintf (tmpStr, "%" G_GUINT64_FORMAT, head_response->dtcp_range_end);
-    strncat (struct_str, tmpStr, strlen (tmpStr));
-    strcat (struct_str, "\n");
+    if (g_strlcat (struct_str, "DTCP Range End: ",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+    g_snprintf (tmpStr, tmp_str_max_size, "%" G_GUINT64_FORMAT,
+        head_response->dtcp_range_end);
+    if (g_strlcat (struct_str, tmpStr,
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+    if (g_strlcat (struct_str, "\n",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
 
-    strcat (struct_str, "DTCP Range Total: ");
-    sprintf (tmpStr, "%" G_GUINT64_FORMAT, head_response->dtcp_range_total);
-    strncat (struct_str, tmpStr, strlen (tmpStr));
-    strcat (struct_str, "\n");
+    if (g_strlcat (struct_str, "DTCP Range Total: ",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+    g_snprintf (tmpStr, tmp_str_max_size, "%" G_GUINT64_FORMAT,
+        head_response->dtcp_range_total);
+    if (g_strlcat (struct_str, tmpStr,
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+    if (g_strlcat (struct_str, "\n",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
   }
 
-  strcat (struct_str, "DLNA Profile: ");
+  if (g_strlcat (struct_str, "DLNA Profile: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
   if (head_response->content_features->profile != NULL)
-    strncat (struct_str, head_response->content_features->profile,
-        strlen (head_response->content_features->profile));
-  strcat (struct_str, "\n");
+    if (g_strlcat (struct_str, head_response->content_features->profile,
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+  if (g_strlcat (struct_str, "\n", struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Supported Playspeed Cnt: ");
-  sprintf (tmpStr, "%d", head_response->content_features->playspeeds_cnt);
-  strncat (struct_str, tmpStr, strlen (tmpStr));
-  strcat (struct_str, "\n");
+  if (g_strlcat (struct_str, "Supported Playspeed Cnt: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  g_snprintf (tmpStr, tmp_str_max_size, "%d",
+      head_response->content_features->playspeeds_cnt);
+  if (g_strlcat (struct_str, tmpStr,
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  if (g_strlcat (struct_str, "\n", struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Playspeeds: ");
+  if (g_strlcat (struct_str, "Playspeeds: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
   gint i = 0;
   for (i = 0; i < head_response->content_features->playspeeds_cnt; i++) {
-    strncat (struct_str, head_response->content_features->playspeed_strs[i],
-        strlen (head_response->content_features->playspeed_strs[i]));
-    strcat (struct_str, ", ");
+    if (g_strlcat (struct_str,
+            head_response->content_features->playspeed_strs[i],
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
+    if (g_strlcat (struct_str, ", ",
+            struct_str_max_size) >= struct_str_max_size)
+      goto overflow;
   }
-  strcat (struct_str, "\n");
+  if (g_strlcat (struct_str, "\n", struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Time Seek Supported?: ");
-  strcat (struct_str,
-      (head_response->content_features->
-          op_time_seek_supported) ? "TRUE\n" : "FALSE\n");
+  if (g_strlcat (struct_str, "Time Seek Supported?: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  if (g_strlcat (struct_str,
+          (head_response->
+              content_features->op_time_seek_supported) ? "TRUE\n" : "FALSE\n",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Byte Seek Supported?: ");
-  strcat (struct_str,
-      (head_response->content_features->
-          op_range_supported) ? "TRUE\n" : "FALSE\n");
+  if (g_strlcat (struct_str, "Byte Seek Supported?: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  if (g_strlcat (struct_str,
+          (head_response->
+              content_features->op_range_supported) ? "TRUE\n" : "FALSE\n",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Sender Paced?: ");
-  strcat (struct_str,
-      (head_response->content_features->
-          flag_sender_paced_set) ? "TRUE\n" : "FALSE\n");
+  if (g_strlcat (struct_str, "Sender Paced?: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  if (g_strlcat (struct_str,
+          (head_response->
+              content_features->flag_sender_paced_set) ? "TRUE\n" : "FALSE\n",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Limited Time Seek?: ");
-  strcat (struct_str,
-      (head_response->content_features->
-          flag_limited_time_seek_set) ? "TRUE\n" : "FALSE\n");
+  if (g_strlcat (struct_str, "Limited Time Seek?: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  if (g_strlcat (struct_str,
+          (head_response->
+              content_features->flag_limited_time_seek_set) ? "TRUE\n" :
+          "FALSE\n", struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Limited Byte Seek?: ");
-  strcat (struct_str,
-      (head_response->content_features->
-          flag_limited_byte_seek_set) ? "TRUE\n" : "FALSE\n");
+  if (g_strlcat (struct_str, "Limited Byte Seek?: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  if (g_strlcat (struct_str,
+          (head_response->
+              content_features->flag_limited_byte_seek_set) ? "TRUE\n" :
+          "FALSE\n", struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Play Container?: ");
-  strcat (struct_str,
-      (head_response->content_features->
-          flag_play_container_set) ? "TRUE\n" : "FALSE\n");
+  if (g_strlcat (struct_str, "Play Container?: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  if (g_strlcat (struct_str,
+          (head_response->
+              content_features->flag_play_container_set) ? "TRUE\n" : "FALSE\n",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "S0 Increasing?: ");
-  strcat (struct_str,
-      (head_response->content_features->
-          flag_so_increasing_set) ? "TRUE\n" : "FALSE\n");
+  if (g_strlcat (struct_str, "S0 Increasing?: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  if (g_strlcat (struct_str,
+          (head_response->
+              content_features->flag_so_increasing_set) ? "TRUE\n" : "FALSE\n",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Sn Increasing?: ");
-  strcat (struct_str,
-      (head_response->content_features->
-          flag_sn_increasing_set) ? "TRUE\n" : "FALSE\n");
+  if (g_strlcat (struct_str, "Sn Increasing?: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  if (g_strlcat (struct_str,
+          (head_response->
+              content_features->flag_sn_increasing_set) ? "TRUE\n" : "FALSE\n",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "RTSP Pause?: ");
-  strcat (struct_str,
-      (head_response->content_features->
-          flag_rtsp_pause_set) ? "TRUE\n" : "FALSE\n");
+  if (g_strlcat (struct_str, "RTSP Pause?: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  if (g_strlcat (struct_str,
+          (head_response->
+              content_features->flag_rtsp_pause_set) ? "TRUE\n" : "FALSE\n",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Streaming Mode Supported?: ");
-  strcat (struct_str,
-      (head_response->content_features->
-          flag_streaming_mode_set) ? "TRUE\n" : "FALSE\n");
+  if (g_strlcat (struct_str, "Streaming Mode Supported?: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  if (g_strlcat (struct_str,
+          (head_response->
+              content_features->flag_streaming_mode_set) ? "TRUE\n" : "FALSE\n",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Interactive Mode Supported?: ");
-  strcat (struct_str,
-      (head_response->content_features->
-          flag_interactive_mode_set) ? "TRUE\n" : "FALSE\n");
+  if (g_strlcat (struct_str, "Interactive Mode Supported?: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  if (g_strlcat (struct_str,
+          (head_response->
+              content_features->flag_interactive_mode_set) ? "TRUE\n" :
+          "FALSE\n", struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Background Mode Supported?: ");
-  strcat (struct_str,
-      (head_response->content_features->
-          flag_background_mode_set) ? "TRUE\n" : "FALSE\n");
+  if (g_strlcat (struct_str, "Background Mode Supported?: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  if (g_strlcat (struct_str,
+          (head_response->
+              content_features->flag_background_mode_set) ? "TRUE\n" :
+          "FALSE\n", struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Connection Stalling Supported?: ");
-  strcat (struct_str,
-      (head_response->content_features->
-          flag_stalling_set) ? "TRUE\n" : "FALSE\n");
+  if (g_strlcat (struct_str, "Connection Stalling Supported?: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  if (g_strlcat (struct_str,
+          (head_response->
+              content_features->flag_stalling_set) ? "TRUE\n" : "FALSE\n",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "DLNA Ver. 1.5?: ");
-  strcat (struct_str,
-      (head_response->content_features->
-          flag_dlna_v15_set) ? "TRUE\n" : "FALSE\n");
+  if (g_strlcat (struct_str, "DLNA Ver. 1.5?: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  if (g_strlcat (struct_str,
+          (head_response->
+              content_features->flag_dlna_v15_set) ? "TRUE\n" : "FALSE\n",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Link Protected?: ");
-  strcat (struct_str,
-      (head_response->content_features->
-          flag_link_protected_set) ? "TRUE\n" : "FALSE\n");
+  if (g_strlcat (struct_str, "Link Protected?: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  if (g_strlcat (struct_str,
+          (head_response->
+              content_features->flag_link_protected_set) ? "TRUE\n" : "FALSE\n",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Full Clear Text?: ");
-  strcat (struct_str,
-      (head_response->content_features->
-          flag_full_clear_text_set) ? "TRUE\n" : "FALSE\n");
+  if (g_strlcat (struct_str, "Full Clear Text?: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  if (g_strlcat (struct_str,
+          (head_response->
+              content_features->flag_full_clear_text_set) ? "TRUE\n" :
+          "FALSE\n", struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
-  strcat (struct_str, "Limited Clear Text?: ");
-  strcat (struct_str,
-      (head_response->content_features->
-          flag_limited_clear_text_set) ? "TRUE\n" : "FALSE\n");
+  if (g_strlcat (struct_str, "Limited Clear Text?: ",
+          struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
+  if (g_strlcat (struct_str,
+          (head_response->
+              content_features->flag_limited_clear_text_set) ? "TRUE\n" :
+          "FALSE\n", struct_str_max_size) >= struct_str_max_size)
+    goto overflow;
 
   return TRUE;
+
+overflow:
+  GST_ERROR_OBJECT (dlna_src,
+      "Overflow while converting struct to str, size: %d", struct_str_max_size);
+  return FALSE;
 }
 
 /**
