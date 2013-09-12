@@ -2438,7 +2438,7 @@ dlna_src_head_response_parse_time_seek (GstDlnaSrc * dlna_src,
         "Problems getting byte range from HEAD response field header %s, idx: %d, value: %s",
         HEAD_RESPONSE_HEADERS[idx], idx, field_str);
   } else {
-    GST_WARNING_OBJECT (dlna_src, "byte seek total: %" G_GUINT64_FORMAT,
+    GST_DEBUG_OBJECT (dlna_src, "byte seek total: %" G_GUINT64_FORMAT,
         head_response->byte_seek_total);
   }
   return TRUE;
