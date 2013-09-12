@@ -2214,7 +2214,7 @@ dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src,
 static gint
 dlna_src_head_response_get_field_idx (GstDlnaSrc * dlna_src, gchar * field_str)
 {
-  GST_DEBUG_OBJECT (dlna_src, "Determine associated HEAD response field: %s",
+  GST_LOG_OBJECT (dlna_src, "Determine associated HEAD response field: %s",
       field_str);
 
   gint idx = -1;
