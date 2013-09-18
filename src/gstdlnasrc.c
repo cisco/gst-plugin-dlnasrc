@@ -764,8 +764,8 @@ dlna_src_handle_query_seeking (GstDlnaSrc * dlna_src, GstQuery * query)
     if ((dlna_src->server_info->content_features != NULL) &&
         (dlna_src->server_info->content_features->flag_link_protected_set) &&
         (dlna_src->server_info->content_features->flag_full_clear_text_set ||
-            dlna_src->server_info->content_features->
-            flag_limited_clear_text_set)) {
+            dlna_src->server_info->
+            content_features->flag_limited_clear_text_set)) {
 
       // Set results of query but don't do actual seek
       gst_query_set_seeking (query, GST_FORMAT_BYTES, TRUE,
@@ -873,8 +873,8 @@ dlna_src_handle_query_segment (GstDlnaSrc * dlna_src, GstQuery * query)
     if ((dlna_src->server_info->content_features != NULL) &&
         (dlna_src->server_info->content_features->flag_link_protected_set) &&
         (dlna_src->server_info->content_features->flag_full_clear_text_set ||
-            dlna_src->server_info->content_features->
-            flag_limited_clear_text_set)) {
+            dlna_src->server_info->
+            content_features->flag_limited_clear_text_set)) {
 
       // Set segment info based on server support of dtcp byte based seeks
       gst_query_set_segment (query, dlna_src->rate, GST_FORMAT_BYTES,
@@ -1143,8 +1143,8 @@ dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
         (dlna_src->server_info->content_features->flag_link_protected_set)) {
       // Verify clear byte text seeks are supported for dtcp/ip encrypted content
       if (dlna_src->server_info->content_features->flag_full_clear_text_set ||
-          dlna_src->server_info->content_features->
-          flag_limited_clear_text_set) {
+          dlna_src->server_info->
+          content_features->flag_limited_clear_text_set) {
         // Verify dtcp range is valid
         if ((start < dlna_src->server_info->dtcp_range_start) ||
             (start > dlna_src->server_info->dtcp_range_end)) {
@@ -2886,8 +2886,9 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src,
                 "Problems converting playspeed %s into numeric value", *ptr);
             return FALSE;
           } else {
-            head_response->content_features->playspeeds[head_response->
-                content_features->playspeeds_cnt] = rate;
+            head_response->content_features->
+                playspeeds[head_response->content_features->playspeeds_cnt] =
+                rate;
           }
         } else {
           // Handle conversion of fractional values
@@ -2899,8 +2900,9 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src,
           } else {
             rate = (gfloat) n / (gfloat) d;
 
-            head_response->content_features->playspeeds[head_response->
-                content_features->playspeeds_cnt] = rate;
+            head_response->content_features->
+                playspeeds[head_response->content_features->playspeeds_cnt] =
+                rate;
           }
 
         }
@@ -3422,8 +3424,8 @@ dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
   if (g_strlcat (struct_str,
-          (head_response->content_features->
-              op_time_seek_supported) ? "TRUE\n" : "FALSE\n",
+          (head_response->
+              content_features->op_time_seek_supported) ? "TRUE\n" : "FALSE\n",
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
 
@@ -3431,8 +3433,8 @@ dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
   if (g_strlcat (struct_str,
-          (head_response->content_features->
-              op_range_supported) ? "TRUE\n" : "FALSE\n",
+          (head_response->
+              content_features->op_range_supported) ? "TRUE\n" : "FALSE\n",
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
 
@@ -3440,8 +3442,8 @@ dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
   if (g_strlcat (struct_str,
-          (head_response->content_features->
-              flag_sender_paced_set) ? "TRUE\n" : "FALSE\n",
+          (head_response->
+              content_features->flag_sender_paced_set) ? "TRUE\n" : "FALSE\n",
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
 
@@ -3449,26 +3451,26 @@ dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
   if (g_strlcat (struct_str,
-          (head_response->content_features->
-              flag_limited_time_seek_set) ? "TRUE\n" : "FALSE\n",
-          struct_str_max_size) >= struct_str_max_size)
+          (head_response->
+              content_features->flag_limited_time_seek_set) ? "TRUE\n" :
+          "FALSE\n", struct_str_max_size) >= struct_str_max_size)
     goto overflow;
 
   if (g_strlcat (struct_str, "Limited Byte Seek?: ",
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
   if (g_strlcat (struct_str,
-          (head_response->content_features->
-              flag_limited_byte_seek_set) ? "TRUE\n" : "FALSE\n",
-          struct_str_max_size) >= struct_str_max_size)
+          (head_response->
+              content_features->flag_limited_byte_seek_set) ? "TRUE\n" :
+          "FALSE\n", struct_str_max_size) >= struct_str_max_size)
     goto overflow;
 
   if (g_strlcat (struct_str, "Play Container?: ",
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
   if (g_strlcat (struct_str,
-          (head_response->content_features->
-              flag_play_container_set) ? "TRUE\n" : "FALSE\n",
+          (head_response->
+              content_features->flag_play_container_set) ? "TRUE\n" : "FALSE\n",
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
 
@@ -3476,8 +3478,8 @@ dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
   if (g_strlcat (struct_str,
-          (head_response->content_features->
-              flag_so_increasing_set) ? "TRUE\n" : "FALSE\n",
+          (head_response->
+              content_features->flag_so_increasing_set) ? "TRUE\n" : "FALSE\n",
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
 
@@ -3485,8 +3487,8 @@ dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
   if (g_strlcat (struct_str,
-          (head_response->content_features->
-              flag_sn_increasing_set) ? "TRUE\n" : "FALSE\n",
+          (head_response->
+              content_features->flag_sn_increasing_set) ? "TRUE\n" : "FALSE\n",
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
 
@@ -3494,8 +3496,8 @@ dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
   if (g_strlcat (struct_str,
-          (head_response->content_features->
-              flag_rtsp_pause_set) ? "TRUE\n" : "FALSE\n",
+          (head_response->
+              content_features->flag_rtsp_pause_set) ? "TRUE\n" : "FALSE\n",
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
 
@@ -3503,8 +3505,8 @@ dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
   if (g_strlcat (struct_str,
-          (head_response->content_features->
-              flag_streaming_mode_set) ? "TRUE\n" : "FALSE\n",
+          (head_response->
+              content_features->flag_streaming_mode_set) ? "TRUE\n" : "FALSE\n",
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
 
@@ -3512,26 +3514,26 @@ dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
   if (g_strlcat (struct_str,
-          (head_response->content_features->
-              flag_interactive_mode_set) ? "TRUE\n" : "FALSE\n",
-          struct_str_max_size) >= struct_str_max_size)
+          (head_response->
+              content_features->flag_interactive_mode_set) ? "TRUE\n" :
+          "FALSE\n", struct_str_max_size) >= struct_str_max_size)
     goto overflow;
 
   if (g_strlcat (struct_str, "Background Mode Supported?: ",
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
   if (g_strlcat (struct_str,
-          (head_response->content_features->
-              flag_background_mode_set) ? "TRUE\n" : "FALSE\n",
-          struct_str_max_size) >= struct_str_max_size)
+          (head_response->
+              content_features->flag_background_mode_set) ? "TRUE\n" :
+          "FALSE\n", struct_str_max_size) >= struct_str_max_size)
     goto overflow;
 
   if (g_strlcat (struct_str, "Connection Stalling Supported?: ",
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
   if (g_strlcat (struct_str,
-          (head_response->content_features->
-              flag_stalling_set) ? "TRUE\n" : "FALSE\n",
+          (head_response->
+              content_features->flag_stalling_set) ? "TRUE\n" : "FALSE\n",
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
 
@@ -3539,8 +3541,8 @@ dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
   if (g_strlcat (struct_str,
-          (head_response->content_features->
-              flag_dlna_v15_set) ? "TRUE\n" : "FALSE\n",
+          (head_response->
+              content_features->flag_dlna_v15_set) ? "TRUE\n" : "FALSE\n",
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
 
@@ -3548,8 +3550,8 @@ dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
   if (g_strlcat (struct_str,
-          (head_response->content_features->
-              flag_link_protected_set) ? "TRUE\n" : "FALSE\n",
+          (head_response->
+              content_features->flag_link_protected_set) ? "TRUE\n" : "FALSE\n",
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
 
@@ -3557,18 +3559,18 @@ dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
   if (g_strlcat (struct_str,
-          (head_response->content_features->
-              flag_full_clear_text_set) ? "TRUE\n" : "FALSE\n",
-          struct_str_max_size) >= struct_str_max_size)
+          (head_response->
+              content_features->flag_full_clear_text_set) ? "TRUE\n" :
+          "FALSE\n", struct_str_max_size) >= struct_str_max_size)
     goto overflow;
 
   if (g_strlcat (struct_str, "Limited Clear Text?: ",
           struct_str_max_size) >= struct_str_max_size)
     goto overflow;
   if (g_strlcat (struct_str,
-          (head_response->content_features->
-              flag_limited_clear_text_set) ? "TRUE\n" : "FALSE\n",
-          struct_str_max_size) >= struct_str_max_size)
+          (head_response->
+              content_features->flag_limited_clear_text_set) ? "TRUE\n" :
+          "FALSE\n", struct_str_max_size) >= struct_str_max_size)
     goto overflow;
 
   return TRUE;
