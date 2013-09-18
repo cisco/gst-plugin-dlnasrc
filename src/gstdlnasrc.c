@@ -1984,24 +1984,15 @@ dlna_src_head_request_formulate (GstDlnaSrc * dlna_src,
           head_request_max_size) >= head_request_max_size)
     goto overflow;
 
-  // Include either starting npt or byte
-  if (start_byte != 0) {
-    if (g_strlcat (head_request_str, "bytes=",
-            head_request_max_size) >= head_request_max_size)
-      goto overflow;
-    g_snprintf (tmpStr, tmp_str_max_size, "%" G_GUINT64_FORMAT, start_byte);
-    if (g_strlcat (head_request_str, tmpStr,
-            head_request_max_size) >= head_request_max_size)
-      goto overflow;
-  } else {
-    if (g_strlcat (head_request_str, "npt=",
-            head_request_max_size) >= head_request_max_size)
-      goto overflow;
-    g_snprintf (tmpStr, tmp_str_max_size, "%" G_GUINT64_FORMAT, start_npt);
-    if (g_strlcat (head_request_str, tmpStr,
-            head_request_max_size) >= head_request_max_size)
-      goto overflow;
-  }
+  // Include starting npt (since bytes are only include in response)
+  if (g_strlcat (head_request_str, "npt=",
+          head_request_max_size) >= head_request_max_size)
+    goto overflow;
+  g_snprintf (tmpStr, tmp_str_max_size, "%" G_GUINT64_FORMAT, start_npt);
+  if (g_strlcat (head_request_str, tmpStr,
+          head_request_max_size) >= head_request_max_size)
+    goto overflow;
+
   if (g_strlcat (head_request_str, "-",
           head_request_max_size) >= head_request_max_size)
     goto overflow;
