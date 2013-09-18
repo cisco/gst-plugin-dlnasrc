@@ -1951,7 +1951,7 @@ dlna_src_head_request_formulate (GstDlnaSrc * dlna_src,
 
 overflow:
   GST_ERROR_OBJECT (dlna_src,
-      "Overflow - exceeded head request string size of: %d",
+      "Overflow - exceeded head request string size of: %" G_GSIZE_FORMAT,
       head_request_max_size);
   return FALSE;
 }
@@ -3510,7 +3510,7 @@ dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
 
 overflow:
   GST_ERROR_OBJECT (dlna_src,
-      "Overflow while converting struct to str, size: %d", struct_str_max_size);
+      "Overflow while converting struct to str, size: %" G_GSIZE_FORMAT, struct_str_max_size);
   return FALSE;
 }
 
