@@ -3656,4 +3656,4 @@ GST_PLUGIN_DEFINE (GST_VERSION_MAJOR,
     dlnasrc,
     "DLNA HTTP Source",
     (GstPluginInitFunc) dlna_src_init,
-    VERSION, "LGPL", "gst-cablelabs_ri", "http://gstreamer.net/")
+    VERSION, "BSD", "gst-cablelabs_ri", "http://gstreamer.net/")
