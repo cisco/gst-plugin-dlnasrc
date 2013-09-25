@@ -321,6 +321,8 @@ static gboolean
 dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
     guint64 * bytes);
 
+static gboolean dlna_src_use_byte_range (GstDlnaSrc * dlna_src);
+
 #define gst_dlna_src_parent_class parent_class
 
 G_DEFINE_TYPE_WITH_CODE (GstDlnaSrc, gst_dlna_src, GST_TYPE_BIN,
@@ -762,7 +764,6 @@ dlna_src_handle_query_seeking (GstDlnaSrc * dlna_src, GstQuery * query)
   gboolean supports_seeking = FALSE;
   gint64 seek_start = 0;
   gint64 seek_end = 0;
-  gboolean use_byte_range = FALSE;
 
   GST_DEBUG_OBJECT (dlna_src, "Called");
 
@@ -777,25 +778,7 @@ dlna_src_handle_query_seeking (GstDlnaSrc * dlna_src, GstQuery * query)
       &seek_end);
 
   if ((format == GST_FORMAT_BYTES) || (format == GST_FORMAT_DEFAULT)) {
-    // Determine if this server supports byte based seeks for this content
-    // Check if got time seek in order to use byte range
-    if ((dlna_src->server_info->content_features != NULL) &&
-        dlna_src->server_info->time_seek_response_received) {
-
-      // Check for non-encrypted content and range seek supported
-      if (!dlna_src->server_info->content_features->flag_link_protected_set &&
-          dlna_src->server_info->content_features->op_range_supported)
-        use_byte_range = TRUE;
-
-      // Check for encrypted content and range seek supported
-      if (dlna_src->server_info->content_features->flag_link_protected_set &&
-          (dlna_src->server_info->content_features->flag_full_clear_text_set ||
-              dlna_src->server_info->content_features->
-              flag_limited_clear_text_set))
-        use_byte_range = TRUE;
-    }
-
-    if (use_byte_range) {
+    if (dlna_src_use_byte_range (dlna_src)) {
       // Set results of query but don't do actual seek
       gst_query_set_seeking (query, GST_FORMAT_BYTES, TRUE,
           dlna_src->server_info->byte_seek_start,
@@ -853,6 +836,40 @@ dlna_src_handle_query_seeking (GstDlnaSrc * dlna_src, GstQuery * query)
 }
 
 /**
+ * Utility method which determines if the byte_seek_* values were received in
+ * a HEAD response and can be used for byte related positioning.
+ *
+ * @param   dlna_src    this element
+ *
+ * @return  true if byte seek values were provided in HEAD response, false otherwise
+ */
+static gboolean
+dlna_src_use_byte_range (GstDlnaSrc * dlna_src)
+{
+  gboolean use_byte_range = FALSE;
+
+  // Determine if this server supports byte based seeks for this content
+  // Check if got time seek in order to use byte range
+  if ((dlna_src->server_info->content_features != NULL) &&
+      dlna_src->server_info->time_seek_response_received) {
+
+    // Check for non-encrypted content and range seek supported
+    if (!dlna_src->server_info->content_features->flag_link_protected_set &&
+        dlna_src->server_info->content_features->op_range_supported)
+      use_byte_range = TRUE;
+
+    // Check for encrypted content and range seek supported
+    if (dlna_src->server_info->content_features->flag_link_protected_set &&
+        (dlna_src->server_info->content_features->flag_full_clear_text_set ||
+            dlna_src->server_info->content_features->
+            flag_limited_clear_text_set))
+      use_byte_range = TRUE;
+  }
+
+  return use_byte_range;
+}
+
+/**
  * Responds to a segment query by returning rate along with start and stop
  *
  * @param	dlna_src	this element
@@ -868,7 +885,6 @@ dlna_src_handle_query_segment (GstDlnaSrc * dlna_src, GstQuery * query)
   gdouble rate = 1.0;
   gint64 start = 0;
   gint64 end = 0;
-  gboolean use_byte_range = FALSE;
 
   GST_LOG_OBJECT (dlna_src, "Called");
 
@@ -882,25 +898,7 @@ dlna_src_handle_query_segment (GstDlnaSrc * dlna_src, GstQuery * query)
   gst_query_parse_segment (query, &rate, &format, &start, &end);
 
   if (format == GST_FORMAT_BYTES) {
-    // Determine if this server supports byte based seeks for this content
-    // Check if got time seek in order to use byte range
-    if ((dlna_src->server_info->content_features != NULL) &&
-        dlna_src->server_info->time_seek_response_received) {
-
-      // Check for non-encrypted content and range seek supported
-      if (!dlna_src->server_info->content_features->flag_link_protected_set &&
-          dlna_src->server_info->content_features->op_range_supported)
-        use_byte_range = TRUE;
-
-      // Check for encrypted content and range seek supported
-      if (dlna_src->server_info->content_features->flag_link_protected_set &&
-          (dlna_src->server_info->content_features->flag_full_clear_text_set ||
-              dlna_src->server_info->content_features->
-              flag_limited_clear_text_set))
-        use_byte_range = TRUE;
-    }
-
-    if (use_byte_range) {
+    if (dlna_src_use_byte_range (dlna_src)) {
 
       // Set segment info based on server support of byte based seeks
       gst_query_set_segment (query, dlna_src->rate, GST_FORMAT_BYTES,
@@ -1127,7 +1125,6 @@ dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
     GstFormat format, guint64 start,
     GstSeekType start_type, guint64 stop, GstSeekType stop_type)
 {
-  gboolean use_byte_range = FALSE;
   // Check if supplied rate is supported
   if ((rate == 1.0) || (dlna_src_is_rate_supported (dlna_src, rate))) {
     GST_INFO_OBJECT (dlna_src, "New rate of %4.1f is supported by server",
@@ -1140,25 +1137,7 @@ dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
 
   // Check if supplied start is valid
   if (format == GST_FORMAT_BYTES) {
-    // Determine if this server supports byte based seeks for this content
-    // Check if got time seek in order to use byte range
-    if ((dlna_src->server_info->content_features != NULL) &&
-        dlna_src->server_info->time_seek_response_received) {
-
-      // Check for non-encrypted content and range seek supported
-      if (!dlna_src->server_info->content_features->flag_link_protected_set &&
-          dlna_src->server_info->content_features->op_range_supported)
-        use_byte_range = TRUE;
-
-      // Check for encrypted content and range seek supported
-      if (dlna_src->server_info->content_features->flag_link_protected_set &&
-          (dlna_src->server_info->content_features->flag_full_clear_text_set ||
-              dlna_src->server_info->content_features->
-              flag_limited_clear_text_set))
-        use_byte_range = TRUE;
-    }
-
-    if (use_byte_range) {
+    if (dlna_src_use_byte_range (dlna_src)) {
 
       // Verify start byte is within range
       if ((start < dlna_src->server_info->byte_seek_start) ||
