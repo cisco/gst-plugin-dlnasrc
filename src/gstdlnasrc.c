@@ -877,16 +877,10 @@ dlna_src_use_time_range (GstDlnaSrc * dlna_src)
 {
   // Determine if this server supports time based seeks for this content
   // Check if got time seek in order to use time seek range
-  if (dlna_src->server_info != NULL
+  return dlna_src->server_info != NULL
       && dlna_src->server_info->content_features != NULL
-      && dlna_src->server_info->time_seek_response_received) {
-
-    // Check for time seek range supported
-    if (dlna_src->server_info->content_features->op_time_seek_supported)
-      return TRUE;
-  }
-
-  return FALSE;
+      && dlna_src->server_info->time_seek_response_received
+      && dlna_src->server_info->content_features->op_time_seek_supported;
 }
 
 /**
