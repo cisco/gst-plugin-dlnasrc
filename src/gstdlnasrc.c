@@ -323,6 +323,8 @@ dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
 
 static gboolean dlna_src_use_byte_range (GstDlnaSrc * dlna_src);
 
+static gboolean dlna_src_use_time_range (GstDlnaSrc * dlna_src);
+
 #define gst_dlna_src_parent_class parent_class
 
 G_DEFINE_TYPE_WITH_CODE (GstDlnaSrc, gst_dlna_src, GST_TYPE_BIN,
@@ -689,9 +691,7 @@ dlna_src_handle_query_duration (GstDlnaSrc * dlna_src, GstQuery * query)
 
   if (format == GST_FORMAT_BYTES) {
     // Total duration of stream available?, report this if it is known
-    if ((dlna_src->server_info->content_features != NULL) &&
-        (dlna_src->server_info->content_features->op_range_supported) &&
-        (dlna_src->server_info->time_seek_response_received)) {
+    if (dlna_src_use_byte_range (dlna_src)) {
       gst_query_set_duration (query, GST_FORMAT_BYTES,
           dlna_src->server_info->byte_seek_total);
       ret = TRUE;
@@ -723,9 +723,7 @@ dlna_src_handle_query_duration (GstDlnaSrc * dlna_src, GstQuery * query)
       }
     }
   } else if (format == GST_FORMAT_TIME) {
-    if ((dlna_src->server_info->content_features != NULL) &&
-        (dlna_src->server_info->content_features->op_time_seek_supported) &&
-        (dlna_src->server_info->time_seek_response_received)) {
+    if (dlna_src_use_time_range (dlna_src)) {
       gst_query_set_duration (query, GST_FORMAT_TIME,
           dlna_src->server_info->time_seek_npt_duration);
       ret = TRUE;
@@ -807,9 +805,7 @@ dlna_src_handle_query_seeking (GstDlnaSrc * dlna_src, GstQuery * query)
       }
     }
   } else if (format == GST_FORMAT_TIME) {
-    if ((dlna_src->server_info->content_features != NULL) &&
-        (dlna_src->server_info->content_features->op_time_seek_supported) &&
-        (dlna_src->server_info->time_seek_response_received)) {
+    if (dlna_src_use_time_range (dlna_src)) {
       // Set results of query
       gst_query_set_seeking (query, GST_FORMAT_TIME, TRUE,
           dlna_src->server_info->time_seek_npt_start,
@@ -848,8 +844,9 @@ dlna_src_use_byte_range (GstDlnaSrc * dlna_src)
 {
   // Determine if this server supports byte based seeks for this content
   // Check if got time seek in order to use byte range
-  if ((dlna_src->server_info->content_features != NULL) &&
-      dlna_src->server_info->time_seek_response_received) {
+  if (dlna_src->server_info != NULL
+      && dlna_src->server_info->content_features != NULL
+      && dlna_src->server_info->time_seek_response_received) {
 
     // Check for non-encrypted content and range seek supported
     if (!dlna_src->server_info->content_features->flag_link_protected_set &&
@@ -865,6 +862,25 @@ dlna_src_use_byte_range (GstDlnaSrc * dlna_src)
   }
 
   return FALSE;
+}
+
+/**
+ * Utility method which determines if the time_seek_* values were received in
+ * a HEAD response and can be used for time related positioning.
+ *
+ * @param   dlna_src    this element
+ *
+ * @return  true if time seek values were provided in HEAD response, false otherwise
+ */
+static gboolean
+dlna_src_use_time_range (GstDlnaSrc * dlna_src)
+{
+  // Determine if this server supports time based seeks for this content
+  // Check if got time seek in order to use time seek range
+  return dlna_src->server_info != NULL
+      && dlna_src->server_info->content_features != NULL
+      && dlna_src->server_info->time_seek_response_received
+      && dlna_src->server_info->content_features->op_time_seek_supported;
 }
 
 /**
@@ -928,9 +944,7 @@ dlna_src_handle_query_segment (GstDlnaSrc * dlna_src, GstQuery * query)
     }
   } else if (format == GST_FORMAT_TIME) {
 
-    if ((dlna_src->server_info->content_features != NULL) &&
-        (dlna_src->server_info->content_features->op_time_seek_supported) &&
-        (dlna_src->server_info->time_seek_response_received)) {
+    if (dlna_src_use_time_range (dlna_src)) {
       gst_query_set_segment (query, dlna_src->rate, GST_FORMAT_TIME,
           dlna_src->server_info->time_seek_npt_start,
           dlna_src->server_info->time_seek_npt_end);
@@ -976,9 +990,7 @@ dlna_src_handle_query_convert (GstDlnaSrc * dlna_src, GstQuery * query)
 
   // Make sure a URI has been set and HEAD response received and server
   // supports time seek so conversion can be performed
-  if ((dlna_src->uri == NULL) || (dlna_src->server_info == NULL) ||
-      (dlna_src->server_info->content_features == NULL) ||
-      (!dlna_src->server_info->time_seek_response_received)) {
+  if (dlna_src->uri == NULL || !dlna_src_use_time_range (dlna_src)) {
     GST_INFO_OBJECT (dlna_src, "Not enough info to handle conversion query");
     return FALSE;
   }
@@ -1178,9 +1190,7 @@ dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
     }
   } else if (format == GST_FORMAT_TIME) {
     // Verify start time is within range
-    if ((dlna_src->server_info->content_features != NULL) &&
-        (dlna_src->server_info->content_features->op_time_seek_supported) &&
-        (dlna_src->server_info->time_seek_response_received) &&
+    if (dlna_src_use_time_range (dlna_src) &&
         ((start < dlna_src->server_info->time_seek_npt_start) ||
             (start > dlna_src->server_info->time_seek_npt_end))) {
       GST_WARNING_OBJECT (dlna_src,
@@ -1225,9 +1235,7 @@ dlna_src_is_rate_supported (GstDlnaSrc * dlna_src, gfloat rate)
 
   // Make sure server supports time seeks since that will be required when
   // requesting rate change
-  if ((dlna_src->server_info == NULL) ||
-      (dlna_src->server_info->content_features == NULL) ||
-      (!dlna_src->server_info->content_features->op_time_seek_supported)) {
+  if (!dlna_src_use_time_range (dlna_src)) {
     GST_WARNING_OBJECT (dlna_src,
         "Unable to change rate, not supported by server");
     return FALSE;
