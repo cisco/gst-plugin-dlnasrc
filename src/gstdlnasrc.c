@@ -1462,6 +1462,8 @@ gst_dlna_src_uri_handler_init (gpointer g_iface, gpointer iface_data)
 static gboolean
 dlna_src_set_uri (GstDlnaSrc * dlna_src, const gchar * value)
 {
+  guint64 content_size = 0;
+
   // Determine if this is a new URI or just another request using same URI
   if ((dlna_src->uri == NULL) || (g_strcmp0 (value, dlna_src->uri) != 0)) {
     if (dlna_src->uri == NULL) {
@@ -1504,11 +1506,6 @@ dlna_src_set_uri (GstDlnaSrc * dlna_src, const gchar * value)
       GST_ERROR_OBJECT (dlna_src, "Problems setting up dtcp elements");
       return FALSE;
     }
-    g_object_set (G_OBJECT (dlna_src->http_src), "content-size",
-        dlna_src->server_info->byte_seek_total, NULL);
-    GST_INFO_OBJECT (dlna_src,
-        "Set HTTP src DTCP content size: %" G_GUINT64_FORMAT,
-        dlna_src->server_info->byte_seek_total);
   } else {
     GST_INFO_OBJECT (dlna_src, "No DTCP setup required");
 
@@ -1536,6 +1533,17 @@ dlna_src_set_uri (GstDlnaSrc * dlna_src, const gchar * value)
     // Configure event function on sink pad before adding pad to element
     gst_pad_set_query_function (dlna_src->src_pad,
         (GstPadQueryFunction) gst_dlna_src_query);
+  }
+
+  if (dlna_src->server_info != NULL) {
+    content_size = dlna_src->server_info->byte_seek_total;
+    if (content_size == 0)
+      content_size = dlna_src->server_info->content_length;
+
+    g_object_set (G_OBJECT (dlna_src->http_src), "content-size", content_size,
+        NULL);
+    GST_INFO_OBJECT (dlna_src, "Set HTTP src content size: %" G_GUINT64_FORMAT,
+        content_size);
   }
 
   return TRUE;
