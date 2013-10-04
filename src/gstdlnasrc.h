@@ -140,10 +140,14 @@ struct _GstDlnaSrcHeadResponse
     guint64 byte_seek_total;
     gint byte_seek_idx;
 
+    gint clear_text_idx;
+
     guint64 dtcp_range_start;
     guint64 dtcp_range_end;
     guint64 dtcp_range_total;
     gint dtcp_range_idx;
+
+    gint available_range_idx;
 
     gchar* transfer_mode;
     gint transfer_mode_idx;
