@@ -85,10 +85,6 @@ struct _GstDlnaSrc
     // Current playback rate
     gfloat rate;
 
-    // *TODO* - need to support this eventually,
-    // indication if the pipeline is live
-    //gboolean is_live;
-
     // Requested change info
     gboolean requested_change;
 

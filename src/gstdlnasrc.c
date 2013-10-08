@@ -175,6 +175,7 @@ static const int RESERVED_FLAGS_LENGTH = 24;
 #define HTTP_STATUS_OK 200
 #define HTTP_STATUS_CREATED 201
 #define HTTP_STATUS_PARTIAL 206
+#define HTTP_STATUS_BAD_REQUEST 400
 #define HTTP_STATUS_NOT_ACCEPTABLE 406
 
 // Description of a pad that the element will (or might) create and use
@@ -335,6 +336,8 @@ static gboolean dlna_src_use_byte_range (GstDlnaSrc * dlna_src);
 static gboolean dlna_src_use_time_range (GstDlnaSrc * dlna_src);
 
 static gboolean dlna_src_is_dtcp_encrypted (GstDlnaSrc * dlna_src);
+
+static gboolean dlna_src_is_live (GstDlnaSrc * dlna_src);
 
 #define gst_dlna_src_parent_class parent_class
 
@@ -891,7 +894,8 @@ dlna_src_use_time_range (GstDlnaSrc * dlna_src)
   return dlna_src->server_info != NULL
       && dlna_src->server_info->content_features != NULL
       && dlna_src->server_info->time_seek_response_received
-      && dlna_src->server_info->content_features->op_time_seek_supported;
+      && (dlna_src->server_info->content_features->op_time_seek_supported
+         || dlna_src->server_info->content_features->flag_limited_time_seek_set);
 }
 
 /**
@@ -907,6 +911,23 @@ dlna_src_is_dtcp_encrypted (GstDlnaSrc * dlna_src)
   return dlna_src->server_info != NULL
       && dlna_src->server_info->content_features != NULL
       && dlna_src->server_info->content_features->flag_link_protected_set;
+}
+
+/**
+ * Utility method which determines if content is "live".  The content is
+ * considered live if s0 or SN or both are increasing.
+ *
+ * @param   dlna_src    this element
+ *
+ * @return  true if content is "live", false otherwise
+ */
+static gboolean
+dlna_src_is_live (GstDlnaSrc * dlna_src)
+{
+  return dlna_src->server_info != NULL
+      && dlna_src->server_info->content_features != NULL
+      && (dlna_src->server_info->content_features->flag_so_increasing_set
+      || dlna_src->server_info->content_features->flag_sn_increasing_set);
 }
 
 /**
@@ -1559,7 +1580,7 @@ dlna_src_set_uri (GstDlnaSrc * dlna_src, const gchar * value)
         (GstPadQueryFunction) gst_dlna_src_query);
   }
 
-  if (dlna_src->server_info != NULL) {
+  if ((dlna_src->server_info != NULL) && !dlna_src_is_live(dlna_src)) {
     content_size = dlna_src->server_info->byte_seek_total;
     if (content_size == 0)
       content_size = dlna_src->server_info->content_length;
@@ -1681,10 +1702,11 @@ dlna_src_init_uri (GstDlnaSrc * dlna_src, const gchar * value)
   }
   // Check if content could be DTCP encrypted and server did not like range header
   // in initial HEAD request
-  if ((dlna_src->server_info != NULL) &&
-      (dlna_src->server_info->ret_code == HTTP_STATUS_NOT_ACCEPTABLE)) {
+  if (dlna_src->server_info != NULL &&
+      (dlna_src->server_info->ret_code == HTTP_STATUS_NOT_ACCEPTABLE
+       || dlna_src->server_info->ret_code == HTTP_STATUS_BAD_REQUEST)) {
     GST_INFO_OBJECT (dlna_src,
-        "Issuing another HEAD Request without range header for potential DTCP content");
+        "Issuing another HEAD Request without range header for potential DTCP and/or live content");
     if (!dlna_src_head_request (dlna_src, 0, 0, FALSE, &dlna_src->server_info)) {
       GST_WARNING_OBJECT (dlna_src,
           "Unable to issue second HEAD request & get HEAD response");
@@ -2635,6 +2657,8 @@ dlna_src_head_response_parse_available_range (GstDlnaSrc * dlna_src,
           &head_response->time_seek_npt_duration))
     // Return, errors which have been logged already
     return FALSE;
+  else
+    head_response->time_seek_response_received = TRUE;
 
   if (!dlna_src_is_dtcp_encrypted (dlna_src)) {
     // Extract start and end bytes from availableSeekRange header using bytes
