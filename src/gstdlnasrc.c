@@ -13,14 +13,14 @@
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS
  * IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
  * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL CABLE TELEVISION LABS INC. OR ITS
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -61,12 +61,12 @@ enum
 #define ELEMENT_NAME_DTCP_DECRYPTER "dtcp-decrypter"
 
 #define MAX_HTTP_BUF_SIZE 2048
-static const char CRLF[] = "\r\n";
+static const gchar CRLF[] = "\r\n";
 
-static const char COLON[] = ":";
+static const gchar COLON[] = ":";
 
 // Constant strings identifiers for header fields in HEAD response
-static const char *HEAD_RESPONSE_HEADERS[] = {
+static const gchar *HEAD_RESPONSE_HEADERS[] = {
   "HTTP/",                      // 0
   "VARY",                       // 1
   "TIMESEEKRANGE.DLNA.ORG",     // 2
@@ -81,7 +81,8 @@ static const char *HEAD_RESPONSE_HEADERS[] = {
   "CACHE-CONTROL",              // 11
   "CONTENT-LENGTH",             // 12
   "ACCEPT-RANGES",              // 13
-  "CONTENT-RANGE"               // 14
+  "CONTENT-RANGE",              // 14
+  "AVAILABLESEEKRANGE.DLNA.ORG" // 15
 };
 
 // Constants which represent indices in HEAD_RESPONSE_HEADERS string array
@@ -101,24 +102,27 @@ static const char *HEAD_RESPONSE_HEADERS[] = {
 #define HEADER_INDEX_CONTENT_LENGTH 12
 #define HEADER_INDEX_ACCEPT_RANGES 13
 #define HEADER_INDEX_CONTENT_RANGE 14
+#define HEADER_INDEX_AVAILABLE_RANGE 15
 
 // Count of field headers in HEAD_RESPONSE_HEADERS along with HEADER_INDEX_* constants
-static const gint HEAD_RESPONSE_HEADERS_CNT = 15;
+static const gint HEAD_RESPONSE_HEADERS_CNT = 16;
 
-// Subfield headers within TIMESEEKRANGE.DLNA.ORG
-static const char *TIME_SEEK_HEADERS[] = {
+// Subfield headers which specify ranges
+static const gchar *RANGE_HEADERS[] = {
   "NPT",                        // 0
   "BYTES",                      // 1
+  "CLEARTEXTBYTES",             // 2
 };
-
-// Subfield headers within ACCEPT-RANGES
-static const char *ACCEPT_RANGES_NONE = "NONE";
 
 #define HEADER_INDEX_NPT 0
 #define HEADER_INDEX_BYTES 1
+#define HEADER_INDEX_CLEAR_TEXT 2
+
+// Subfield headers within ACCEPT-RANGES
+static const gchar *ACCEPT_RANGES_NONE = "NONE";
 
 // Subfield headers within CONTENTFEATURES.DLNA.ORG
-static const char *CONTENT_FEATURES_HEADERS[] = {
+static const gchar *CONTENT_FEATURES_HEADERS[] = {
   "DLNA.ORG_PN",                // 0
   "DLNA.ORG_OP",                // 1
   "DLNA.ORG_PS",                // 2
@@ -131,7 +135,7 @@ static const char *CONTENT_FEATURES_HEADERS[] = {
 #define HEADER_INDEX_FLAGS 3
 
 // Subfield headers with CONTENT-TYPE
-static const char *CONTENT_TYPE_HEADERS[] = {
+static const gchar *CONTENT_TYPE_HEADERS[] = {
   "DTCP1HOST",                  // 0
   "DTCP1PORT",                  // 1
   "CONTENTFORMAT",              // 2
@@ -171,6 +175,7 @@ static const int RESERVED_FLAGS_LENGTH = 24;
 #define HTTP_STATUS_OK 200
 #define HTTP_STATUS_CREATED 201
 #define HTTP_STATUS_PARTIAL 206
+#define HTTP_STATUS_NOT_ACCEPTABLE 406
 
 // Description of a pad that the element will (or might) create and use
 //
@@ -245,9 +250,9 @@ static gboolean dlna_src_head_response_assign_field_value (GstDlnaSrc *
 static gboolean dlna_src_head_response_parse_time_seek (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, gint idx, gchar * field_str);
 
-static gboolean dlna_src_head_response_parse_byte_range (GstDlnaSrc * dlna_src,
-    gint idx, gchar * field_str, guint64 * start_byte, guint64 * end_byte,
-    guint64 * total_bytes);
+static gboolean
+dlna_src_head_response_parse_available_range (GstDlnaSrc * dlna_src,
+    GstDlnaSrcHeadResponse * head_response, gint idx, gchar * field_str);
 
 static gboolean dlna_src_head_response_parse_content_features (GstDlnaSrc *
     dlna_src, GstDlnaSrcHeadResponse * head_response, gint idx,
@@ -266,10 +271,6 @@ static gboolean dlna_src_head_response_parse_playspeeds (GstDlnaSrc *
 
 static gboolean dlna_src_head_response_parse_flags (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, gint idx, gchar * field_str);
-
-static gboolean dlna_src_head_response_parse_dtcp_range (GstDlnaSrc *
-    dlna_src, GstDlnaSrcHeadResponse * head_response, gint idx,
-    gchar * field_str);
 
 static gboolean dlna_src_head_response_parse_content_type (GstDlnaSrc *
     dlna_src, GstDlnaSrcHeadResponse * head_response, gint idx,
@@ -300,18 +301,40 @@ static gboolean dlna_src_handle_query_segment (GstDlnaSrc * dlna_src,
 static gboolean dlna_src_handle_query_convert (GstDlnaSrc * dlna_src,
     GstQuery * query);
 
+static gboolean dlna_src_parse_byte_range (GstDlnaSrc * dlna_src,
+    gchar * field_str, gint header_idx, guint64 * start_byte,
+    guint64 * end_byte, guint64 * total_bytes);
+
+static gboolean
+dlna_src_parse_npt_range (GstDlnaSrc * dlna_src, gchar * npt_str,
+    gchar ** start_str, gchar ** stop_str, gchar ** total_str,
+    guint64 * start, guint64 * stop, guint64 * total);
+
 static gboolean dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
     GstFormat format, guint64 start,
     GstSeekType start_type, guint64 stop, GstSeekType stop_type);
 
 static gboolean dlna_src_is_rate_supported (GstDlnaSrc * dlna_src, gfloat rate);
 
-static gboolean dlna_src_formulate_extra_headers (GstDlnaSrc * dlna_src,
-    gfloat rate, GstFormat format, guint64 start, GstStructure ** headers);
+static gboolean dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src,
+    gfloat rate, GstFormat format, guint64 start);
 
 static gboolean dlna_src_npt_to_nanos (GstDlnaSrc * dlna_src, gchar * string,
     guint64 * media_time_nanos);
 
+static gboolean
+dlna_src_convert_bytes_to_npt_nanos (GstDlnaSrc * dlna_src, guint64 bytes,
+    guint64 * npt_nanos);
+
+static gboolean
+dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
+    guint64 * bytes);
+
+static gboolean dlna_src_use_byte_range (GstDlnaSrc * dlna_src);
+
+static gboolean dlna_src_use_time_range (GstDlnaSrc * dlna_src);
+
+static gboolean dlna_src_is_dtcp_encrypted (GstDlnaSrc * dlna_src);
 
 #define gst_dlna_src_parent_class parent_class
 
@@ -679,9 +702,7 @@ dlna_src_handle_query_duration (GstDlnaSrc * dlna_src, GstQuery * query)
 
   if (format == GST_FORMAT_BYTES) {
     // Total duration of stream available?, report this if it is known
-    if ((dlna_src->server_info->content_features != NULL) &&
-        (dlna_src->server_info->content_features->op_range_supported) &&
-        (dlna_src->server_info->time_seek_response_received)) {
+    if (dlna_src_use_byte_range (dlna_src)) {
       gst_query_set_duration (query, GST_FORMAT_BYTES,
           dlna_src->server_info->byte_seek_total);
       ret = TRUE;
@@ -699,15 +720,21 @@ dlna_src_handle_query_duration (GstDlnaSrc * dlna_src, GstQuery * query)
         GST_DEBUG_OBJECT (dlna_src,
             "Server supplied content-length header: %"
             G_GUINT64_FORMAT, dlna_src->server_info->content_length);
+      } else if (dlna_src->server_info->byte_seek_total > 0) {
+        gst_query_set_duration (query, GST_FORMAT_BYTES,
+            dlna_src->server_info->byte_seek_total);
+        ret = TRUE;
+
+        GST_DEBUG_OBJECT (dlna_src,
+            "Server supplied time seek range header: %"
+            G_GUINT64_FORMAT, dlna_src->server_info->byte_seek_total);
       } else {
         GST_DEBUG_OBJECT (dlna_src,
             "Duration in bytes not available for content item");
       }
     }
   } else if (format == GST_FORMAT_TIME) {
-    if ((dlna_src->server_info->content_features != NULL) &&
-        (dlna_src->server_info->content_features->op_time_seek_supported) &&
-        (dlna_src->server_info->time_seek_response_received)) {
+    if (dlna_src_use_time_range (dlna_src)) {
       gst_query_set_duration (query, GST_FORMAT_TIME,
           dlna_src->server_info->time_seek_npt_duration);
       ret = TRUE;
@@ -760,37 +787,14 @@ dlna_src_handle_query_seeking (GstDlnaSrc * dlna_src, GstQuery * query)
       &seek_end);
 
   if ((format == GST_FORMAT_BYTES) || (format == GST_FORMAT_DEFAULT)) {
-    // Check for DTCP encrypted content
-    if ((dlna_src->server_info->content_features != NULL) &&
-        (dlna_src->server_info->content_features->flag_link_protected_set) &&
-        (dlna_src->server_info->content_features->flag_full_clear_text_set ||
-            dlna_src->server_info->
-            content_features->flag_limited_clear_text_set)) {
-
-      // Set results of query but don't do actual seek
-      gst_query_set_seeking (query, GST_FORMAT_BYTES, TRUE,
-          dlna_src->server_info->dtcp_range_start,
-          dlna_src->server_info->dtcp_range_end);
-      ret = TRUE;
-
-      GST_DEBUG_OBJECT (dlna_src,
-          "Byte seeks supported for this content by the server, start %"
-          G_GUINT64_FORMAT ", end %" G_GUINT64_FORMAT,
-          dlna_src->server_info->dtcp_range_start,
-          dlna_src->server_info->dtcp_range_end);
-
-    } else if ((dlna_src->server_info->content_features != NULL) &&
-        (dlna_src->server_info->content_features->op_range_supported) &&
-        (dlna_src->server_info->time_seek_response_received)) {
-      // Determine if this server supports byte based seeks for this content
-
+    if (dlna_src_use_byte_range (dlna_src)) {
       // Set results of query but don't do actual seek
       gst_query_set_seeking (query, GST_FORMAT_BYTES, TRUE,
           dlna_src->server_info->byte_seek_start,
           dlna_src->server_info->byte_seek_end);
       ret = TRUE;
 
-      GST_DEBUG_OBJECT (dlna_src,
+      GST_INFO_OBJECT (dlna_src,
           "Byte seeks supported for this content by the server, start %"
           G_GUINT64_FORMAT ", end %" G_GUINT64_FORMAT,
           dlna_src->server_info->byte_seek_start,
@@ -803,18 +807,16 @@ dlna_src_handle_query_seeking (GstDlnaSrc * dlna_src, GstQuery * query)
             dlna_src->server_info->content_length);
         ret = TRUE;
 
-        GST_DEBUG_OBJECT (dlna_src,
+        GST_INFO_OBJECT (dlna_src,
             "Server accepts byte range requests, start 0, end %"
             G_GUINT64_FORMAT, dlna_src->server_info->content_length);
       } else {
-        GST_DEBUG_OBJECT (dlna_src,
+        GST_INFO_OBJECT (dlna_src,
             "Seeking in bytes not available for content item");
       }
     }
   } else if (format == GST_FORMAT_TIME) {
-    if ((dlna_src->server_info->content_features != NULL) &&
-        (dlna_src->server_info->content_features->op_time_seek_supported) &&
-        (dlna_src->server_info->time_seek_response_received)) {
+    if (dlna_src_use_time_range (dlna_src)) {
       // Set results of query
       gst_query_set_seeking (query, GST_FORMAT_TIME, TRUE,
           dlna_src->server_info->time_seek_npt_start,
@@ -838,6 +840,73 @@ dlna_src_handle_query_seeking (GstDlnaSrc * dlna_src, GstQuery * query)
   }
 
   return ret;
+}
+
+/**
+ * Utility method which determines if the byte_seek_* values were received in
+ * a HEAD response and can be used for byte related positioning.
+ *
+ * @param   dlna_src    this element
+ *
+ * @return  true if byte seek values were provided in HEAD response, false otherwise
+ */
+static gboolean
+dlna_src_use_byte_range (GstDlnaSrc * dlna_src)
+{
+  // Determine if this server supports byte based seeks for this content
+  // Check if got time seek in order to use byte range
+  if (dlna_src->server_info != NULL
+      && dlna_src->server_info->content_features != NULL
+      && dlna_src->server_info->time_seek_response_received) {
+
+    // Check for non-encrypted content and range seek supported
+    if (!dlna_src_is_dtcp_encrypted (dlna_src) &&
+        dlna_src->server_info->content_features->op_range_supported)
+      return TRUE;
+
+    // Check for encrypted content and range seek supported
+    else if (dlna_src_is_dtcp_encrypted (dlna_src) &&
+        (dlna_src->server_info->content_features->flag_full_clear_text_set ||
+            dlna_src->server_info->content_features->
+            flag_limited_clear_text_set))
+      return TRUE;
+  }
+
+  return FALSE;
+}
+
+/**
+ * Utility method which determines if the time_seek_* values were received in
+ * a HEAD response and can be used for time related positioning.
+ *
+ * @param   dlna_src    this element
+ *
+ * @return  true if time seek values were provided in HEAD response, false otherwise
+ */
+static gboolean
+dlna_src_use_time_range (GstDlnaSrc * dlna_src)
+{
+  // Determine if this server supports time based seeks for this content
+  // Check if got time seek in order to use time seek range
+  return dlna_src->server_info != NULL
+      && dlna_src->server_info->content_features != NULL
+      && dlna_src->server_info->time_seek_response_received
+      && dlna_src->server_info->content_features->op_time_seek_supported;
+}
+
+/**
+ * Utility method which determines if content is dtcp/ip encrypted.
+ *
+ * @param   dlna_src    this element
+ *
+ * @return  true if content is dtcp encrypted, false otherwise
+ */
+static gboolean
+dlna_src_is_dtcp_encrypted (GstDlnaSrc * dlna_src)
+{
+  return dlna_src->server_info != NULL
+      && dlna_src->server_info->content_features != NULL
+      && dlna_src->server_info->content_features->flag_link_protected_set;
 }
 
 /**
@@ -869,29 +938,7 @@ dlna_src_handle_query_segment (GstDlnaSrc * dlna_src, GstQuery * query)
   gst_query_parse_segment (query, &rate, &format, &start, &end);
 
   if (format == GST_FORMAT_BYTES) {
-    // Check for DTCP encrypted content
-    if ((dlna_src->server_info->content_features != NULL) &&
-        (dlna_src->server_info->content_features->flag_link_protected_set) &&
-        (dlna_src->server_info->content_features->flag_full_clear_text_set ||
-            dlna_src->server_info->
-            content_features->flag_limited_clear_text_set)) {
-
-      // Set segment info based on server support of dtcp byte based seeks
-      gst_query_set_segment (query, dlna_src->rate, GST_FORMAT_BYTES,
-          dlna_src->server_info->dtcp_range_start,
-          dlna_src->server_info->dtcp_range_end);
-      ret = TRUE;
-
-      GST_DEBUG_OBJECT (dlna_src,
-          "Segment info in bytes for this content, rate %f, start %"
-          G_GUINT64_FORMAT ", end %" G_GUINT64_FORMAT,
-          dlna_src->rate,
-          dlna_src->server_info->dtcp_range_start,
-          dlna_src->server_info->dtcp_range_end);
-
-    } else if ((dlna_src->server_info->content_features != NULL) &&
-        (dlna_src->server_info->content_features->op_range_supported) &&
-        (dlna_src->server_info->time_seek_response_received)) {
+    if (dlna_src_use_byte_range (dlna_src)) {
 
       // Set segment info based on server support of byte based seeks
       gst_query_set_segment (query, dlna_src->rate, GST_FORMAT_BYTES,
@@ -923,9 +970,7 @@ dlna_src_handle_query_segment (GstDlnaSrc * dlna_src, GstQuery * query)
     }
   } else if (format == GST_FORMAT_TIME) {
 
-    if ((dlna_src->server_info->content_features != NULL) &&
-        (dlna_src->server_info->content_features->op_time_seek_supported) &&
-        (dlna_src->server_info->time_seek_response_received)) {
+    if (dlna_src_use_time_range (dlna_src)) {
       gst_query_set_segment (query, dlna_src->rate, GST_FORMAT_TIME,
           dlna_src->server_info->time_seek_npt_start,
           dlna_src->server_info->time_seek_npt_end);
@@ -971,9 +1016,7 @@ dlna_src_handle_query_convert (GstDlnaSrc * dlna_src, GstQuery * query)
 
   // Make sure a URI has been set and HEAD response received and server
   // supports time seek so conversion can be performed
-  if ((dlna_src->uri == NULL) || (dlna_src->server_info == NULL) ||
-      (dlna_src->server_info->content_features == NULL) ||
-      (!dlna_src->server_info->time_seek_response_received)) {
+  if (dlna_src->uri == NULL || !dlna_src_use_time_range (dlna_src)) {
     GST_INFO_OBJECT (dlna_src, "Not enough info to handle conversion query");
     return FALSE;
   }
@@ -1000,27 +1043,30 @@ dlna_src_handle_query_convert (GstDlnaSrc * dlna_src, GstQuery * query)
     return ret;
   }
 
-  // Issue head to get conversion info
-  GstDlnaSrcHeadResponse *head_response = NULL;
-  if (!dlna_src_head_request (dlna_src, start_npt, start_byte, FALSE,
-          &head_response)) {
-    GST_WARNING_OBJECT (dlna_src, "Problems with HEAD request");
+  if (dest_fmt == GST_FORMAT_TIME) {
+    if (!dlna_src_convert_bytes_to_npt_nanos (dlna_src, start_byte,
+            (guint64 *) & dest_val)) {
+      GST_WARNING_OBJECT (dlna_src, "Problems converting to time");
+      return ret;
+    }
+  } else if (dest_fmt == GST_FORMAT_BYTES) {
+    if (!dlna_src_convert_npt_nanos_to_bytes (dlna_src, start_npt,
+            (guint64 *) & dest_val)) {
+      GST_WARNING_OBJECT (dlna_src, "Problems converting to bytes");
+      return ret;
+    }
+  } else {
+    GST_INFO_OBJECT (dlna_src, "Unsupported format: %s",
+        gst_format_get_name (dest_fmt));
     return FALSE;
   }
-  // Get time seek start positions which contain converted value
-  if (dest_fmt == GST_FORMAT_BYTES) {
-    dest_val = head_response->time_seek_npt_start;
-  } else if (dest_fmt == GST_FORMAT_TIME) {
-    dest_val = head_response->time_seek_npt_start;
-  }
+
   // Return results in query
   gst_query_set_convert (query, src_fmt, src_val, dest_fmt, dest_val);
 
-  // Free head response structure
-  dlna_src_head_response_free (dlna_src, head_response);
-
   return ret;
 }
+
 
 /**
  * Perform action necessary when seek event is received
@@ -1079,26 +1125,19 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
   dlna_src->requested_start = start;
   dlna_src->requested_stop = stop;
 
-  if (dlna_src->requested_rate != 1.0) {
-    // Create necessary extra headers for http src so change can be requested
-    GstStructure *extra_headers_struct = NULL;
-
-    if (!dlna_src_formulate_extra_headers (dlna_src, dlna_src->requested_rate,
-            dlna_src->requested_format,
-            dlna_src->requested_start, &extra_headers_struct)) {
-      GST_ERROR_OBJECT (dlna_src, "Problem formulating extra headers");
+  // Make sure info is available for soup http src header adjustments
+  if ((dlna_src->uri) && (dlna_src->server_info) &&
+      (dlna_src->server_info->content_features != NULL)) {
+    // Adjust headers for http src so change can be requested
+    if (!dlna_src_adjust_http_src_headers (dlna_src, dlna_src->requested_rate,
+            dlna_src->requested_format, dlna_src->requested_start)) {
+      GST_ERROR_OBJECT (dlna_src, "Problems adjusting soup http src headers");
       // Returning true to prevent further processing
       return TRUE;
     }
-    // Convert structure to GValue in order to set property
-    GValue struct_value = G_VALUE_INIT;
-    g_value_init (&struct_value, GST_TYPE_STRUCTURE);
-    gst_value_set_structure (&struct_value, extra_headers_struct);
-    g_object_set_property (G_OBJECT (dlna_src->http_src), "extra-headers",
-        &struct_value);
-
-    gst_structure_free (extra_headers_struct);
-  }
+  } else
+    GST_INFO_OBJECT (dlna_src,
+        "No header adjustments since server only supports Range requests");
 
   GST_DEBUG_OBJECT (dlna_src,
       "returning false to make sure souphttpsrc gets chance to process");
@@ -1138,39 +1177,8 @@ dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
 
   // Check if supplied start is valid
   if (format == GST_FORMAT_BYTES) {
-    // Check for encrypted content
-    if ((dlna_src->server_info->content_features != NULL) &&
-        (dlna_src->server_info->content_features->flag_link_protected_set)) {
-      // Verify clear byte text seeks are supported for dtcp/ip encrypted content
-      if (dlna_src->server_info->content_features->flag_full_clear_text_set ||
-          dlna_src->server_info->
-          content_features->flag_limited_clear_text_set) {
-        // Verify dtcp range is valid
-        if ((start < dlna_src->server_info->dtcp_range_start) ||
-            (start > dlna_src->server_info->dtcp_range_end)) {
-          GST_WARNING_OBJECT (dlna_src,
-              "Specified start byte %" G_GUINT64_FORMAT
-              " is not valid, valid range: %" G_GUINT64_FORMAT
-              " to %" G_GUINT64_FORMAT, start,
-              dlna_src->server_info->dtcp_range_start,
-              dlna_src->server_info->dtcp_range_end);
-          return FALSE;
-        } else {
-          GST_INFO_OBJECT (dlna_src,
-              "Specified start byte %" G_GUINT64_FORMAT
-              " is valid, valid range: %" G_GUINT64_FORMAT
-              " to %" G_GUINT64_FORMAT, start,
-              dlna_src->server_info->dtcp_range_start,
-              dlna_src->server_info->dtcp_range_end);
-        }
-      } else {
-        GST_WARNING_OBJECT (dlna_src,
-            "Content is encrypted and clear text seeks are not supported");
-        return FALSE;
-      }
-    } else if ((dlna_src->server_info->content_features != NULL) &&
-        (dlna_src->server_info->content_features->op_range_supported) &&
-        (dlna_src->server_info->time_seek_response_received)) {
+    if (dlna_src_use_byte_range (dlna_src)) {
+
       // Verify start byte is within range
       if ((start < dlna_src->server_info->byte_seek_start) ||
           (start > dlna_src->server_info->byte_seek_end)) {
@@ -1208,9 +1216,7 @@ dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
     }
   } else if (format == GST_FORMAT_TIME) {
     // Verify start time is within range
-    if ((dlna_src->server_info->content_features != NULL) &&
-        (dlna_src->server_info->content_features->op_time_seek_supported) &&
-        (dlna_src->server_info->time_seek_response_received) &&
+    if (dlna_src_use_time_range (dlna_src) &&
         ((start < dlna_src->server_info->time_seek_npt_start) ||
             (start > dlna_src->server_info->time_seek_npt_end))) {
       GST_WARNING_OBJECT (dlna_src,
@@ -1255,9 +1261,7 @@ dlna_src_is_rate_supported (GstDlnaSrc * dlna_src, gfloat rate)
 
   // Make sure server supports time seeks since that will be required when
   // requesting rate change
-  if ((dlna_src->server_info == NULL) ||
-      (dlna_src->server_info->content_features == NULL) ||
-      (!dlna_src->server_info->content_features->op_time_seek_supported)) {
+  if (!dlna_src_use_time_range (dlna_src)) {
     GST_WARNING_OBJECT (dlna_src,
         "Unable to change rate, not supported by server");
     return FALSE;
@@ -1276,53 +1280,148 @@ dlna_src_is_rate_supported (GstDlnaSrc * dlna_src, gfloat rate)
 
 /**
  * Create extra headers to supply to soup http src based on requested starting
- * postion and rate.
+ * postion and rate.  Instruct souphttpsrc to exclude range header if it conflicts
+ * with any of the extra headers which have been added.
  *
  * @param	dlna_src 	this element
  * @param	rate		requested rate to include in playspeed header
  * @param	format		create either time or byte based seek header
  * @param	start		starting position to include, will be either bytes or time depending on format
- * @param	headers		extra headers structure to populate with results
  *
  * @return	true if extra headers were successfully created, false otherwise
  */
 static gboolean
-dlna_src_formulate_extra_headers (GstDlnaSrc * dlna_src, gfloat rate,
-    GstFormat format, guint64 start, GstStructure ** headers)
+dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
+    GstFormat format, guint64 start)
 {
-  gchar *ps_field_name = "PlaySpeed.dlna.org";
-  gchar *ps_field_value_prefix = "speed=";
-  gchar ps_field_value[64] = { 0 };
+  GValue struct_value = G_VALUE_INIT;
+  GstStructure *extra_headers_struct;
 
-  // Get string representation of rate
-  int i = 0;
-  char *rateStr = NULL;
-  for (i = 0; i < dlna_src->server_info->content_features->playspeeds_cnt; i++) {
-    if (dlna_src->server_info->content_features->playspeeds[i] == rate) {
-      rateStr = dlna_src->server_info->content_features->playspeed_strs[i];
-      break;
+  gboolean disable_range_header = FALSE;
+
+  const gchar *playspeed_field_name = "PlaySpeed.dlna.org";
+  const gchar *playspeed_field_value_prefix = "speed=";
+  gchar playspeed_field_value[64] = { 0 };
+
+  const gchar *time_seek_range_field_name = "TimeSeekRange.dlna.org";
+  const gchar *time_seek_range_field_value_prefix = "npt=";
+  gchar time_seek_range_field_value[64] = { 0 };
+  guint64 start_time_nanos;
+  guint64 start_time_secs;
+
+  const gchar *range_dtcp_field_name = "Range.dtcp.com";
+  const gchar *range_dtcp_field_value_prefix = "bytes=";
+  gchar range_dtcp_field_value[64] = { 0 };
+
+  // Make sure range header is included by default
+  GValue boolean_value = G_VALUE_INIT;
+  g_value_init (&boolean_value, G_TYPE_BOOLEAN);
+  g_value_set_boolean (&boolean_value, FALSE);
+  g_object_set_property (G_OBJECT (dlna_src->http_src), "exclude-range-header",
+      &boolean_value);
+
+  GST_DEBUG_OBJECT (dlna_src, "called");
+
+  // Create header structure with dlna transfer mode header
+  extra_headers_struct = gst_structure_new ("extraHeadersStruct",
+      "transferMode.dlna.org", G_TYPE_STRING, "Streaming", NULL);
+  if (extra_headers_struct == NULL) {
+    GST_WARNING_OBJECT (dlna_src, "Problems creating extra headers structure");
+    return FALSE;
+  }
+  // If rate != 1.0, add playspeed header and time seek range header
+  if (rate != 1.0) {
+    // Get string representation of rate
+    int i = 0;
+    gchar *rateStr = NULL;
+    for (i = 0; i < dlna_src->server_info->content_features->playspeeds_cnt;
+        i++) {
+      if (dlna_src->server_info->content_features->playspeeds[i] == rate) {
+        rateStr = dlna_src->server_info->content_features->playspeed_strs[i];
+        break;
+      }
     }
-  }
+    if (rateStr == NULL) {
+      GST_ERROR_OBJECT (dlna_src,
+          "Unable to get string representation of supported rate: %lf", rate);
+      return FALSE;
+    }
+    g_snprintf (playspeed_field_value, 64, "%s%s",
+        playspeed_field_value_prefix, rateStr);
 
-  if (rateStr == NULL) {
-    GST_ERROR_OBJECT (dlna_src,
-        "Unable to get string representation of rate: %lf", rate);
-    return FALSE;
-  }
+    // Add header to structure
+    gst_structure_set (extra_headers_struct, playspeed_field_name,
+        G_TYPE_STRING, &playspeed_field_value, NULL);
+    GST_INFO_OBJECT (dlna_src,
+        "Adjust headers by including playspeed header value: %s",
+        playspeed_field_value);
 
-  g_snprintf ((gchar *) & ps_field_value[0], 64, "%s%s", ps_field_value_prefix,
-      rateStr);
-  GST_INFO_OBJECT (dlna_src, "Set playspeed header value: %s", ps_field_value);
+    // Add time seek range header, convert bytes to time if necessary
+    if (format != GST_FORMAT_TIME) {
+      // Issue head request to convert starting bytes to starting time
+      if (!dlna_src_convert_bytes_to_npt_nanos (dlna_src, start,
+              &start_time_nanos)) {
+        GST_WARNING_OBJECT (dlna_src,
+            "Problems converting %" G_GUINT64_FORMAT " to npt", start);
+        return FALSE;
+      }
+    } else
+      start_time_nanos = start;
 
-  *headers = gst_structure_new ("extraHeadersStruct",
-      "transferMode.dlna.org", G_TYPE_STRING, "Streaming",
-      ps_field_name, G_TYPE_STRING, &ps_field_value, NULL);
+    // Convert start time from nanos into secs string
+    start_time_secs = start_time_nanos / GST_SECOND;
 
-  if (*headers == NULL) {
-    GST_WARNING_OBJECT (dlna_src, "Did not create extra headers structure");
-    return FALSE;
-  } else {
-    GST_LOG_OBJECT (dlna_src, "Created extra headers structure");
+    // If using playspeed, include TimeSeekRange header with starting time
+    g_snprintf (time_seek_range_field_value, 64,
+        "%s%" G_GUINT64_FORMAT ".0-", time_seek_range_field_value_prefix,
+        start_time_secs);
+
+    // Add header to structure
+    gst_structure_set (extra_headers_struct, time_seek_range_field_name,
+        G_TYPE_STRING, &time_seek_range_field_value, NULL);
+
+    GST_INFO_OBJECT (dlna_src,
+        "Adjust headers by including TimeSeekRange header value: %s",
+        time_seek_range_field_value);
+
+    // Set flag so range header is not included by souphttpsrc
+    disable_range_header = TRUE;
+  } else
+    GST_INFO_OBJECT (dlna_src,
+        "Not adjusting with playspeed or time seek range ");
+
+  // If dtcp protected content and rate = 1.0, add range.dtcp.com header
+  if (rate == 1.0 && format == GST_FORMAT_BYTES
+      && dlna_src_is_dtcp_encrypted (dlna_src)) {
+    g_snprintf (range_dtcp_field_value, 64, "%s%" G_GUINT64_FORMAT "-",
+        range_dtcp_field_value_prefix, start);
+
+    // Add header to structure
+    gst_structure_set (extra_headers_struct, range_dtcp_field_name,
+        G_TYPE_STRING, &range_dtcp_field_value, NULL);
+
+    GST_INFO_OBJECT (dlna_src,
+        "Adjust headers by including Range.dtcp.com header value: %s",
+        range_dtcp_field_value);
+
+    // Set flag so range header is not included by souphttpsrc
+    disable_range_header = TRUE;
+  } else
+    GST_INFO_OBJECT (dlna_src, "Not adjusting with range.dtcp.com");
+
+  // Set extra header property of soup http src
+  g_value_init (&struct_value, GST_TYPE_STRUCTURE);
+  gst_value_set_structure (&struct_value, extra_headers_struct);
+  g_object_set_property (G_OBJECT (dlna_src->http_src), "extra-headers",
+      &struct_value);
+  gst_structure_free (extra_headers_struct);
+
+  // Disable range header if necessary
+  if (disable_range_header) {
+    g_value_set_boolean (&boolean_value, TRUE);
+    g_object_set_property (G_OBJECT (dlna_src->http_src),
+        "exclude-range-header", &boolean_value);
+    GST_INFO_OBJECT (dlna_src, "Adjust headers by excluding range header");
   }
 
   return TRUE;
@@ -1389,6 +1488,8 @@ gst_dlna_src_uri_handler_init (gpointer g_iface, gpointer iface_data)
 static gboolean
 dlna_src_set_uri (GstDlnaSrc * dlna_src, const gchar * value)
 {
+  guint64 content_size = 0;
+
   // Determine if this is a new URI or just another request using same URI
   if ((dlna_src->uri == NULL) || (g_strcmp0 (value, dlna_src->uri) != 0)) {
     if (dlna_src->uri == NULL) {
@@ -1422,9 +1523,7 @@ dlna_src_set_uri (GstDlnaSrc * dlna_src, const gchar * value)
 
   // Setup elements based on HEAD response
   // Use flag to determine if content is DTCP/IP protected
-  if ((dlna_src->server_info != NULL) &&
-      (dlna_src->server_info->content_features != NULL) &&
-      (dlna_src->server_info->content_features->flag_link_protected_set)) {
+  if (dlna_src_is_dtcp_encrypted (dlna_src)) {
     // Setup the dtcpip decrypter element, this will also ghost pad the
     // src pad of the bin
     if (!dlna_src_dtcp_setup (dlna_src)) {
@@ -1458,6 +1557,17 @@ dlna_src_set_uri (GstDlnaSrc * dlna_src, const gchar * value)
     // Configure event function on sink pad before adding pad to element
     gst_pad_set_query_function (dlna_src->src_pad,
         (GstPadQueryFunction) gst_dlna_src_query);
+  }
+
+  if (dlna_src->server_info != NULL) {
+    content_size = dlna_src->server_info->byte_seek_total;
+    if (content_size == 0)
+      content_size = dlna_src->server_info->content_length;
+
+    g_object_set (G_OBJECT (dlna_src->http_src), "content-size", content_size,
+        NULL);
+    GST_INFO_OBJECT (dlna_src, "Set HTTP src content size: %" G_GUINT64_FORMAT,
+        content_size);
   }
 
   return TRUE;
@@ -1542,6 +1652,7 @@ static gboolean
 dlna_src_init_uri (GstDlnaSrc * dlna_src, const gchar * value)
 {
   gchar struct_str[MAX_HTTP_BUF_SIZE] = { 0 };
+  GstDlnaSrcHeadResponse *head_response = NULL;
 
   // Set the uri in the src
   if (dlna_src->uri) {
@@ -1566,20 +1677,30 @@ dlna_src_init_uri (GstDlnaSrc * dlna_src, const gchar * value)
   GST_DEBUG_OBJECT (dlna_src, "Issuing HEAD Request");
   if (!dlna_src_head_request (dlna_src, 0, 0, TRUE, &dlna_src->server_info)) {
     GST_WARNING_OBJECT (dlna_src,
-        "Unable to issue HEAD request & get HEAD response");
+        "Unable to issue first HEAD request & get HEAD response");
   }
-  // Handle special case where RANGE & TimeSeekRange headers are
+  // Check if content could be DTCP encrypted and server did not like range header
+  // in initial HEAD request
+  if ((dlna_src->server_info != NULL) &&
+      (dlna_src->server_info->ret_code == HTTP_STATUS_NOT_ACCEPTABLE)) {
+    GST_INFO_OBJECT (dlna_src,
+        "Issuing another HEAD Request without range header for potential DTCP content");
+    if (!dlna_src_head_request (dlna_src, 0, 0, FALSE, &dlna_src->server_info)) {
+      GST_WARNING_OBJECT (dlna_src,
+          "Unable to issue second HEAD request & get HEAD response");
+    }
+  }
+  // Check if a second HEAD request should be issued due to RANGE & TimeSeekRange headers are
   // included but server only responded with Range (no TimeSeekRange)
   // but indicates that it supports time seek range.
   if ((dlna_src->server_info != NULL) &&
       (dlna_src->server_info->content_features != NULL) &&
       (dlna_src->server_info->content_features->op_time_seek_supported) &&
       (!dlna_src->server_info->time_seek_response_received)) {
-    // Issue another head request to get time seek response header
-    GST_DEBUG_OBJECT (dlna_src,
+
+    GST_INFO_OBJECT (dlna_src,
         "Issuing another HEAD Request to get time seek header in response");
 
-    GstDlnaSrcHeadResponse *head_response = NULL;
     if (!dlna_src_head_request (dlna_src, 0, 0, FALSE, &head_response)) {
       GST_WARNING_OBJECT (dlna_src,
           "Unable to issue second HEAD request & get HEAD response");
@@ -1685,9 +1806,11 @@ dlna_src_head_response_free (GstDlnaSrc * dlna_src,
  * Sends HEAD request and reads response to gather info about content item associated
  * with supplied URL.
  *
- * @param dlna_src      this element
- * @param start_npt     request content starting at this normal play time
- * @param start_byte    request content starting at this byte
+ * @param dlna_src              this element
+ * @param start_npt             request content starting at this normal play time
+ * @param start_byte            request content starting at this byte
+ * @param include_range_header  include Range header in HEAD request
+ * @param head_response         results of HEAD request
  *
  * @return  true got successful HEAD response, false otherwise
  */
@@ -1733,6 +1856,7 @@ dlna_src_head_request (GstDlnaSrc * dlna_src,
   if (((*head_response)->ret_code != HTTP_STATUS_OK) &&
       ((*head_response)->ret_code != HTTP_STATUS_CREATED) &&
       ((*head_response)->ret_code != HTTP_STATUS_PARTIAL)) {
+
     GST_WARNING_OBJECT (dlna_src,
         "Error code received in HEAD response: %d %s",
         (*head_response)->ret_code, (*head_response)->ret_msg);
@@ -1856,7 +1980,7 @@ dlna_src_open_socket (GstDlnaSrc * dlna_src)
 
     /*
        if (0 > setsockopt(dlna_src->sock, SOL_SOCKET, SO_REUSEADDR,
-       (char*) &yes, sizeof(yes)))
+       (gchar*) &yes, sizeof(yes)))
        {
        GST_ERROR_OBJECT(dlna_src, "setsockopt() failed?");
        return FALSE;
@@ -2088,7 +2212,7 @@ dlna_src_head_response_parse (GstDlnaSrc * dlna_src, gchar * head_response_str,
   }
 
   // Initialize array of strings used to store field values
-  char *fields[HEAD_RESPONSE_HEADERS_CNT];
+  gchar *fields[HEAD_RESPONSE_HEADERS_CNT];
   for (i = 0; i < HEAD_RESPONSE_HEADERS_CNT; i++) {
     fields[i] = NULL;
   }
@@ -2175,6 +2299,12 @@ dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src,
   head_response->byte_seek_start = 0;
   head_response->byte_seek_end = 0;
   head_response->byte_seek_total = 0;
+
+  // {"CLEARTEXTBYTES", BYTE_RANGE_TYPE},
+  head_response->clear_text_idx = HEADER_INDEX_CLEAR_TEXT;
+
+  // {"AVAILABLESEEKRANGE.DLNA.ORG", STRING_TYPE},
+  head_response->available_range_idx = HEADER_INDEX_AVAILABLE_RANGE;
 
   // {CONTENT RANGE DTCP, BYTE_RANGE_TYPE},
   head_response->dtcp_range_idx = HEADER_INDEX_DTCP_RANGE;
@@ -2306,8 +2436,8 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
 
   gboolean rc = TRUE;
 
-  char tmp1[32] = { 0 };
-  char tmp2[32] = { 0 };
+  gchar tmp1[32] = { 0 };
+  gchar tmp2[32] = { 0 };
   gint int_value = 0;
   gint ret_code = 0;
   guint64 guint64_value = 0;
@@ -2334,13 +2464,12 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
     case HEADER_INDEX_CONTENT_LENGTH:
       if ((ret_code =
               sscanf (field_str, "%31[^:]:%" G_GUINT64_FORMAT, tmp1,
-                  &guint64_value)) != 2) {
+                  &guint64_value)) != 2)
         GST_WARNING_OBJECT (dlna_src,
             "Problems parsing Content Length from HEAD response field header %s, value: %s, retcode: %d",
             HEAD_RESPONSE_HEADERS[idx], field_str, ret_code);
-      } else {
+      else
         head_response->content_length = guint64_value;
-      }
       break;
 
     case HEADER_INDEX_ACCEPT_RANGES:
@@ -2350,12 +2479,11 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
       break;
 
     case HEADER_INDEX_CONTENT_RANGE:
-      if (!dlna_src_head_response_parse_byte_range (dlna_src, idx, field_str,
-              NULL, NULL, &head_response->content_length)) {
+      if (!dlna_src_parse_byte_range (dlna_src, field_str, HEADER_INDEX_BYTES,
+              NULL, NULL, &head_response->content_length))
         GST_WARNING_OBJECT (dlna_src,
             "Problems parsing Content Range from HEAD response field header %s, value: %s, retcode: %d",
             HEAD_RESPONSE_HEADERS[idx], field_str, ret_code);
-      }
       break;
 
     case HEADER_INDEX_SERVER:
@@ -2383,29 +2511,35 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
 
     case HEADER_INDEX_TIMESEEKRANGE:
       if (!dlna_src_head_response_parse_time_seek (dlna_src, head_response, idx,
-              field_str)) {
+              field_str))
         GST_WARNING_OBJECT (dlna_src,
             "Problems with HEAD response field header %s, value: %s",
             HEAD_RESPONSE_HEADERS[idx], field_str);
-      }
       break;
 
     case HEADER_INDEX_CONTENTFEATURES:
       if (!dlna_src_head_response_parse_content_features
-          (dlna_src, head_response, idx, field_str)) {
+          (dlna_src, head_response, idx, field_str))
         GST_WARNING_OBJECT (dlna_src,
             "Problems with HEAD response field header %s, value: %s",
             HEAD_RESPONSE_HEADERS[idx], field_str);
-      }
       break;
 
     case HEADER_INDEX_DTCP_RANGE:
-      if (!dlna_src_head_response_parse_dtcp_range (dlna_src, head_response,
-              idx, field_str)) {
+      if (!dlna_src_parse_byte_range (dlna_src, field_str, HEADER_INDEX_BYTES,
+              &head_response->dtcp_range_start,
+              &head_response->dtcp_range_end, &head_response->dtcp_range_total))
         GST_WARNING_OBJECT (dlna_src,
             "Problems with HEAD response field header %s, value: %s",
             HEAD_RESPONSE_HEADERS[idx], field_str);
-      }
+      break;
+
+    case HEADER_INDEX_AVAILABLE_RANGE:
+      if (!dlna_src_head_response_parse_available_range (dlna_src,
+              head_response, idx, field_str))
+        GST_WARNING_OBJECT (dlna_src,
+            "Problems with HEAD response field header %s, value: %s",
+            HEAD_RESPONSE_HEADERS[idx], field_str);
       break;
 
     case HEADER_INDEX_VARY:
@@ -2445,67 +2579,84 @@ static gboolean
 dlna_src_head_response_parse_time_seek (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, gint idx, gchar * field_str)
 {
-  char tmp1[32] = { 0 };
-  char tmp2[32] = { 0 };
-  char tmp3[32] = { 0 };
-  char tmp4[132] = { 0 };
-  char *tmp_str1 = NULL;
-  char *tmp_str2 = NULL;
-  gint ret_code = 0;
+  // Extract start and end NPT from TimeSeekRange header
+  if (!dlna_src_parse_npt_range (dlna_src, field_str,
+          &head_response->time_seek_npt_start_str,
+          &head_response->time_seek_npt_end_str,
+          &head_response->time_seek_npt_duration_str,
+          &head_response->time_seek_npt_start,
+          &head_response->time_seek_npt_end,
+          &head_response->time_seek_npt_duration))
+    // Return, errors which have been logged already
+    return FALSE;
+  else
+    head_response->time_seek_response_received = TRUE;
 
-  // *TODO* - need more sophisticated parsing of NPT to handle different formats
-  // Extract start and end NPT
-  tmp_str2 = strstr (field_str, TIME_SEEK_HEADERS[HEADER_INDEX_NPT]);
-  tmp_str1 = strstr (tmp_str2, "=");
-  if (tmp_str1 != NULL) {
-    tmp_str1++;
-    // *TODO* - add logic to deal with '*'
-    if ((ret_code =
-            sscanf (tmp_str1, "%31[^-]-%31[^/]/%31s %131s", tmp1, tmp2, tmp3,
-                tmp4)) != 4) {
-      GST_WARNING_OBJECT (dlna_src,
-          "Problems parsing NPT from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s, %s",
-          HEAD_RESPONSE_HEADERS[idx], tmp_str1, ret_code, tmp1, tmp2, tmp3);
-    } else {
-      head_response->time_seek_npt_start_str = g_strdup (tmp1);
-      head_response->time_seek_npt_end_str = g_strdup (tmp2);
-      head_response->time_seek_npt_duration_str = g_strdup (tmp3);
-
-      dlna_src_npt_to_nanos (dlna_src,
-          head_response->time_seek_npt_start_str,
-          &head_response->time_seek_npt_start);
-      dlna_src_npt_to_nanos (dlna_src,
-          head_response->time_seek_npt_end_str,
-          &head_response->time_seek_npt_end);
-      dlna_src_npt_to_nanos (dlna_src,
-          head_response->time_seek_npt_duration_str,
-          &head_response->time_seek_npt_duration);
-
-      head_response->time_seek_response_received = TRUE;
-    }
-  } else {
-    GST_WARNING_OBJECT (dlna_src,
-        "No NPT found in time seek range HEAD response field header %s, idx: %d, value: %s",
-        HEAD_RESPONSE_HEADERS[idx], idx, field_str);
-  }
-
-  if (!dlna_src_head_response_parse_byte_range (dlna_src, idx, field_str,
+  // Extract start and end bytes from TimeSeekRange header
+  if (!dlna_src_parse_byte_range (dlna_src, field_str, HEADER_INDEX_BYTES,
           &head_response->byte_seek_start,
-          &head_response->byte_seek_end, &head_response->byte_seek_total)) {
-    GST_WARNING_OBJECT (dlna_src,
-        "Problems getting byte range from HEAD response field header %s, idx: %d, value: %s",
-        HEAD_RESPONSE_HEADERS[idx], idx, field_str);
-  } else {
-    GST_DEBUG_OBJECT (dlna_src, "byte seek total: %" G_GUINT64_FORMAT,
-        head_response->byte_seek_total);
-  }
+          &head_response->byte_seek_end, &head_response->byte_seek_total))
+    // Return, errors which have been logged already
+    return FALSE;
+
   return TRUE;
 }
 
 /**
- * Parse the byte range which may be containt in the following headers:
+ * AvailableSeekRange header formatting as specified in DLNA 7.5.4.3.2.20.7:
  *
- * TimeSeekRange header formatting as specified in DLNA 7.4.40.5:
+ * availableSeekRange.dlna.org: 0 npt=0:00:00.000-0:00:48.716 bytes=0-5219255 cleartextbytes=0-5219255
+ *
+ * The time seek range portion can have two different formats
+ * Either:
+ *  "npt = 1*DIGIT["."1*3DIGIT]
+ *      ntp sec = 0.232, or 1 or 15 or 16.652 (leading at one or more digits,
+ *      optionally followed by decimal point and 3 digits)
+ * OR
+ *  "npt=00:00:00.000" where format is HH:MM:SS.mmm (hours, minutes, seconds, milliseconds)
+ *
+ * @param   dlna_src    this element instance
+ * @param   idx         index which describes HEAD response field and type
+ * @param   fieldStr    string containing HEAD response field header and value
+ *
+ * @return  returns TRUE
+ */
+static gboolean
+dlna_src_head_response_parse_available_range (GstDlnaSrc * dlna_src,
+    GstDlnaSrcHeadResponse * head_response, gint idx, gchar * field_str)
+{
+  // Extract start and end NPT from availableSeekRange header
+  if (!dlna_src_parse_npt_range (dlna_src, field_str,
+          &head_response->time_seek_npt_start_str,
+          &head_response->time_seek_npt_end_str,
+          &head_response->time_seek_npt_duration_str,
+          &head_response->time_seek_npt_start,
+          &head_response->time_seek_npt_end,
+          &head_response->time_seek_npt_duration))
+    // Return, errors which have been logged already
+    return FALSE;
+
+  if (!dlna_src_is_dtcp_encrypted (dlna_src)) {
+    // Extract start and end bytes from availableSeekRange header using bytes
+    if (!dlna_src_parse_byte_range (dlna_src, field_str,
+            HEADER_INDEX_BYTES, &head_response->byte_seek_start,
+            &head_response->byte_seek_end, &head_response->byte_seek_total))
+      // Return, errors which have been logged already
+      return FALSE;
+  } else {
+    // Extract start and end bytes from availableSeekRange header using clear text bytes
+    if (!dlna_src_parse_byte_range (dlna_src, field_str,
+            HEADER_INDEX_CLEAR_TEXT, &head_response->byte_seek_start,
+            &head_response->byte_seek_end, &head_response->byte_seek_total))
+      // Return, errors which have been logged already
+      return FALSE;
+  }
+
+  return TRUE;
+}
+
+/**
+ * Parse the byte range which may be contained in the following headers:
  *
  * TimeSeekRange.dlna.org : npt=335.1-336.1/40445.4 bytes=1539686400-1540210688/304857907200
  *
@@ -2513,9 +2664,11 @@ dlna_src_head_response_parse_time_seek (GstDlnaSrc * dlna_src,
  *
  * Content-Range.dtcp.com: bytes=0-9931928/9931929
  *
+ * availableSeekRange.dlna.org: 0 npt=0:00:00.000-0:00:48.716 bytes=0-5219255 cleartextbytes=0-5219255
+ *
  * @param   dlna_src    this element instance
- * @param   idx         index which describes HEAD response field and type
  * @param   field_str   string containing HEAD response field header and value
+ * @param   header_idx  index which identifies which byte header to use - bytes or cleartextbytes
  * @param   start_byte  starting byte position read from header response field
  * @param   end_byte    end byte position read from header response field
  * @param   total_bytes total bytes read from header response field
@@ -2523,106 +2676,145 @@ dlna_src_head_response_parse_time_seek (GstDlnaSrc * dlna_src,
  * @return  returns TRUE
  */
 static gboolean
-dlna_src_head_response_parse_byte_range (GstDlnaSrc * dlna_src, gint idx,
-    gchar * field_str, guint64 * start_byte, guint64 * end_byte,
-    guint64 * total_bytes)
+dlna_src_parse_byte_range (GstDlnaSrc * dlna_src,
+    gchar * field_str, gint header_index, guint64 * start_byte,
+    guint64 * end_byte, guint64 * total_bytes)
 {
-  char *tmp_str1 = NULL;
-  char *tmp_str2 = NULL;
+  gchar *header = NULL;
+  gchar *header_value = NULL;
+
   gint ret_code = 0;
   guint64 ullong1 = 0;
   guint64 ullong2 = 0;
   guint64 ullong3 = 0;
 
-  // Extract start and end BYTES
-  tmp_str2 = strstr (field_str, TIME_SEEK_HEADERS[HEADER_INDEX_BYTES]);
-  if (tmp_str2 != NULL) {
-    tmp_str1 = strstr (tmp_str2, "=");
-    if (tmp_str1 == NULL) {
-      // Try for a space separator
-      tmp_str1 = strstr (tmp_str2, " ");
-    }
-    if (tmp_str1 != NULL) {
-      tmp_str1++;
-      // *TODO* - add logic to deal with '*'
-      if ((ret_code =
-              sscanf (tmp_str1,
-                  "%" G_GUINT64_FORMAT "-%" G_GUINT64_FORMAT "/%"
-                  G_GUINT64_FORMAT, &ullong1, &ullong2, &ullong3)) != 3) {
-        GST_WARNING_OBJECT (dlna_src,
-            "Problems parsing BYTES from HEAD response field headr %s, idx: %d, value: %s, retcode: %d, ullong: %"
-            G_GUINT64_FORMAT ", %" G_GUINT64_FORMAT
-            ", %" G_GUINT64_FORMAT,
-            HEAD_RESPONSE_HEADERS[idx], idx, tmp_str1,
-            ret_code, ullong1, ullong2, ullong3);
-      } else {
-        if (start_byte)
-          *start_byte = ullong1;
-        if (end_byte)
-          *end_byte = ullong2;
-        if (total_bytes)
-          *total_bytes = ullong3;
-      }
-    } else {
+  // Extract BYTES portion of header value
+  header = strstr (field_str, RANGE_HEADERS[header_index]);
+  if (header)
+    header_value = strstr (header, "=");
+  if (!header_value)
+    header_value = strstr (header, " ");
+  if (header_value)
+    header_value++;
+  else {
+    GST_WARNING_OBJECT (dlna_src,
+        "Bytes not included in header from HEAD response field header value: %s",
+        field_str);
+    return FALSE;
+  }
+
+  // Determine if byte string includes total which is not an *
+  if (strstr (header_value, "/") && !strstr (header_value, "*")) {
+    // Extract start and end and total BYTES
+    if ((ret_code =
+            sscanf (header_value,
+                "%" G_GUINT64_FORMAT "-%" G_GUINT64_FORMAT "/%"
+                G_GUINT64_FORMAT, &ullong1, &ullong2, &ullong3)) != 3) {
       GST_WARNING_OBJECT (dlna_src,
-          "No BYTES found in field header %s, idx: %d, value: %s",
-          HEAD_RESPONSE_HEADERS[idx], idx, field_str);
+          "Problems parsing BYTES from HEAD response field header %s, value: %s, retcode: %d, ullong: %"
+          G_GUINT64_FORMAT ", %" G_GUINT64_FORMAT
+          ", %" G_GUINT64_FORMAT,
+          field_str, header_value, ret_code, ullong1, ullong2, ullong3);
+      return FALSE;
     }
   } else {
-    GST_WARNING_OBJECT (dlna_src,
-        "No BYTES= found in HEAD response field header %s, idx: %d, value: %s",
-        HEAD_RESPONSE_HEADERS[idx], idx, field_str);
+    if ((ret_code =
+            sscanf (header_value,
+                "%" G_GUINT64_FORMAT "-%" G_GUINT64_FORMAT, &ullong1,
+                &ullong2)) != 2) {
+      GST_WARNING_OBJECT (dlna_src,
+          "Problems parsing BYTES from HEAD response field header %s, value: %s, retcode: %d, ullong: %"
+          G_GUINT64_FORMAT ", %" G_GUINT64_FORMAT, field_str, header_value,
+          ret_code, ullong1, ullong2);
+      return FALSE;
+    }
   }
+
+  if (start_byte)
+    *start_byte = ullong1;
+  if (end_byte)
+    *end_byte = ullong2;
+  if (total_bytes)
+    *total_bytes = ullong3;
+
   return TRUE;
 }
 
 /**
- * DTCP Range header formatting:
+ * Parse the npt (normal play time) range which may be contained in the following headers:
  *
- * Content-Range.dtcp.com : bytes=1539686400-1540210688/304857907200
+ * TimeSeekRange.dlna.org : npt=335.1-336.1/40445.4 bytes=1539686400-1540210688/304857907200
  *
- * @param	dlna_src	this element instance
- * @param	idx			index which describes HEAD response field and type
- * @param	fieldStr	string containing HEAD response field header and value
+ * availableSeekRange.dlna.org: 0 npt=0:00:00.000-0:00:48.716 bytes=0-5219255 cleartextbytes=0-5219255
  *
- * @return	returns TRUE
+ * @param   dlna_src    this element instance
+ * @param   field_str   string containing HEAD response field header and value
+ * @param   start_str   starting time in string form read from header response field
+ * @param   stop_str    end time in string form read from header response field
+ * @param   total_str   total time in string form read from header response field
+ * @param   start       starting time in nanoseconds converted from string representation
+ * @param   stop        end time in nanoseconds converted from string representation
+ * @param   total       total time in nanoseconds converted from string representation
+ *
+ * @return  returns TRUE
  */
 static gboolean
-dlna_src_head_response_parse_dtcp_range (GstDlnaSrc * dlna_src,
-    GstDlnaSrcHeadResponse * head_response, gint idx, gchar * field_str)
+dlna_src_parse_npt_range (GstDlnaSrc * dlna_src, gchar * field_str,
+    gchar ** start_str, gchar ** stop_str, gchar ** total_str,
+    guint64 * start, guint64 * stop, guint64 * total)
 {
-  char *tmp_str1 = NULL;
-  char *tmp_str2 = NULL;
-  gint ret_code = 0;
-  guint64 ullong1 = 0;
-  guint64 ullong2 = 0;
-  guint64 ullong3 = 0;
+  gchar *header = NULL;
+  gchar *header_value = NULL;
 
-  // Extract start and end BYTES same format as TIME SEEK BYTES header
-  tmp_str2 = strstr (field_str, TIME_SEEK_HEADERS[HEADER_INDEX_BYTES]);
-  if (tmp_str2 != NULL) {
-    tmp_str1 =
-        tmp_str2 + strlen (TIME_SEEK_HEADERS[HEADER_INDEX_BYTES] + 1) + 1;
-    // *TODO* - add logic to deal with '*'
-    if ((ret_code =
-            sscanf (tmp_str1,
-                "%" G_GUINT64_FORMAT "-%" G_GUINT64_FORMAT "/%"
-                G_GUINT64_FORMAT, &ullong1, &ullong2, &ullong3)) != 3) {
-      GST_WARNING_OBJECT (dlna_src,
-          "Problems parsing BYTES from HEAD response field header %s, idx: %d, value: %s, retcode: %d, ullong: %"
-          G_GUINT64_FORMAT ", %" G_GUINT64_FORMAT ", %"
-          G_GUINT64_FORMAT, HEAD_RESPONSE_HEADERS[idx], idx,
-          tmp_str1, ret_code, ullong1, ullong2, ullong3);
-    } else {
-      head_response->dtcp_range_start = ullong1;
-      head_response->dtcp_range_end = ullong2;
-      head_response->dtcp_range_total = ullong3;
-    }
-  } else {
+  gint ret_code = 0;
+  gchar tmp1[32] = { 0 };
+  gchar tmp2[32] = { 0 };
+  gchar tmp3[32] = { 0 };
+
+  // Extract NPT portion of header value
+  header = strstr (field_str, RANGE_HEADERS[HEADER_INDEX_NPT]);
+  if (header)
+    header_value = strstr (header, "=");
+  if (header_value)
+    header_value++;
+  else {
     GST_WARNING_OBJECT (dlna_src,
-        "No BYTES= found in dtcp range HEAD response field header %s, idx: %d, value: %s",
-        HEAD_RESPONSE_HEADERS[idx], idx, field_str);
+        "Problems parsing npt from HEAD response field header value: %s",
+        field_str);
+    return FALSE;
   }
+
+  // Determine if npt string includes total
+  if (strstr (header_value, "/")) {
+    if ((ret_code =
+            sscanf (header_value, "%31[^-]-%31[^/]/%31s %*s", tmp1, tmp2,
+                tmp3)) != 3) {
+      GST_WARNING_OBJECT (dlna_src,
+          "Problems parsing NPT from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s, %s",
+          field_str, header_value, ret_code, tmp1, tmp2, tmp3);
+      return FALSE;
+    }
+
+    *total_str = g_strdup (tmp3);
+    if (strcmp (*total_str, "*") != 0)
+      if (!dlna_src_npt_to_nanos (dlna_src, *total_str, total))
+        return FALSE;
+  } else {
+    if ((ret_code = sscanf (header_value, "%31[^-]-%31s %*s", tmp1, tmp2)) != 2) {
+      GST_WARNING_OBJECT (dlna_src,
+          "Problems parsing NPT from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s",
+          field_str, header_value, ret_code, tmp1, tmp2);
+      return FALSE;
+    }
+  }
+  *start_str = g_strdup (tmp1);
+  if (!dlna_src_npt_to_nanos (dlna_src, *start_str, start))
+    return FALSE;
+
+  *stop_str = g_strdup (tmp2);
+  if (!dlna_src_npt_to_nanos (dlna_src, *stop_str, stop))
+    return FALSE;
+
   return TRUE;
 }
 
@@ -3571,6 +3763,67 @@ overflow:
       "Overflow while converting struct to str, size: %" G_GSIZE_FORMAT,
       struct_str_max_size);
   return FALSE;
+}
+
+/**
+ * Utility function which uses server info from time seek range in order
+ * to convert supplied byte position to corresponding normal play time (npt) in nanoseconds.
+ *
+ * @param   dlna_src    this element instance
+ * @param   bytes       byte position to convert to npt in nanoseconds
+ * @param   npt_nanos   npt which represents supplied byte position
+ *
+ * @return  TRUE if conversion was successful, false otherwise
+ */
+static gboolean
+dlna_src_convert_bytes_to_npt_nanos (GstDlnaSrc * dlna_src, guint64 bytes,
+    guint64 * npt_nanos)
+{
+  // Unable to issue time seek range header with bytes and get back npt
+  // so just using the time seek range results from previous head to estimate
+  // what npt would be for supplied byte
+  *npt_nanos = (bytes * dlna_src->server_info->time_seek_npt_duration) /
+      dlna_src->server_info->byte_seek_total;
+
+  GST_INFO_OBJECT (dlna_src,
+      "Converted %" G_GUINT64_FORMAT " bytes to %" GST_TIME_FORMAT
+      " npt using total bytes=%" G_GUINT64_FORMAT " total npt=%"
+      GST_TIME_FORMAT, bytes, GST_TIME_ARGS (*npt_nanos),
+      dlna_src->server_info->byte_seek_total,
+      GST_TIME_ARGS (dlna_src->server_info->time_seek_npt_duration));
+
+  return TRUE;
+}
+
+/**
+ * Utility function which uses server info from time seek range in order
+ * to convert supplied normal play time (npt) in nanoseconds to corresponding byte position.
+ *
+ * @param   dlna_src    this element instance
+ * @param   npt_nanos   npt in nanoseconds to convert to byte position
+ * @param   bytes       byte position which represents supplied npt nanos
+ *
+ * @return  TRUE if conversion was successful, false otherwise
+ */
+static gboolean
+dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
+    guint64 * bytes)
+{
+  // Issue head to get conversion info
+  GstDlnaSrcHeadResponse *head_response = NULL;
+  if (!dlna_src_head_request (dlna_src, npt_nanos, 0, FALSE, &head_response)) {
+    GST_WARNING_OBJECT (dlna_src, "Problems with HEAD request");
+    return FALSE;
+  }
+  *bytes = head_response->byte_seek_start;
+  GST_INFO_OBJECT (dlna_src,
+      "Converted %" GST_TIME_FORMAT " npt to %" G_GUINT64_FORMAT " bytes",
+      GST_TIME_ARGS (npt_nanos), *bytes);
+
+  // Free head response structure
+  dlna_src_head_response_free (dlna_src, head_response);
+
+  return TRUE;
 }
 
 /**
