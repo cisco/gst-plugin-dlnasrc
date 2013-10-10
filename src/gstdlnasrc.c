@@ -2575,12 +2575,13 @@ dlna_src_head_response_parse_time_seek (GstDlnaSrc * dlna_src,
   else
     head_response->time_seek_response_received = TRUE;
 
-  // Extract start and end bytes from TimeSeekRange header
-  if (!dlna_src_parse_byte_range (dlna_src, field_str, HEADER_INDEX_BYTES,
-          &head_response->byte_seek_start,
-          &head_response->byte_seek_end, &head_response->byte_seek_total))
-    // Return, errors which have been logged already
-    return FALSE;
+  // Extract start and end bytes from TimeSeekRange header if present
+  if (strstr (field_str, RANGE_HEADERS[HEADER_INDEX_BYTES])) {
+    if (!dlna_src_parse_byte_range (dlna_src, field_str, HEADER_INDEX_BYTES,
+            &head_response->byte_seek_start,
+            &head_response->byte_seek_end, &head_response->byte_seek_total))
+      return FALSE;
+  }
 
   return TRUE;
 }
@@ -2677,7 +2678,7 @@ dlna_src_parse_byte_range (GstDlnaSrc * dlna_src,
   header = strstr (field_str, RANGE_HEADERS[header_index]);
   if (header)
     header_value = strstr (header, "=");
-  if (!header_value)
+  if (header && !header_value)
     header_value = strstr (header, " ");
   if (header_value)
     header_value++;
