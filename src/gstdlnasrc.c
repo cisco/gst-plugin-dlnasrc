@@ -226,11 +226,12 @@ static gboolean dlna_src_parse_uri (GstDlnaSrc * dlna_src);
 static gboolean dlna_src_dtcp_setup (GstDlnaSrc * dlna_src);
 
 static gboolean dlna_src_head_request (GstDlnaSrc * dlna_src,
-        gint headers_cnt, gchar* headers[], GstDlnaSrcHeadResponse * head_response);
+    size_t headers_array_size, gchar * headers[],
+    GstDlnaSrcHeadResponse * head_response);
 
 static gboolean dlna_src_head_request_formulate (GstDlnaSrc * dlna_src,
     gchar * head_request_str, size_t head_request_max_size, gint headers_cnt,
-    gchar* headers[]);
+    gchar * headers[]);
 
 static gboolean dlna_src_head_request_issue (GstDlnaSrc * dlna_src,
     gchar * head_request_str, gchar * head_response_str);
@@ -901,7 +902,7 @@ dlna_src_use_time_range (GstDlnaSrc * dlna_src)
       && dlna_src->server_info->content_features != NULL
       && dlna_src->server_info->time_seek_response_received
       && (dlna_src->server_info->content_features->op_time_seek_supported
-         || dlna_src->server_info->content_features->flag_limited_time_seek_set);
+      || dlna_src->server_info->content_features->flag_limited_time_seek_set);
 }
 
 /**
@@ -953,7 +954,7 @@ dlna_src_is_time_seek_supported (GstDlnaSrc * dlna_src)
   return dlna_src->server_info != NULL
       && dlna_src->server_info->content_features != NULL
       && (dlna_src->server_info->content_features->op_time_seek_supported
-         || dlna_src->server_info->content_features->flag_limited_time_seek_set);
+      || dlna_src->server_info->content_features->flag_limited_time_seek_set);
 }
 
 /**
@@ -1606,7 +1607,7 @@ dlna_src_set_uri (GstDlnaSrc * dlna_src, const gchar * value)
         (GstPadQueryFunction) gst_dlna_src_query);
   }
 
-  if ((dlna_src->server_info != NULL) && !dlna_src_is_live(dlna_src)) {
+  if ((dlna_src->server_info != NULL) && !dlna_src_is_live (dlna_src)) {
     content_size = dlna_src->server_info->byte_seek_total;
     if (content_size == 0)
       content_size = dlna_src->server_info->content_length;
@@ -1698,10 +1699,15 @@ dlna_src_dtcp_setup (GstDlnaSrc * dlna_src)
 static gboolean
 dlna_src_init_uri (GstDlnaSrc * dlna_src, const gchar * value)
 {
-  gchar* first_head_request_headers[1] = {HEADER_GET_CONTENT_FEATURES};
-  gchar* time_seek_head_request_headers[1] = {HEADER_TIME_SEEK_RANGE};
-  gchar* live_content_head_request_headers[1] = {HEADER_GET_AVAILABLE_SEEK_RANGE};
-  gchar* non_dlna_head_request_headers[1] = {HEADER_RANGE_BYTES};
+  gchar *first_head_request_headers[1] = { HEADER_GET_CONTENT_FEATURES };
+  size_t first_head_request_headers_array_size = 1;
+  gchar *time_seek_head_request_headers[1] = { HEADER_TIME_SEEK_RANGE };
+  size_t time_seek_head_request_headers_array_size = 1;
+  gchar *live_content_head_request_headers[1] =
+      { HEADER_GET_AVAILABLE_SEEK_RANGE };
+  size_t live_content_head_request_headers_array_size = 1;
+  gchar *non_dlna_head_request_headers[1] = { HEADER_RANGE_BYTES };
+  size_t non_dlna_head_request_headers_array_size = 1;
 
   // Set the uri in the src
   if (dlna_src->uri) {
@@ -1722,40 +1728,45 @@ dlna_src_init_uri (GstDlnaSrc * dlna_src, const gchar * value)
     dlna_src->uri = NULL;
     return FALSE;
   }
-
   // Initialize server info
   if (!dlna_src_head_response_init_struct (dlna_src, &dlna_src->server_info)) {
     GST_ERROR_OBJECT (dlna_src,
         "Problems initializing struct to store HEAD response");
     return FALSE;
   }
-
   // Issue first head with just content features to determine what server supports
-  GST_DEBUG_OBJECT (dlna_src, "Issuing HEAD Request to determine what server supports");
-  if (!dlna_src_head_request (dlna_src, 1, first_head_request_headers, dlna_src->server_info)) {
+  GST_DEBUG_OBJECT (dlna_src,
+      "Issuing HEAD Request to determine what server supports");
+  if (!dlna_src_head_request (dlna_src, first_head_request_headers_array_size,
+          first_head_request_headers, dlna_src->server_info)) {
     GST_WARNING_OBJECT (dlna_src,
         "Unable to issue first HEAD request & get HEAD response");
   }
-
   // Formulate second HEAD request to gather more info
   GST_INFO_OBJECT (dlna_src,
       "Issuing another HEAD request based on server's content features");
 
-  if (dlna_src_is_live(dlna_src)) {
-    if (!dlna_src_head_request (dlna_src, 1, live_content_head_request_headers, dlna_src->server_info)) {
+  if (dlna_src_is_live (dlna_src)) {
+    if (!dlna_src_head_request (dlna_src,
+            live_content_head_request_headers_array_size,
+            live_content_head_request_headers, dlna_src->server_info)) {
       GST_WARNING_OBJECT (dlna_src,
-        "Unable to issue second HEAD request & get HEAD response for live content");
+          "Unable to issue second HEAD request & get HEAD response for live content");
     }
-  } else if (dlna_src_is_time_seek_supported(dlna_src)) {
-      if (!dlna_src_head_request (dlna_src, 1, time_seek_head_request_headers, dlna_src->server_info)) {
-        GST_WARNING_OBJECT (dlna_src,
+  } else if (dlna_src_is_time_seek_supported (dlna_src)) {
+    if (!dlna_src_head_request (dlna_src,
+            time_seek_head_request_headers_array_size,
+            time_seek_head_request_headers, dlna_src->server_info)) {
+      GST_WARNING_OBJECT (dlna_src,
           "Unable to issue second HEAD request & get HEAD response for time seek range");
-      }
+    }
   } else {
-      if (!dlna_src_head_request (dlna_src, 1, non_dlna_head_request_headers, dlna_src->server_info)) {
-        GST_WARNING_OBJECT (dlna_src,
+    if (!dlna_src_head_request (dlna_src,
+            non_dlna_head_request_headers_array_size,
+            non_dlna_head_request_headers, dlna_src->server_info)) {
+      GST_WARNING_OBJECT (dlna_src,
           "Unable to issue second HEAD request & get HEAD response for byte range");
-      }
+    }
   }
 
   return TRUE;
@@ -1829,7 +1840,7 @@ dlna_src_head_response_free (GstDlnaSrc * dlna_src,
  */
 static gboolean
 dlna_src_head_request (GstDlnaSrc * dlna_src,
-    gint headers_cnt, gchar* headers[],
+    size_t headers_array_size, gchar * headers[],
     GstDlnaSrcHeadResponse * head_response)
 {
   gchar head_request_str[MAX_HTTP_BUF_SIZE] = { 0 };
@@ -1843,7 +1854,7 @@ dlna_src_head_request (GstDlnaSrc * dlna_src,
   }
   // Formulate HEAD request
   if (!dlna_src_head_request_formulate (dlna_src, head_request_str,
-          MAX_HTTP_BUF_SIZE, headers_cnt, headers)) {
+          MAX_HTTP_BUF_SIZE, headers_array_size, headers)) {
     GST_WARNING_OBJECT (dlna_src, "Problems formulating HEAD request");
     return FALSE;
   }
@@ -2053,13 +2064,13 @@ dlna_src_close_socket (GstDlnaSrc * dlna_src)
 static gboolean
 dlna_src_head_request_formulate (GstDlnaSrc * dlna_src,
     gchar * head_request_str, size_t head_request_max_size, gint headers_cnt,
-    gchar* headers[])
+    gchar * headers[])
 {
   GST_LOG_OBJECT (dlna_src, "Formulating head request");
 
   gchar tmpStr[32] = { 0 };
   size_t tmp_str_max_size = 32;
-  int i = 0;
+  int i;
 
   g_strlcpy (head_request_str, "HEAD ", head_request_max_size);
 
@@ -2093,14 +2104,13 @@ dlna_src_head_request_formulate (GstDlnaSrc * dlna_src,
     goto overflow;
 
   // Add headers
-  for (i = 0; i < headers_cnt; i++)
-  {
-      if (g_strlcat (head_request_str, headers[i],
-              head_request_max_size) >= head_request_max_size)
-        goto overflow;
-      if (g_strlcat (head_request_str, CRLF,
-              head_request_max_size) >= head_request_max_size)
-        goto overflow;
+  for (i = 0; i < headers_cnt; i++) {
+    if (g_strlcat (head_request_str, headers[i],
+            head_request_max_size) >= head_request_max_size)
+      goto overflow;
+    if (g_strlcat (head_request_str, CRLF,
+            head_request_max_size) >= head_request_max_size)
+      goto overflow;
   }
 
   // Add termination characters for overall request
@@ -2178,14 +2188,6 @@ dlna_src_head_response_parse (GstDlnaSrc * dlna_src, gchar * head_response_str,
 {
   gchar struct_str[MAX_HTTP_BUF_SIZE] = { 0 };
 
-  // Initialize structure to hold parsed HEAD Response
-  /*
-  if (!dlna_src_head_response_init_struct (dlna_src, head_response)) {
-    GST_ERROR_OBJECT (dlna_src,
-        "Problems initializing struct to store HEAD response");
-    return FALSE;
-  }
-  */
   // Convert all header field strings to upper case to aid in parsing
   int i = 0;
   for (i = 0; head_response_str[i]; i++) {
@@ -3796,7 +3798,7 @@ dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
   GstDlnaSrcHeadResponse *head_response = NULL;
   gchar head_request_str[MAX_HTTP_BUF_SIZE] = { 0 };
   gint head_request_max_size = MAX_HTTP_BUF_SIZE;
-  gchar* headers[1] = {head_request_str};
+  gchar *headers[1] = { head_request_str };
   gchar tmpStr[32] = { 0 };
   size_t tmp_str_max_size = 32;
 
@@ -3805,7 +3807,6 @@ dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
         "Problems initializing struct to store HEAD response");
     return FALSE;
   }
-
   // Include time seek range
   if (g_strlcat (head_request_str, "TimeSeekRange.dlna.org: npt=",
           head_request_max_size) >= head_request_max_size)
@@ -3838,11 +3839,11 @@ dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
 
   return TRUE;
 
-  overflow:
-    GST_ERROR_OBJECT (dlna_src,
-        "Overflow - exceeded head request string size of: %" G_GSIZE_FORMAT,
-        head_request_max_size);
-    return FALSE;
+overflow:
+  GST_ERROR_OBJECT (dlna_src,
+      "Overflow - exceeded head request string size of: %" G_GSIZE_FORMAT,
+      head_request_max_size);
+  return FALSE;
 }
 
 /**
