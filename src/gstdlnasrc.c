@@ -119,7 +119,7 @@ static const gchar *RANGE_HEADERS[] = {
 #define HEADER_INDEX_CLEAR_TEXT 2
 
 // Subfield headers within ACCEPT-RANGES
-static const gchar *ACCEPT_RANGES_NONE = "NONE";
+static const gchar *ACCEPT_RANGES_BYTES = "BYTES";
 
 // Subfield headers within CONTENTFEATURES.DLNA.ORG
 static const gchar *CONTENT_FEATURES_HEADERS[] = {
@@ -181,6 +181,7 @@ static const int RESERVED_FLAGS_LENGTH = 24;
 #define HEADER_GET_CONTENT_FEATURES "getcontentFeatures.dlna.org: 1"
 #define HEADER_GET_AVAILABLE_SEEK_RANGE "getAvailableSeekRange.dlna.org: 1"
 #define HEADER_RANGE_BYTES "Range: bytes=0-"
+#define HEADER_DTCP_RANGE_BYTES "Range.dtcp.com: bytes=0-"
 #define HEADER_TIME_SEEK_RANGE "TimeSeekRange.dlna.org: npt=0-"
 
 // Description of a pad that the element will (or might) create and use
@@ -345,6 +346,10 @@ static gboolean dlna_src_is_dtcp_encrypted (GstDlnaSrc * dlna_src);
 static gboolean dlna_src_is_live (GstDlnaSrc * dlna_src);
 
 static gboolean dlna_src_is_time_seek_supported (GstDlnaSrc * dlna_src);
+
+static gboolean dlna_src_is_range_supported (GstDlnaSrc * dlna_src);
+
+static gboolean dlna_src_is_dtcp_range_supported (GstDlnaSrc * dlna_src);
 
 #define gst_dlna_src_parent_class parent_class
 
@@ -958,6 +963,42 @@ dlna_src_is_time_seek_supported (GstDlnaSrc * dlna_src)
 }
 
 /**
+ * Utility method which determines if server supports range requests on this content.
+ * Range requests are considered supported if content features indicate range operations
+ * are support or server accepts byte ranges.
+ *
+ * @param   dlna_src    this element
+ *
+ * @return  true if range requests are supported for this content, false otherwise
+ */
+static gboolean
+dlna_src_is_range_supported (GstDlnaSrc * dlna_src)
+{
+  return dlna_src->server_info != NULL
+      && ((dlna_src->server_info->content_features != NULL
+          && dlna_src->server_info->content_features->op_range_supported)
+      || dlna_src->server_info->accept_byte_ranges);
+}
+
+/**
+ * Utility method which determines if server supports dtcp range requests on this content.
+ * Range requests are considered supported if content features indicate full clear text
+ * is supported.
+ *
+ * @param   dlna_src    this element
+ *
+ * @return  true if dtcp range requests are supported for this content, false otherwise
+ */
+static gboolean
+dlna_src_is_dtcp_range_supported (GstDlnaSrc * dlna_src)
+{
+  return dlna_src->server_info != NULL
+      && dlna_src->server_info->content_features != NULL
+      && dlna_src->server_info->content_features->flag_link_protected_set
+      && dlna_src->server_info->content_features->flag_full_clear_text_set;
+}
+
+/**
  * Responds to a segment query by returning rate along with start and stop
  *
  * @param	dlna_src	this element
@@ -1440,7 +1481,8 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
 
   // If dtcp protected content and rate = 1.0, add range.dtcp.com header
   if (rate == 1.0 && format == GST_FORMAT_BYTES
-      && dlna_src_is_dtcp_encrypted (dlna_src)) {
+      && dlna_src_is_dtcp_encrypted (dlna_src)
+      && dlna_src_is_dtcp_range_supported (dlna_src)) {
     g_snprintf (range_dtcp_field_value, 64, "%s%" G_GUINT64_FORMAT "-",
         range_dtcp_field_value_prefix, start);
 
@@ -1465,7 +1507,7 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
   gst_structure_free (extra_headers_struct);
 
   // Disable range header if necessary
-  if (disable_range_header) {
+  if (disable_range_header || !dlna_src_is_range_supported (dlna_src)) {
     g_value_set_boolean (&boolean_value, TRUE);
     g_object_set_property (G_OBJECT (dlna_src->http_src),
         "exclude-range-header", &boolean_value);
@@ -1706,8 +1748,10 @@ dlna_src_init_uri (GstDlnaSrc * dlna_src, const gchar * value)
   gchar *live_content_head_request_headers[1] =
       { HEADER_GET_AVAILABLE_SEEK_RANGE };
   size_t live_content_head_request_headers_array_size = 1;
-  gchar *non_dlna_head_request_headers[1] = { HEADER_RANGE_BYTES };
-  size_t non_dlna_head_request_headers_array_size = 1;
+  gchar *range_head_request_headers[1] = { HEADER_RANGE_BYTES };
+  size_t range_head_request_headers_array_size = 1;
+  gchar *dtcp_range_head_request_headers[1] = { HEADER_DTCP_RANGE_BYTES };
+  size_t dtcp_range_head_request_headers_array_size = 1;
 
   // Set the uri in the src
   if (dlna_src->uri) {
@@ -1736,17 +1780,17 @@ dlna_src_init_uri (GstDlnaSrc * dlna_src, const gchar * value)
   }
   // Issue first head with just content features to determine what server supports
   GST_DEBUG_OBJECT (dlna_src,
-      "Issuing HEAD Request to determine what server supports");
+      "Issuing HEAD Request with content features to determine what server supports");
   if (!dlna_src_head_request (dlna_src, first_head_request_headers_array_size,
           first_head_request_headers, dlna_src->server_info)) {
     GST_WARNING_OBJECT (dlna_src,
         "Unable to issue first HEAD request & get HEAD response");
   }
   // Formulate second HEAD request to gather more info
-  GST_INFO_OBJECT (dlna_src,
-      "Issuing another HEAD request based on server's content features");
-
   if (dlna_src_is_live (dlna_src)) {
+
+    GST_INFO_OBJECT (dlna_src,
+        "Issuing another HEAD request to get live content info");
     if (!dlna_src_head_request (dlna_src,
             live_content_head_request_headers_array_size,
             live_content_head_request_headers, dlna_src->server_info)) {
@@ -1754,19 +1798,34 @@ dlna_src_init_uri (GstDlnaSrc * dlna_src, const gchar * value)
           "Unable to issue second HEAD request & get HEAD response for live content");
     }
   } else if (dlna_src_is_time_seek_supported (dlna_src)) {
+    GST_INFO_OBJECT (dlna_src,
+        "Issuing another HEAD request to get time seek info");
     if (!dlna_src_head_request (dlna_src,
             time_seek_head_request_headers_array_size,
             time_seek_head_request_headers, dlna_src->server_info)) {
       GST_WARNING_OBJECT (dlna_src,
           "Unable to issue second HEAD request & get HEAD response for time seek range");
     }
-  } else {
+  } else if (dlna_src_is_range_supported (dlna_src)) {
+    GST_INFO_OBJECT (dlna_src,
+        "Issuing another HEAD request to get range info");
     if (!dlna_src_head_request (dlna_src,
-            non_dlna_head_request_headers_array_size,
-            non_dlna_head_request_headers, dlna_src->server_info)) {
+            range_head_request_headers_array_size,
+            range_head_request_headers, dlna_src->server_info)) {
       GST_WARNING_OBJECT (dlna_src,
           "Unable to issue second HEAD request & get HEAD response for byte range");
     }
+  } else if (dlna_src_is_dtcp_range_supported (dlna_src)) {
+    GST_INFO_OBJECT (dlna_src,
+        "Issuing another HEAD request to get dtcp range info");
+    if (!dlna_src_head_request (dlna_src,
+            dtcp_range_head_request_headers_array_size,
+            dtcp_range_head_request_headers, dlna_src->server_info)) {
+      GST_WARNING_OBJECT (dlna_src,
+          "Unable to issue second HEAD request & get HEAD response for dtcp byte range");
+    }
+  } else {
+    GST_INFO_OBJECT (dlna_src, "Not issuing another HEAD request");
   }
 
   return TRUE;
@@ -2319,7 +2378,7 @@ dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src,
   // {"ACCEPT-RANGES", STRING_TYPE}
   head_response->accept_ranges_idx = HEADER_INDEX_ACCEPT_RANGES;
   head_response->accept_ranges = NULL;
-  head_response->accept_byte_ranges = TRUE;
+  head_response->accept_byte_ranges = FALSE;
 
   // {"CONTENT-RANGE", STRING_TYPE}
   head_response->content_range_idx = HEADER_INDEX_CONTENT_RANGE;
@@ -2457,8 +2516,8 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
 
     case HEADER_INDEX_ACCEPT_RANGES:
       head_response->accept_ranges = g_strdup ((strstr (field_str, ":") + 1));
-      if (g_strcmp0 (head_response->accept_ranges, ACCEPT_RANGES_NONE) == 0)
-        head_response->accept_byte_ranges = FALSE;
+      if (g_strcmp0 (head_response->accept_ranges, ACCEPT_RANGES_BYTES) == 0)
+        head_response->accept_byte_ranges = TRUE;
       break;
 
     case HEADER_INDEX_CONTENT_RANGE:
