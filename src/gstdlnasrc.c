@@ -1444,14 +1444,16 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
     GST_INFO_OBJECT (dlna_src,
         "Adjust headers by including playspeed header value: %s",
         playspeed_field_value);
+  }
 
+  if (rate != 1.0 || format == GST_FORMAT_TIME) {
     // Add time seek range header, convert bytes to time if necessary
     if (format != GST_FORMAT_TIME) {
-      // Issue head request to convert starting bytes to starting time
+      // Convert starting bytes to starting time
       if (!dlna_src_convert_bytes_to_npt_nanos (dlna_src, start,
               &start_time_nanos)) {
         GST_WARNING_OBJECT (dlna_src,
-            "Problems converting %" G_GUINT64_FORMAT " to npt", start);
+            "Problems converting %" G_GUINT64_FORMAT " to npt ", start);
         return FALSE;
       }
     } else
@@ -1460,7 +1462,7 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
     // Convert start time from nanos into secs string
     start_time_secs = start_time_nanos / GST_SECOND;
 
-    // If using playspeed, include TimeSeekRange header with starting time
+    // Include TimeSeekRange header with starting time
     g_snprintf (time_seek_range_field_value, 64,
         "%s%" G_GUINT64_FORMAT ".0-", time_seek_range_field_value_prefix,
         start_time_secs);
@@ -3862,6 +3864,9 @@ dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
   gchar tmpStr[32] = { 0 };
   size_t tmp_str_max_size = 32;
 
+  // Convert start time from nanos into secs string
+  guint64 npt_secs = npt_nanos / GST_SECOND;
+
   if (!dlna_src_head_response_init_struct (dlna_src, &head_response)) {
     GST_ERROR_OBJECT (dlna_src,
         "Problems initializing struct to store HEAD response");
@@ -3873,7 +3878,7 @@ dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
     goto overflow;
 
   // Include starting npt (since bytes are only include in response)
-  g_snprintf (tmpStr, tmp_str_max_size, "%" G_GUINT64_FORMAT, npt_nanos);
+  g_snprintf (tmpStr, tmp_str_max_size, "%" G_GUINT64_FORMAT, npt_secs);
   if (g_strlcat (head_request_str, tmpStr,
           head_request_max_size) >= head_request_max_size)
     goto overflow;
