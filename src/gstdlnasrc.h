@@ -97,6 +97,10 @@ struct _GstDlnaSrc
     GMutex event_mutex;
     GCond event_cond;
     gulong event_probe;
+
+    guint32 time_seek_seqnum;
+    guint64 time_seek_event_start;
+    gboolean handled_time_seek_seqnum;
 };
 
 struct _GstDlnaSrcHeadResponse
