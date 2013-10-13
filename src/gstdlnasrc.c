@@ -2566,10 +2566,6 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
       head_response->accept_ranges = g_strdup ((strstr (field_str, ":") + 1));
       if (strstr (head_response->accept_ranges, ACCEPT_RANGES_BYTES))
         head_response->accept_byte_ranges = TRUE;
-      else
-        GST_WARNING_OBJECT (dlna_src,
-            "does not accept byte ranges: %s not equal to %s",
-            ACCEPT_RANGES_BYTES, head_response->accept_ranges);
       break;
 
     case HEADER_INDEX_CONTENT_RANGE:
