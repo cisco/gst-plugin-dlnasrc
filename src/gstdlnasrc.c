@@ -324,7 +324,7 @@ static gboolean dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
 static gboolean dlna_src_is_rate_supported (GstDlnaSrc * dlna_src, gfloat rate);
 
 static gboolean dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src,
-    gfloat rate, GstFormat format, guint64 start);
+    gfloat rate, GstFormat format, guint64 start, guint32 new_seqnum);
 
 static gboolean dlna_src_npt_to_nanos (GstDlnaSrc * dlna_src, gchar * string,
     guint64 * media_time_nanos);
@@ -437,6 +437,9 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
 
   // Initialize play rate to 1.0
   dlna_src->rate = 1.0;
+  dlna_src->handled_time_seek_seqnum = FALSE;
+  dlna_src->time_seek_seqnum = 0;
+  dlna_src->time_seek_event_start = 0;
 
   // Create source element
   dlna_src->http_src =
@@ -1178,6 +1181,9 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
   gint64 start;
   GstSeekType stop_type;
   gint64 stop;
+  guint32 new_seqnum;
+  gboolean convert_start = FALSE;
+
 
   // Make sure a URI has been set and HEAD response received
   if ((dlna_src->uri == NULL) || (dlna_src->server_info == NULL)) {
@@ -1185,6 +1191,22 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
         "No URI and/or HEAD response info, event handled");
     return TRUE;
   }
+
+  new_seqnum = gst_event_get_seqnum (event);
+  if (new_seqnum == dlna_src->time_seek_seqnum) {
+    if (dlna_src->handled_time_seek_seqnum) {
+      GST_INFO_OBJECT (dlna_src, "Already processed seek event %d", new_seqnum);
+      return FALSE;
+    } else
+      // Got same event now byte based since server doesn't support time seeks
+      // Convert since tsdemux conversion isn't very accurate
+      convert_start = TRUE;
+  } else {
+    dlna_src->handled_time_seek_seqnum = FALSE;
+    dlna_src->time_seek_seqnum = new_seqnum;
+    dlna_src->time_seek_event_start = 0;
+  }
+
   // Parse event received
   // *TODO* - start is a gint64 here but need a guint64????
   gst_event_parse_seek (event, &rate, (GstFormat *) & format,
@@ -1193,11 +1215,23 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
       (GstSeekType *) & stop_type, (gint64 *) & stop);
 
   GST_INFO_OBJECT (dlna_src,
-      "Got Seek event: rate: %3.1f, format: %s, flags: %d, start type: %d,  start: %"
+      "Got Seek event %d: rate: %3.1f, format: %s, flags: %d, start type: %d,  start: %"
       G_GUINT64_FORMAT ", stop type: %d, stop: %"
-      G_GUINT64_FORMAT, rate, gst_format_get_name (format),
-      flags, start_type, start, stop_type, stop);
+      G_GUINT64_FORMAT, gst_event_get_seqnum (event), rate,
+      gst_format_get_name (format), flags, start_type, start, stop_type, stop);
 
+  // Convert bytes based on last time seek change
+  if (convert_start) {
+    GST_INFO_OBJECT (dlna_src,
+        "Supplied start byte %" G_GUINT64_FORMAT
+        " ignored, converting seek event start time %" GST_TIME_FORMAT
+        " to bytes", start, GST_TIME_ARGS (dlna_src->time_seek_event_start));
+    if (!dlna_src_convert_npt_nanos_to_bytes (dlna_src,
+            dlna_src->time_seek_event_start, (guint64 *) & start)) {
+      GST_WARNING_OBJECT (dlna_src, "Problems converting to bytes");
+      return TRUE;
+    }
+  }
   // Verify requested change is valid
   if (!dlna_src_is_change_valid
       (dlna_src, rate, format, start, start_type, stop, stop_type)) {
@@ -1219,7 +1253,8 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
       (dlna_src->server_info->content_features != NULL)) {
     // Adjust headers for http src so change can be requested
     if (!dlna_src_adjust_http_src_headers (dlna_src, dlna_src->requested_rate,
-            dlna_src->requested_format, dlna_src->requested_start)) {
+            dlna_src->requested_format, dlna_src->requested_start,
+            new_seqnum)) {
       GST_ERROR_OBJECT (dlna_src, "Problems adjusting soup http src headers");
       // Returning true to prevent further processing
       return TRUE;
@@ -1381,7 +1416,7 @@ dlna_src_is_rate_supported (GstDlnaSrc * dlna_src, gfloat rate)
  */
 static gboolean
 dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
-    GstFormat format, guint64 start)
+    GstFormat format, guint64 start, guint32 new_seqnum)
 {
   GValue struct_value = G_VALUE_INIT;
   GstStructure *extra_headers_struct;
@@ -1444,14 +1479,17 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
     GST_INFO_OBJECT (dlna_src,
         "Adjust headers by including playspeed header value: %s",
         playspeed_field_value);
+  }
 
+  if (rate != 1.0 || (format == GST_FORMAT_TIME
+          && dlna_src_is_time_seek_supported (dlna_src))) {
     // Add time seek range header, convert bytes to time if necessary
     if (format != GST_FORMAT_TIME) {
-      // Issue head request to convert starting bytes to starting time
+      // Convert starting bytes to starting time
       if (!dlna_src_convert_bytes_to_npt_nanos (dlna_src, start,
               &start_time_nanos)) {
         GST_WARNING_OBJECT (dlna_src,
-            "Problems converting %" G_GUINT64_FORMAT " to npt", start);
+            "Problems converting %" G_GUINT64_FORMAT " to npt ", start);
         return FALSE;
       }
     } else
@@ -1460,7 +1498,7 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
     // Convert start time from nanos into secs string
     start_time_secs = start_time_nanos / GST_SECOND;
 
-    // If using playspeed, include TimeSeekRange header with starting time
+    // Include TimeSeekRange header with starting time
     g_snprintf (time_seek_range_field_value, 64,
         "%s%" G_GUINT64_FORMAT ".0-", time_seek_range_field_value_prefix,
         start_time_secs);
@@ -1475,10 +1513,18 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
 
     // Set flag so range header is not included by souphttpsrc
     disable_range_header = TRUE;
+
+    // Record seqnum since have handled this event as time seek
+    dlna_src->handled_time_seek_seqnum = TRUE;
   } else
     GST_INFO_OBJECT (dlna_src,
         "Not adjusting with playspeed or time seek range ");
 
+  if (format == GST_FORMAT_TIME && !dlna_src_is_time_seek_supported (dlna_src)) {
+    GST_INFO_OBJECT (dlna_src,
+        "Saving start time incase get this event again in bytes in order to do acurate conversion");
+    dlna_src->time_seek_event_start = start;
+  }
   // If dtcp protected content and rate = 1.0, add range.dtcp.com header
   if (rate == 1.0 && format == GST_FORMAT_BYTES
       && dlna_src_is_dtcp_encrypted (dlna_src)
@@ -1511,7 +1557,9 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
     g_value_set_boolean (&boolean_value, TRUE);
     g_object_set_property (G_OBJECT (dlna_src->http_src),
         "exclude-range-header", &boolean_value);
-    GST_INFO_OBJECT (dlna_src, "Adjust headers by excluding range header");
+    GST_INFO_OBJECT (dlna_src,
+        "Adjust headers by excluding range header, flag: %d, supported: %d",
+        disable_range_header, dlna_src_is_range_supported (dlna_src));
   }
 
   return TRUE;
@@ -2516,7 +2564,7 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
 
     case HEADER_INDEX_ACCEPT_RANGES:
       head_response->accept_ranges = g_strdup ((strstr (field_str, ":") + 1));
-      if (g_strcmp0 (head_response->accept_ranges, ACCEPT_RANGES_BYTES) == 0)
+      if (strstr (head_response->accept_ranges, ACCEPT_RANGES_BYTES))
         head_response->accept_byte_ranges = TRUE;
       break;
 
@@ -3862,6 +3910,9 @@ dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
   gchar tmpStr[32] = { 0 };
   size_t tmp_str_max_size = 32;
 
+  // Convert start time from nanos into secs string
+  guint64 npt_secs = npt_nanos / GST_SECOND;
+
   if (!dlna_src_head_response_init_struct (dlna_src, &head_response)) {
     GST_ERROR_OBJECT (dlna_src,
         "Problems initializing struct to store HEAD response");
@@ -3873,7 +3924,7 @@ dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
     goto overflow;
 
   // Include starting npt (since bytes are only include in response)
-  g_snprintf (tmpStr, tmp_str_max_size, "%" G_GUINT64_FORMAT, npt_nanos);
+  g_snprintf (tmpStr, tmp_str_max_size, "%" G_GUINT64_FORMAT, npt_secs);
   if (g_strlcat (head_request_str, tmpStr,
           head_request_max_size) >= head_request_max_size)
     goto overflow;
