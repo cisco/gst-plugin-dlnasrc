@@ -227,11 +227,11 @@ static gboolean dlna_src_parse_uri (GstDlnaSrc * dlna_src);
 static gboolean dlna_src_dtcp_setup (GstDlnaSrc * dlna_src);
 
 static gboolean dlna_src_head_request (GstDlnaSrc * dlna_src,
-    size_t headers_array_size, gchar * headers[],
+    gsize headers_array_size, gchar * headers[],
     GstDlnaSrcHeadResponse * head_response);
 
 static gboolean dlna_src_head_request_formulate (GstDlnaSrc * dlna_src,
-    gchar * head_request_str, size_t head_request_max_size, gint headers_cnt,
+    gchar * head_request_str, gsize head_request_max_size, gint headers_cnt,
     gchar * headers[]);
 
 static gboolean dlna_src_head_request_issue (GstDlnaSrc * dlna_src,
@@ -291,7 +291,7 @@ static gboolean dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src,
 
 static gboolean dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, gchar * struct_str,
-    size_t struct_str_max_size);
+    gsize struct_str_max_size);
 
 static gboolean dlna_src_handle_event_seek (GstDlnaSrc * dlna_src,
     GstPad * pad, GstEvent * event);
@@ -1790,16 +1790,16 @@ static gboolean
 dlna_src_init_uri (GstDlnaSrc * dlna_src, const gchar * value)
 {
   gchar *first_head_request_headers[1] = { HEADER_GET_CONTENT_FEATURES };
-  size_t first_head_request_headers_array_size = 1;
+  gsize first_head_request_headers_array_size = 1;
   gchar *time_seek_head_request_headers[1] = { HEADER_TIME_SEEK_RANGE };
-  size_t time_seek_head_request_headers_array_size = 1;
+  gsize time_seek_head_request_headers_array_size = 1;
   gchar *live_content_head_request_headers[1] =
       { HEADER_GET_AVAILABLE_SEEK_RANGE };
-  size_t live_content_head_request_headers_array_size = 1;
+  gsize live_content_head_request_headers_array_size = 1;
   gchar *range_head_request_headers[1] = { HEADER_RANGE_BYTES };
-  size_t range_head_request_headers_array_size = 1;
+  gsize range_head_request_headers_array_size = 1;
   gchar *dtcp_range_head_request_headers[1] = { HEADER_DTCP_RANGE_BYTES };
-  size_t dtcp_range_head_request_headers_array_size = 1;
+  gsize dtcp_range_head_request_headers_array_size = 1;
 
   // Set the uri in the src
   if (dlna_src->uri) {
@@ -1947,7 +1947,7 @@ dlna_src_head_response_free (GstDlnaSrc * dlna_src,
  */
 static gboolean
 dlna_src_head_request (GstDlnaSrc * dlna_src,
-    size_t headers_array_size, gchar * headers[],
+    gsize headers_array_size, gchar * headers[],
     GstDlnaSrcHeadResponse * head_response)
 {
   gchar head_request_str[MAX_HTTP_BUF_SIZE] = { 0 };
@@ -2170,13 +2170,13 @@ dlna_src_close_socket (GstDlnaSrc * dlna_src)
  */
 static gboolean
 dlna_src_head_request_formulate (GstDlnaSrc * dlna_src,
-    gchar * head_request_str, size_t head_request_max_size, gint headers_cnt,
+    gchar * head_request_str, gsize head_request_max_size, gint headers_cnt,
     gchar * headers[])
 {
   GST_LOG_OBJECT (dlna_src, "Formulating head request");
 
   gchar tmpStr[32] = { 0 };
-  size_t tmp_str_max_size = 32;
+  gsize tmp_str_max_size = 32;
   int i;
 
   g_strlcpy (head_request_str, "HEAD ", head_request_max_size);
@@ -3394,12 +3394,12 @@ dlna_src_head_response_is_flag_set (GstDlnaSrc * dlna_src, gchar * flags_str,
 static gboolean
 dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, gchar * struct_str,
-    size_t struct_str_max_size)
+    gsize struct_str_max_size)
 {
   GST_DEBUG_OBJECT (dlna_src, "Formatting HEAD Response struct");
 
   gchar tmpStr[32] = { 0 };
-  size_t tmp_str_max_size = 32;
+  gsize tmp_str_max_size = 32;
 
   g_strlcpy (struct_str, "\nHTTP Version: ", struct_str_max_size);
   if (head_response->http_rev != NULL)
@@ -3908,7 +3908,7 @@ dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
   gint head_request_max_size = MAX_HTTP_BUF_SIZE;
   gchar *headers[1] = { head_request_str };
   gchar tmpStr[32] = { 0 };
-  size_t tmp_str_max_size = 32;
+  gsize tmp_str_max_size = 32;
 
   // Convert start time from nanos into secs string
   guint64 npt_secs = npt_nanos / GST_SECOND;
