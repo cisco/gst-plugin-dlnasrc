@@ -3952,7 +3952,7 @@ dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
 
 overflow:
   GST_ERROR_OBJECT (dlna_src,
-      "Overflow - exceeded head request string size of: %" G_GSIZE_FORMAT,
+      "Overflow - exceeded head request string size of: %d",
       head_request_max_size);
   return FALSE;
 }
