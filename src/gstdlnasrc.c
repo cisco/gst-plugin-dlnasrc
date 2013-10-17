@@ -227,11 +227,11 @@ static gboolean dlna_src_parse_uri (GstDlnaSrc * dlna_src);
 static gboolean dlna_src_dtcp_setup (GstDlnaSrc * dlna_src);
 
 static gboolean dlna_src_head_request (GstDlnaSrc * dlna_src,
-    size_t headers_array_size, gchar * headers[],
+    gsize headers_array_size, gchar * headers[],
     GstDlnaSrcHeadResponse * head_response);
 
 static gboolean dlna_src_head_request_formulate (GstDlnaSrc * dlna_src,
-    gchar * head_request_str, size_t head_request_max_size, gint headers_cnt,
+    gchar * head_request_str, gsize head_request_max_size, gint headers_cnt,
     gchar * headers[]);
 
 static gboolean dlna_src_head_request_issue (GstDlnaSrc * dlna_src,
@@ -291,7 +291,7 @@ static gboolean dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src,
 
 static gboolean dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, gchar * struct_str,
-    size_t struct_str_max_size);
+    gsize struct_str_max_size);
 
 static gboolean dlna_src_handle_event_seek (GstDlnaSrc * dlna_src,
     GstPad * pad, GstEvent * event);
@@ -721,8 +721,13 @@ dlna_src_handle_query_duration (GstDlnaSrc * dlna_src, GstQuery * query)
   if (format == GST_FORMAT_BYTES) {
     // Total duration of stream available?, report this if it is known
     if (dlna_src_use_byte_range (dlna_src)) {
-      gst_query_set_duration (query, GST_FORMAT_BYTES,
-          dlna_src->server_info->byte_seek_total);
+      if (dlna_src_is_dtcp_encrypted (dlna_src))
+        gst_query_set_duration (query, GST_FORMAT_BYTES,
+            dlna_src->server_info->dtcp_range_total);
+      else
+        gst_query_set_duration (query, GST_FORMAT_BYTES,
+            dlna_src->server_info->byte_seek_total);
+
       ret = TRUE;
 
       GST_DEBUG_OBJECT (dlna_src,
@@ -807,9 +812,14 @@ dlna_src_handle_query_seeking (GstDlnaSrc * dlna_src, GstQuery * query)
   if ((format == GST_FORMAT_BYTES) || (format == GST_FORMAT_DEFAULT)) {
     if (dlna_src_use_byte_range (dlna_src)) {
       // Set results of query but don't do actual seek
-      gst_query_set_seeking (query, GST_FORMAT_BYTES, TRUE,
-          dlna_src->server_info->byte_seek_start,
-          dlna_src->server_info->byte_seek_end);
+      if (dlna_src_is_dtcp_encrypted (dlna_src))
+        gst_query_set_seeking (query, GST_FORMAT_BYTES, TRUE,
+            dlna_src->server_info->dtcp_range_start,
+            dlna_src->server_info->dtcp_range_end);
+      else
+        gst_query_set_seeking (query, GST_FORMAT_BYTES, TRUE,
+            dlna_src->server_info->byte_seek_start,
+            dlna_src->server_info->byte_seek_end);
       ret = TRUE;
 
       GST_INFO_OBJECT (dlna_src,
@@ -874,8 +884,7 @@ dlna_src_use_byte_range (GstDlnaSrc * dlna_src)
   // Determine if this server supports byte based seeks for this content
   // Check if got time seek in order to use byte range
   if (dlna_src->server_info != NULL
-      && dlna_src->server_info->content_features != NULL
-      && dlna_src->server_info->time_seek_response_received) {
+      && dlna_src->server_info->content_features != NULL) {
 
     // Check for non-encrypted content and range seek supported
     if (!dlna_src_is_dtcp_encrypted (dlna_src) &&
@@ -1032,10 +1041,15 @@ dlna_src_handle_query_segment (GstDlnaSrc * dlna_src, GstQuery * query)
   if (format == GST_FORMAT_BYTES) {
     if (dlna_src_use_byte_range (dlna_src)) {
 
-      // Set segment info based on server support of byte based seeks
-      gst_query_set_segment (query, dlna_src->rate, GST_FORMAT_BYTES,
-          dlna_src->server_info->byte_seek_start,
-          dlna_src->server_info->byte_seek_end);
+      if (dlna_src_is_dtcp_encrypted (dlna_src))
+        gst_query_set_segment (query, dlna_src->rate, GST_FORMAT_BYTES,
+            dlna_src->server_info->dtcp_range_start,
+            dlna_src->server_info->dtcp_range_end);
+      else
+        // Set segment info based on server support of byte based seeks
+        gst_query_set_segment (query, dlna_src->rate, GST_FORMAT_BYTES,
+            dlna_src->server_info->byte_seek_start,
+            dlna_src->server_info->byte_seek_end);
       ret = TRUE;
 
       GST_DEBUG_OBJECT (dlna_src,
@@ -1198,9 +1212,16 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
       GST_INFO_OBJECT (dlna_src, "Already processed seek event %d", new_seqnum);
       return FALSE;
     } else
-      // Got same event now byte based since server doesn't support time seeks
-      // Convert since tsdemux conversion isn't very accurate
+      // *TODO* - see dlnasrc issue #63
+      // Got same event now byte based since some element converted it to bytes
+      // Convert here if time seek is supported since it is more accurate
+    if (dlna_src_is_time_seek_supported (dlna_src)) {
       convert_start = TRUE;
+      GST_INFO_OBJECT (dlna_src,
+          "Set flag to convert time based seek to byte since server does support time seeks");
+    } else
+      GST_INFO_OBJECT (dlna_src,
+          "Unable to convert time based seek to byte since server does not support time seeks");
   } else {
     dlna_src->handled_time_seek_seqnum = FALSE;
     dlna_src->time_seek_seqnum = new_seqnum;
@@ -1303,23 +1324,46 @@ dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
   if (format == GST_FORMAT_BYTES) {
     if (dlna_src_use_byte_range (dlna_src)) {
 
-      // Verify start byte is within range
-      if ((start < dlna_src->server_info->byte_seek_start) ||
-          (start > dlna_src->server_info->byte_seek_end)) {
-        GST_WARNING_OBJECT (dlna_src,
-            "Specified start byte %" G_GUINT64_FORMAT
-            " is not valid, valid range: %" G_GUINT64_FORMAT
-            " to %" G_GUINT64_FORMAT, start,
-            dlna_src->server_info->byte_seek_start,
-            dlna_src->server_info->byte_seek_end);
-        return FALSE;
+      if (dlna_src_is_dtcp_encrypted (dlna_src)) {
+        // Verify encrypted start byte is within range
+        if ((start < dlna_src->server_info->dtcp_range_start) ||
+            (start > dlna_src->server_info->dtcp_range_end)) {
+          GST_WARNING_OBJECT (dlna_src,
+              "Used dtcp range to verify pecified start byte %" G_GUINT64_FORMAT
+              " is not valid, valid range: %" G_GUINT64_FORMAT
+              " to %" G_GUINT64_FORMAT, start,
+              dlna_src->server_info->dtcp_range_start,
+              dlna_src->server_info->dtcp_range_end);
+          return FALSE;
+        } else {
+          GST_INFO_OBJECT (dlna_src,
+              "Used dtcp byte range to verify specified start byte %"
+              G_GUINT64_FORMAT " is valid, valid range: %" G_GUINT64_FORMAT
+              " to %" G_GUINT64_FORMAT, start,
+              dlna_src->server_info->dtcp_range_start,
+              dlna_src->server_info->dtcp_range_end);
+        }
+
       } else {
-        GST_INFO_OBJECT (dlna_src,
-            "Specified start byte %" G_GUINT64_FORMAT
-            " is valid, valid range: %" G_GUINT64_FORMAT
-            " to %" G_GUINT64_FORMAT, start,
-            dlna_src->server_info->byte_seek_start,
-            dlna_src->server_info->byte_seek_end);
+
+        // Verify start byte is within range
+        if ((start < dlna_src->server_info->byte_seek_start) ||
+            (start > dlna_src->server_info->byte_seek_end)) {
+          GST_WARNING_OBJECT (dlna_src,
+              "Used byte range to verify specified start byte %"
+              G_GUINT64_FORMAT " is not valid, valid range: %" G_GUINT64_FORMAT
+              " to %" G_GUINT64_FORMAT, start,
+              dlna_src->server_info->byte_seek_start,
+              dlna_src->server_info->byte_seek_end);
+          return FALSE;
+        } else {
+          GST_INFO_OBJECT (dlna_src,
+              "Used byte range to verify specified start byte %"
+              G_GUINT64_FORMAT " is valid, valid range: %" G_GUINT64_FORMAT
+              " to %" G_GUINT64_FORMAT, start,
+              dlna_src->server_info->byte_seek_start,
+              dlna_src->server_info->byte_seek_end);
+        }
       }
     } else {
       // Can't use byte seek values because no time seek response was not received.
@@ -1327,15 +1371,15 @@ dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
       if ((!dlna_src->server_info->accept_byte_ranges) ||
           (start > dlna_src->server_info->content_length)) {
         GST_WARNING_OBJECT (dlna_src,
-            "Specified start byte %" G_GUINT64_FORMAT
-            " is not valid, valid range: 0 to %" G_GUINT64_FORMAT, start,
-            dlna_src->server_info->content_length);
+            "Used content length to verify specified start byte %"
+            G_GUINT64_FORMAT " is not valid, valid range: 0 to %"
+            G_GUINT64_FORMAT, start, dlna_src->server_info->content_length);
         return FALSE;
       } else {
         GST_INFO_OBJECT (dlna_src,
-            "Specified start byte %" G_GUINT64_FORMAT
-            " is valid, valid range: 0 to %" G_GUINT64_FORMAT, start,
-            dlna_src->server_info->content_length);
+            "Used content length to verify specified start byte %"
+            G_GUINT64_FORMAT " is valid, valid range: 0 to %" G_GUINT64_FORMAT,
+            start, dlna_src->server_info->content_length);
       }
     }
   } else if (format == GST_FORMAT_TIME) {
@@ -1352,11 +1396,8 @@ dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
       return FALSE;
     } else {
       GST_INFO_OBJECT (dlna_src,
-          "Specified start time %" GST_TIME_FORMAT
-          " is valid, valid range: %" GST_TIME_FORMAT
-          " to %" GST_TIME_FORMAT, GST_TIME_ARGS (start),
-          GST_TIME_ARGS (dlna_src->server_info->time_seek_npt_start),
-          GST_TIME_ARGS (dlna_src->server_info->time_seek_npt_end));
+          "Server doesn't support time seeks, assuming start time %"
+          GST_TIME_FORMAT " is valid", GST_TIME_ARGS (start));
     }
   } else {
     GST_WARNING_OBJECT (dlna_src, "Supplied format type is not supported: %d",
@@ -1790,16 +1831,16 @@ static gboolean
 dlna_src_init_uri (GstDlnaSrc * dlna_src, const gchar * value)
 {
   gchar *first_head_request_headers[1] = { HEADER_GET_CONTENT_FEATURES };
-  size_t first_head_request_headers_array_size = 1;
+  gsize first_head_request_headers_array_size = 1;
   gchar *time_seek_head_request_headers[1] = { HEADER_TIME_SEEK_RANGE };
-  size_t time_seek_head_request_headers_array_size = 1;
+  gsize time_seek_head_request_headers_array_size = 1;
   gchar *live_content_head_request_headers[1] =
       { HEADER_GET_AVAILABLE_SEEK_RANGE };
-  size_t live_content_head_request_headers_array_size = 1;
+  gsize live_content_head_request_headers_array_size = 1;
   gchar *range_head_request_headers[1] = { HEADER_RANGE_BYTES };
-  size_t range_head_request_headers_array_size = 1;
+  gsize range_head_request_headers_array_size = 1;
   gchar *dtcp_range_head_request_headers[1] = { HEADER_DTCP_RANGE_BYTES };
-  size_t dtcp_range_head_request_headers_array_size = 1;
+  gsize dtcp_range_head_request_headers_array_size = 1;
 
   // Set the uri in the src
   if (dlna_src->uri) {
@@ -1947,7 +1988,7 @@ dlna_src_head_response_free (GstDlnaSrc * dlna_src,
  */
 static gboolean
 dlna_src_head_request (GstDlnaSrc * dlna_src,
-    size_t headers_array_size, gchar * headers[],
+    gsize headers_array_size, gchar * headers[],
     GstDlnaSrcHeadResponse * head_response)
 {
   gchar head_request_str[MAX_HTTP_BUF_SIZE] = { 0 };
@@ -2170,13 +2211,13 @@ dlna_src_close_socket (GstDlnaSrc * dlna_src)
  */
 static gboolean
 dlna_src_head_request_formulate (GstDlnaSrc * dlna_src,
-    gchar * head_request_str, size_t head_request_max_size, gint headers_cnt,
+    gchar * head_request_str, gsize head_request_max_size, gint headers_cnt,
     gchar * headers[])
 {
   GST_LOG_OBJECT (dlna_src, "Formulating head request");
 
   gchar tmpStr[32] = { 0 };
-  size_t tmp_str_max_size = 32;
+  gsize tmp_str_max_size = 32;
   int i;
 
   g_strlcpy (head_request_str, "HEAD ", head_request_max_size);
@@ -3394,12 +3435,12 @@ dlna_src_head_response_is_flag_set (GstDlnaSrc * dlna_src, gchar * flags_str,
 static gboolean
 dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, gchar * struct_str,
-    size_t struct_str_max_size)
+    gsize struct_str_max_size)
 {
   GST_DEBUG_OBJECT (dlna_src, "Formatting HEAD Response struct");
 
   gchar tmpStr[32] = { 0 };
-  size_t tmp_str_max_size = 32;
+  gsize tmp_str_max_size = 32;
 
   g_strlcpy (struct_str, "\nHTTP Version: ", struct_str_max_size);
   if (head_response->http_rev != NULL)
@@ -3908,7 +3949,7 @@ dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
   gint head_request_max_size = MAX_HTTP_BUF_SIZE;
   gchar *headers[1] = { head_request_str };
   gchar tmpStr[32] = { 0 };
-  size_t tmp_str_max_size = 32;
+  gsize tmp_str_max_size = 32;
 
   // Convert start time from nanos into secs string
   guint64 npt_secs = npt_nanos / GST_SECOND;
@@ -3952,7 +3993,7 @@ dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
 
 overflow:
   GST_ERROR_OBJECT (dlna_src,
-      "Overflow - exceeded head request string size of: %" G_GSIZE_FORMAT,
+      "Overflow - exceeded head request string size of: %d",
       head_request_max_size);
   return FALSE;
 }
