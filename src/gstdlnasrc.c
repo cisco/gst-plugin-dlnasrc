@@ -667,7 +667,7 @@ gst_dlna_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
 
     case GST_QUERY_FORMATS:
       GST_INFO_OBJECT (dlna_src, "format query");
-      gst_query_set_formats (query, 3, GST_FORMAT_BYTES, GST_FORMAT_TIME);
+      gst_query_set_formats (query, 2, GST_FORMAT_BYTES, GST_FORMAT_TIME);
       ret = TRUE;
       break;
 
