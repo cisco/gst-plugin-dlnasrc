@@ -63,9 +63,6 @@ struct _GstDlnaSrc
 
     GstPad* src_pad;
 
-    GstElement* pipeline;
-    GstBus* bus;
-
     // Name used to identify this element as source in playsrc2 logging
     gchar* cl_name;
 
@@ -85,22 +82,30 @@ struct _GstDlnaSrc
     // Current playback rate
     gfloat rate;
 
-    // Requested change info
-    gboolean requested_change;
-
     gfloat requested_rate;
     GstFormat requested_format;
     guint64 requested_start;
     guint64 requested_stop;
 
-    gboolean event_received;
-    GMutex event_mutex;
-    GCond event_cond;
-    gulong event_probe;
-
     guint32 time_seek_seqnum;
     guint64 time_seek_event_start;
     gboolean handled_time_seek_seqnum;
+
+    gboolean is_live;
+    gboolean is_encrypted;
+
+    gboolean byte_seek_supported;
+    guint64 byte_start;
+    guint64 byte_end;
+    guint64 byte_total;
+
+    gboolean time_seek_supported;
+    gchar*  npt_start_str;
+    gchar*  npt_end_str;
+    gchar* npt_duration_str;
+    guint64 npt_start_nanos;
+    guint64 npt_end_nanos;
+    guint64 npt_duration_nanos;
 };
 
 struct _GstDlnaSrcHeadResponse
@@ -121,12 +126,13 @@ struct _GstDlnaSrcHeadResponse
     gint accept_ranges_idx;
     gboolean accept_byte_ranges;
 
-    gchar* content_range;
+    guint64 content_range_start;
+    guint64 content_range_end;
+    guint64 content_range_total;
     gint content_range_idx;
 
     gint time_seek_idx;
 
-    gboolean time_seek_response_received;
     gchar* time_seek_npt_start_str;
     gchar* time_seek_npt_end_str;
     gchar* time_seek_npt_duration_str;
@@ -135,9 +141,9 @@ struct _GstDlnaSrcHeadResponse
     guint64 time_seek_npt_duration;
     gint npt_seek_idx;
 
-    guint64 byte_seek_start;
-    guint64 byte_seek_end;
-    guint64 byte_seek_total;
+    guint64 time_byte_seek_start;
+    guint64 time_byte_seek_end;
+    guint64 time_byte_seek_total;
     gint byte_seek_idx;
 
     gint clear_text_idx;
@@ -148,6 +154,14 @@ struct _GstDlnaSrcHeadResponse
     gint dtcp_range_idx;
 
     gint available_range_idx;
+    gchar* available_seek_npt_start_str;
+    gchar* available_seek_npt_end_str;
+    guint64 available_seek_npt_start;
+    guint64 available_seek_npt_end;
+    guint64 available_seek_start;
+    guint64 available_seek_end;
+    guint64 available_seek_cleartext_start;
+    guint64 available_seek_cleartext_end;
 
     gchar* transfer_mode;
     gint transfer_mode_idx;
