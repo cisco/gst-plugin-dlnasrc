@@ -667,8 +667,7 @@ gst_dlna_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
 
     case GST_QUERY_FORMATS:
       GST_INFO_OBJECT (dlna_src, "format query");
-      gst_query_set_formats (query, 3, GST_FORMAT_DEFAULT,
-          GST_FORMAT_BYTES, GST_FORMAT_TIME);
+      gst_query_set_formats (query, 3, GST_FORMAT_BYTES, GST_FORMAT_TIME);
       ret = TRUE;
       break;
 
@@ -721,7 +720,7 @@ dlna_src_handle_query_duration (GstDlnaSrc * dlna_src, GstQuery * query)
   // Parse query to see what format was requested
   gst_query_parse_duration (query, &format, &duration);
 
-  if (format == GST_FORMAT_BYTES || format == GST_FORMAT_DEFAULT) {
+  if (format == GST_FORMAT_BYTES) {
     if (dlna_src->byte_total) {
       gst_query_set_duration (query, GST_FORMAT_BYTES, dlna_src->byte_total);
       ret = TRUE;
@@ -782,7 +781,7 @@ dlna_src_handle_query_seeking (GstDlnaSrc * dlna_src, GstQuery * query)
   gst_query_parse_seeking (query, &format, &supports_seeking, &seek_start,
       &seek_end);
 
-  if (format == GST_FORMAT_BYTES || format == GST_FORMAT_DEFAULT) {
+  if (format == GST_FORMAT_BYTES) {
     if (dlna_src->byte_seek_supported) {
       // Set results of query but don't do actual seek
       gst_query_set_seeking (query, GST_FORMAT_BYTES, TRUE,
@@ -1762,32 +1761,6 @@ dlna_src_assign_content_info (GstDlnaSrc * dlna_src)
           "Content is encrypted since link protected flag is set");
     }
 
-    if (dlna_src->server_info->time_byte_seek_total) {
-      dlna_src->byte_start = dlna_src->server_info->time_byte_seek_start;
-      dlna_src->byte_end = dlna_src->server_info->time_byte_seek_end;
-      dlna_src->byte_total = dlna_src->server_info->time_byte_seek_total;
-      GST_INFO_OBJECT (dlna_src,
-          "Byte range values coming from TimeSeekRange.dlna.org");
-    }
-
-    if (dlna_src->server_info->available_seek_end) {
-      dlna_src->byte_start = dlna_src->server_info->available_seek_start;
-      dlna_src->byte_end = dlna_src->server_info->available_seek_end;
-      dlna_src->byte_total =
-          dlna_src->server_info->available_seek_end -
-          dlna_src->server_info->available_seek_start;
-      GST_INFO_OBJECT (dlna_src,
-          "Byte range values coming from availableSeekRange.dlna.org");
-    }
-
-    if (dlna_src->server_info->dtcp_range_total) {
-      dlna_src->byte_start = dlna_src->server_info->dtcp_range_start;
-      dlna_src->byte_end = dlna_src->server_info->dtcp_range_end;
-      dlna_src->byte_total = dlna_src->server_info->dtcp_range_total;
-      GST_INFO_OBJECT (dlna_src,
-          "Byte range values coming from Content-Range.dtcp.com");
-    }
-
     if (dlna_src->server_info->available_seek_cleartext_end) {
       dlna_src->byte_start =
           dlna_src->server_info->available_seek_cleartext_start;
@@ -1797,6 +1770,26 @@ dlna_src_assign_content_info (GstDlnaSrc * dlna_src)
           dlna_src->server_info->available_seek_cleartext_start;
       GST_INFO_OBJECT (dlna_src,
           "Byte range values coming from cleartext availableSeekRange.dlna.org");
+    } else if (dlna_src->server_info->available_seek_end) {
+      dlna_src->byte_start = dlna_src->server_info->available_seek_start;
+      dlna_src->byte_end = dlna_src->server_info->available_seek_end;
+      dlna_src->byte_total =
+          dlna_src->server_info->available_seek_end -
+          dlna_src->server_info->available_seek_start;
+      GST_INFO_OBJECT (dlna_src,
+          "Byte range values coming from availableSeekRange.dlna.org");
+    } else if (dlna_src->server_info->dtcp_range_total) {
+      dlna_src->byte_start = dlna_src->server_info->dtcp_range_start;
+      dlna_src->byte_end = dlna_src->server_info->dtcp_range_end;
+      dlna_src->byte_total = dlna_src->server_info->dtcp_range_total;
+      GST_INFO_OBJECT (dlna_src,
+          "Byte range values coming from Content-Range.dtcp.com");
+    } else if (dlna_src->server_info->time_byte_seek_total) {
+      dlna_src->byte_start = dlna_src->server_info->time_byte_seek_start;
+      dlna_src->byte_end = dlna_src->server_info->time_byte_seek_end;
+      dlna_src->byte_total = dlna_src->server_info->time_byte_seek_total;
+      GST_INFO_OBJECT (dlna_src,
+          "Byte range values coming from TimeSeekRange.dlna.org");
     }
 
     if (dlna_src->server_info->available_seek_npt_start_str) {
@@ -1815,9 +1808,7 @@ dlna_src_assign_content_info (GstDlnaSrc * dlna_src)
           dlna_src->server_info->available_seek_npt_start;
       GST_INFO_OBJECT (dlna_src,
           "Time seek range values coming from availableSeekRange.dlna.org");
-    }
-
-    if (dlna_src->server_info->time_seek_npt_start_str) {
+    } else if (dlna_src->server_info->time_seek_npt_start_str) {
       dlna_src->npt_start_nanos = dlna_src->server_info->time_seek_npt_start;
       dlna_src->npt_start_str =
           g_strdup (dlna_src->server_info->time_seek_npt_start_str);
@@ -1830,23 +1821,25 @@ dlna_src_assign_content_info (GstDlnaSrc * dlna_src)
           g_strdup (dlna_src->server_info->time_seek_npt_duration_str);
       GST_INFO_OBJECT (dlna_src,
           "Time seek range values coming from TimeSeekRange.dlna.org");
-    }
+    } else
+      GST_INFO_OBJECT (dlna_src, "Time seek range values not available");
   }
 
-  if (!dlna_src->byte_total && dlna_src->server_info->content_range_total) {
-    dlna_src->byte_start = dlna_src->server_info->content_range_start;
-    dlna_src->byte_end = dlna_src->server_info->content_range_end;
-    dlna_src->byte_total = dlna_src->server_info->content_range_total;
-    GST_INFO_OBJECT (dlna_src,
-        "Byte range values coming from Content-Range header");
-  }
-
-  if (!dlna_src->byte_total && dlna_src->server_info->content_length) {
-    dlna_src->byte_start = 0;
-    dlna_src->byte_end = dlna_src->server_info->content_length;
-    dlna_src->byte_total = dlna_src->server_info->content_length;
-    GST_INFO_OBJECT (dlna_src,
-        "Byte range values coming from content length, assuming start & stop");
+  if (!dlna_src->byte_total) {
+    if (dlna_src->server_info->content_range_total) {
+      dlna_src->byte_start = dlna_src->server_info->content_range_start;
+      dlna_src->byte_end = dlna_src->server_info->content_range_end;
+      dlna_src->byte_total = dlna_src->server_info->content_range_total;
+      GST_INFO_OBJECT (dlna_src,
+          "Byte range values coming from Content-Range header");
+    } else if (dlna_src->server_info->content_length) {
+      dlna_src->byte_start = 0;
+      dlna_src->byte_end = dlna_src->server_info->content_length;
+      dlna_src->byte_total = dlna_src->server_info->content_length;
+      GST_INFO_OBJECT (dlna_src,
+          "Byte range values coming from content length, assuming start & stop");
+    } else
+      GST_INFO_OBJECT (dlna_src, "Byte seek range values not available");
   }
 
   if (dlna_src->server_info->content_features->op_time_seek_supported ||
