@@ -342,7 +342,8 @@ static gboolean dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
 static gboolean dlna_src_is_rate_supported (GstDlnaSrc * dlna_src, gfloat rate);
 
 static gboolean dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src,
-    gfloat rate, GstFormat format, guint64 start, guint32 new_seqnum);
+    gfloat rate, GstFormat format, guint64 start, guint64 stop,
+    guint32 new_seqnum);
 
 static gboolean dlna_src_npt_to_nanos (GstDlnaSrc * dlna_src, gchar * string,
     guint64 * media_time_nanos);
@@ -1055,15 +1056,23 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
   dlna_src->requested_rate = rate;
   dlna_src->requested_format = format;
   dlna_src->requested_start = start;
-  dlna_src->requested_stop = stop;
+  dlna_src->requested_stop = GST_CLOCK_TIME_NONE;
+  if (stop > -1)
+    dlna_src->requested_stop = stop;
 
+  if (dlna_src->is_live && stop < 0) {
+    dlna_src->requested_stop = dlna_src->npt_end_nanos;
+    GST_INFO_OBJECT (dlna_src,
+        "Set requested stop to end of range since content is live: %"
+        G_GUINT64_FORMAT, dlna_src->requested_stop);
+  }
   // Make sure info is available for soup http src header adjustments
   if ((dlna_src->uri) && (dlna_src->server_info) &&
       (dlna_src->server_info->content_features != NULL)) {
     // Adjust headers for http src so change can be requested
     if (!dlna_src_adjust_http_src_headers (dlna_src, dlna_src->requested_rate,
             dlna_src->requested_format, dlna_src->requested_start,
-            new_seqnum)) {
+            dlna_src->requested_stop, new_seqnum)) {
       GST_ERROR_OBJECT (dlna_src, "Problems adjusting soup http src headers");
       // Returning true to prevent further processing
       return TRUE;
@@ -1222,12 +1231,13 @@ dlna_src_is_rate_supported (GstDlnaSrc * dlna_src, gfloat rate)
  * @param	rate		requested rate to include in playspeed header
  * @param	format		create either time or byte based seek header
  * @param	start		starting position to include, will be either bytes or time depending on format
+ * @param   stop        stopping position to include, will be -1 if unspecified
  *
  * @return	true if extra headers were successfully created, false otherwise
  */
 static gboolean
 dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
-    GstFormat format, guint64 start, guint32 new_seqnum)
+    GstFormat format, guint64 start, guint64 stop, guint32 new_seqnum)
 {
   GValue struct_value = G_VALUE_INIT;
   GstStructure *extra_headers_struct;
@@ -1243,6 +1253,8 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
   gchar time_seek_range_field_value[64] = { 0 };
   guint64 start_time_nanos;
   guint64 start_time_secs;
+  guint64 stop_time_nanos = GST_CLOCK_TIME_NONE;
+  guint64 stop_time_secs;
 
   const gchar *range_dtcp_field_name = "Range.dtcp.com";
   const gchar *range_dtcp_field_value_prefix = "bytes=";
@@ -1254,8 +1266,6 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
   g_value_set_boolean (&boolean_value, FALSE);
   g_object_set_property (G_OBJECT (dlna_src->http_src), "exclude-range-header",
       &boolean_value);
-
-  GST_DEBUG_OBJECT (dlna_src, "called");
 
   // Create header structure with dlna transfer mode header
   extra_headers_struct = gst_structure_new ("extraHeadersStruct",
@@ -1291,29 +1301,58 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
         "Adjust headers by including playspeed header value: %s",
         playspeed_field_value);
   }
-
+  // Add time seek header for all non 1x rates or for time based seeks
   if (rate != 1.0 || (format == GST_FORMAT_TIME
           && dlna_src->time_seek_supported)) {
-    // Add time seek range header, convert bytes to time if necessary
     if (format != GST_FORMAT_TIME) {
-      // Convert starting bytes to starting time
       if (!dlna_src_convert_bytes_to_npt_nanos (dlna_src, start,
               &start_time_nanos)) {
         GST_WARNING_OBJECT (dlna_src,
-            "Problems converting %" G_GUINT64_FORMAT " to npt ", start);
+            "Problems converting start %" G_GUINT64_FORMAT " to npt ", start);
         return FALSE;
-      }
-    } else
-      start_time_nanos = start;
+      } else
+        GST_INFO_OBJECT (dlna_src,
+            "Due to non 1x playspeed, converted start %" G_GUINT64_FORMAT
+            " bytes into time %" G_GUINT64_FORMAT, start, start_time_nanos);
 
-    // Convert start time from nanos into secs string
+      if (stop > GST_CLOCK_TIME_NONE) {
+        if (!dlna_src_convert_bytes_to_npt_nanos (dlna_src, stop,
+                &stop_time_nanos)) {
+          GST_WARNING_OBJECT (dlna_src,
+              "Problems converting stop %" G_GUINT64_FORMAT " to npt ", stop);
+          return FALSE;
+        } else
+          GST_INFO_OBJECT (dlna_src,
+              "Due to non 1x playspeed, converted stop %" G_GUINT64_FORMAT
+              " bytes into time %" G_GUINT64_FORMAT, start, start_time_nanos);
+      } else
+        GST_INFO_OBJECT (dlna_src, "Stop undefined, no conversion needed");
+    } else {
+      // Already in time format
+      start_time_nanos = start;
+      stop_time_nanos = stop;
+      GST_INFO_OBJECT (dlna_src,
+          "Using start %" G_GUINT64_FORMAT " and stop %" G_GUINT64_FORMAT,
+          start_time_nanos, stop_time_nanos);
+    }
+
+    // Convert times from nanos into secs string
     start_time_secs = start_time_nanos / GST_SECOND;
 
-    // Include TimeSeekRange header with starting time
-    g_snprintf (time_seek_range_field_value, 64,
-        "%s%" G_GUINT64_FORMAT ".0-", time_seek_range_field_value_prefix,
-        start_time_secs);
-
+    if (stop_time_nanos == GST_CLOCK_TIME_NONE) {
+      GST_INFO_OBJECT (dlna_src,
+          "Stop time is undefined, just including start time");
+      g_snprintf (time_seek_range_field_value, 64,
+          "%s%" G_GUINT64_FORMAT ".0-", time_seek_range_field_value_prefix,
+          start_time_secs);
+    } else {
+      stop_time_secs = stop_time_nanos / GST_SECOND;
+      GST_INFO_OBJECT (dlna_src, "Including stop secs: %" G_GUINT64_FORMAT,
+          stop_time_secs);
+      g_snprintf (time_seek_range_field_value, 64,
+          "%s%" G_GUINT64_FORMAT ".0-%" G_GUINT64_FORMAT ".0",
+          time_seek_range_field_value_prefix, start_time_secs, stop_time_secs);
+    }
     // Add header to structure
     gst_structure_set (extra_headers_struct, time_seek_range_field_name,
         G_TYPE_STRING, &time_seek_range_field_value, NULL);
