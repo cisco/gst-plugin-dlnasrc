@@ -21,9 +21,9 @@ plugin_LTLIBRARIES = src/libgstdlnasrc.la
 src_libgstdlnasrc_la_SOURCES = src/gstdlnasrc.c src/gstdlnasrc.h 
 
 # compiler and linker flags used to compile this plugin, set in configure.ac
-src_libgstdlnasrc_la_CFLAGS = $(GST_CFLAGS)
+src_libgstdlnasrc_la_CFLAGS = $(GST_CFLAGS) $(SOUP_CFLAGS)
 src_libgstdlnasrc_la_CXXFLAGS = $(GST_CFLAGS)
-src_libgstdlnasrc_la_LIBADD = $(GST_LIBS)
+src_libgstdlnasrc_la_LIBADD = $(GST_LIBS) $(SOUP_LIBS)
 src_libgstdlnasrc_la_LDFLAGS = $(GST_PLUGIN_LDFLAGS)
 src_libgstdlnasrc_la_LIBTOOLFLAGS = --tag=disable-static
 
