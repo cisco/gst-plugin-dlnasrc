@@ -72,6 +72,9 @@ struct _GstDlnaSrc
     // Stream info
     gchar *uri;
 
+    SoupSession *soup_session;
+    SoupMessage *soup_msg;
+
     // Socket params used to issue HEAD request
     gchar *uri_addr;
     guint uri_port;
@@ -91,6 +94,7 @@ struct _GstDlnaSrc
     guint64 time_seek_event_start;
     gboolean handled_time_seek_seqnum;
 
+    gboolean is_uri_initialized;
     gboolean is_live;
     gboolean is_encrypted;
 
@@ -113,7 +117,7 @@ struct _GstDlnaSrcHeadResponse
     gchar* http_rev;
     gint http_rev_idx;
 
-    gint ret_code;
+    guint ret_code;
     gint ret_code_idx;
 
     gchar* ret_msg;
