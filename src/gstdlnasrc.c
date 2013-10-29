@@ -3227,7 +3227,7 @@ dlna_src_head_response_is_flag_set (GstDlnaSrc * dlna_src,
   tmp_str[len - RESERVED_FLAGS_LENGTH] = '\0';
 
   // Convert into long using hexidecimal format
-  gint64 value = strtol (tmp_str, NULL, 16);
+  gint64 value = strtoll (tmp_str, NULL, 16);
 
   g_free (tmp_str);
 
