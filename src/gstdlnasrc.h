@@ -67,6 +67,7 @@ struct _GstDlnaSrc
     gchar* cl_name;
 
     // DTCP Key Storage
+    guint dtcp_blocksize;
     gchar* dtcp_key_storage;
 
     // Stream info
