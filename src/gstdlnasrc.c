@@ -45,10 +45,12 @@ enum
   PROP_URI,
   PROP_CL_NAME,
   PROP_SUPPORTED_RATES,
+  PROP_DTCP_BLOCKSIZE,
   //...
 };
 
 #define DLNA_SRC_CL_NAME "dlnasrc"
+#define DEFAULT_DTCP_BLOCKSIZE       524288
 
 // Constant names for elements in this src
 #define ELEMENT_NAME_SOUP_HTTP_SRC "soup-http-source"
@@ -131,7 +133,6 @@ static const gchar *CONTENT_FEATURES_HEADERS[] = {
 // Subfield headers with CONTENT-TYPE
 static const gchar *CONTENT_TYPE_HEADERS[] = {
   "DTCP1HOST",                  // 0
-
   "DTCP1PORT",                  // 1
   "CONTENTFORMAT",              // 2
   "APPLICATION/X-DTCP1"         // 3
@@ -424,6 +425,11 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
           "List of supported playspeed rates of DLNA server content",
           G_TYPE_ARRAY, G_PARAM_READABLE));
 
+  g_object_class_install_property (gobject_klass, PROP_DTCP_BLOCKSIZE,
+      g_param_spec_uint ("dtcp_blocksize", "DTCP Block size",
+          "Size in bytes to read per buffer when content is dtcp encrypted (-1 = default)",
+          0, G_MAXUINT, DEFAULT_DTCP_BLOCKSIZE, G_PARAM_READWRITE));
+
   gobject_klass->dispose = GST_DEBUG_FUNCPTR (gst_dlna_src_dispose);
   gstelement_klass->change_state = gst_dlna_src_change_state;
 }
@@ -440,6 +446,7 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
   GST_DEBUG_OBJECT (dlna_src, "Initializing");
 
   dlna_src->cl_name = g_strdup (DLNA_SRC_CL_NAME);
+  dlna_src->dtcp_blocksize = DEFAULT_DTCP_BLOCKSIZE;
 
   dlna_src->is_uri_initialized = FALSE;
   dlna_src->is_live = FALSE;
@@ -513,6 +520,11 @@ gst_dlna_src_set_property (GObject * object, guint prop_id,
       }
       break;
     }
+    case PROP_DTCP_BLOCKSIZE:
+      dlna_src->dtcp_blocksize = g_value_get_uint (value);
+      GST_INFO_OBJECT (dlna_src, "Set DTCP blocksize: %d",
+          dlna_src->dtcp_blocksize);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -585,6 +597,10 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
         g_value_init (value, G_TYPE_ARRAY);
         g_value_take_boxed (value, garray);
       }
+      break;
+
+    case PROP_DTCP_BLOCKSIZE:
+      g_value_set_uint (value, dlna_src->dtcp_blocksize);
       break;
 
     default:
@@ -1688,6 +1704,10 @@ dlna_src_setup_dtcp (GstDlnaSrc * dlna_src)
   gst_pad_set_query_function (dlna_src->src_pad,
       (GstPadQueryFunction) gst_dlna_src_query);
 
+  // Setup the block size for dtcp
+  g_object_set (dlna_src->http_src, "blocksize", dlna_src->dtcp_blocksize,
+      NULL);
+
   return TRUE;
 }
 
@@ -1731,6 +1751,10 @@ dlna_src_uri_gather_info (GstDlnaSrc * dlna_src)
 
   GST_LOG_OBJECT (dlna_src, "Called");
 
+  if (!dlna_src->uri) {
+    GST_DEBUG_OBJECT (dlna_src, "No URI set yet");
+    return TRUE;
+  }
   // Make sure a soup session is open
   if (!dlna_src_soup_session_open (dlna_src)) {
     GST_ERROR_OBJECT (dlna_src,
@@ -2084,11 +2108,6 @@ dlna_src_soup_session_open (GstDlnaSrc * dlna_src)
   if (dlna_src->soup_session) {
     GST_DEBUG_OBJECT (dlna_src, "Session is already open");
     return TRUE;
-  }
-
-  if (!dlna_src->uri) {
-    GST_ERROR_OBJECT (dlna_src, "No URI");
-    return FALSE;
   }
   // *TODO* - dlnasrc issue #94 - Old version (need to upgrade to Libsoup 2.44)
   // Creating sync version since need to wait for HEAD responses
