@@ -223,6 +223,9 @@ struct _GstDlnaSrcHeadResponseContentFeatures
     gboolean flag_link_protected_set;
     gboolean flag_full_clear_text_set;
     gboolean flag_limited_clear_text_set;
+
+    gint  conversion_idx;
+    gboolean is_converted;
 };
 
 struct _GstDlnaSrcClass

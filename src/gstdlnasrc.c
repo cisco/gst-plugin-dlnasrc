@@ -123,12 +123,14 @@ static const gchar *CONTENT_FEATURES_HEADERS[] = {
   "DLNA.ORG_OP",                // 1
   "DLNA.ORG_PS",                // 2
   "DLNA.ORG_FLAGS",             // 3
+  "DLNA.ORG_CI",                // 4
 };
 
 #define HEADER_INDEX_PN 0
 #define HEADER_INDEX_OP 1
 #define HEADER_INDEX_PS 2
 #define HEADER_INDEX_FLAGS 3
+#define HEADER_INDEX_CI 4
 
 // Subfield headers with CONTENT-TYPE
 static const gchar *CONTENT_TYPE_HEADERS[] = {
@@ -280,6 +282,10 @@ static gboolean dlna_src_head_response_parse_playspeeds (GstDlnaSrc *
     const gchar * field_str);
 
 static gboolean dlna_src_head_response_parse_flags (GstDlnaSrc * dlna_src,
+    GstDlnaSrcHeadResponse * head_response, gint idx, const gchar * field_str);
+
+static gboolean
+dlna_src_head_response_parse_conversion_indicator (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, gint idx, const gchar * field_str);
 
 static gboolean dlna_src_head_response_parse_content_type (GstDlnaSrc *
@@ -2351,6 +2357,11 @@ dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src,
   head_response->content_features->flag_full_clear_text_set = FALSE;
   head_response->content_features->flag_limited_clear_text_set = FALSE;
 
+  // {"DLNA.ORG_PN", STRING_TYPE}
+  head_response->content_features->conversion_idx = HEADER_INDEX_CI;
+  head_response->content_features->is_converted = FALSE;
+
+
   *head_response_ptr = head_response;
   return TRUE;
 }
@@ -2809,10 +2820,12 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
   //"DLNA.ORG_OP"
   //"DLNA.ORG_PS"
   //"DLNA.ORG_FLAGS"
+  //"DLNA.ORG_CI"
   gchar *pn_str = NULL;
   gchar *op_str = NULL;
   gchar *ps_str = NULL;
   gchar *flags_str = NULL;
+  gchar *ci_str = NULL;
   gchar **tokens = NULL;
   gchar *tmp_str = NULL;
 
@@ -2853,6 +2866,14 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
         GST_LOG_OBJECT (dlna_src, "Found field: %s",
             CONTENT_FEATURES_HEADERS[HEADER_INDEX_FLAGS]);
         flags_str = *ptr;
+      }
+      // "DLNA.ORG_CI"
+      else if ((tmp_str =
+              strstr (g_ascii_strup (*ptr, strlen (*ptr)),
+                  CONTENT_FEATURES_HEADERS[HEADER_INDEX_CI])) != NULL) {
+        GST_LOG_OBJECT (dlna_src, "Found field: %s",
+            CONTENT_FEATURES_HEADERS[HEADER_INDEX_CI]);
+        ci_str = *ptr;
       } else {
         GST_WARNING_OBJECT (dlna_src, "Unrecognized sub field:%s", *ptr);
       }
@@ -2885,6 +2906,13 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
             flags_str)) {
       GST_WARNING_OBJECT (dlna_src, "Problems parsing flags sub field: %s",
           flags_str);
+    }
+  }
+  if (ci_str != NULL) {
+    if (!dlna_src_head_response_parse_conversion_indicator (dlna_src,
+            head_response, idx, ci_str)) {
+      GST_WARNING_OBJECT (dlna_src,
+          "Problems parsing conversion indicator sub field: %s", ci_str);
     }
   }
   g_strfreev (tokens);
@@ -3122,6 +3150,40 @@ dlna_src_head_response_parse_flags (GstDlnaSrc * dlna_src,
         CLEARTEXTBYTESEEK_FULL_FLAG);
     head_response->content_features->flag_limited_clear_text_set =
         dlna_src_head_response_is_flag_set (dlna_src, tmp2, LOP_CLEARTEXTBYTES);
+  }
+
+  return TRUE;
+}
+
+/**
+ * Parse DLNA conversion indicator sub field identified by DLNA.ORG_CI header.
+ *
+ * @param   dlna_src    this element
+ * @param   idx         index into array of header strings
+ * @param   field_str   sub field string containing DLNA.ORG_CI field
+ *
+ * @return  TRUE
+ */
+static gboolean
+dlna_src_head_response_parse_conversion_indicator (GstDlnaSrc * dlna_src,
+    GstDlnaSrcHeadResponse * head_response, gint idx, const gchar * field_str)
+{
+  GST_LOG_OBJECT (dlna_src, "Found CI Field: %s", field_str);
+  gint ret_code = 0;
+
+  gchar tmp1[256] = { 0 };
+  gchar tmp2[256] = { 0 };
+
+  if ((ret_code = sscanf (field_str, "%255[^=]=%s", tmp1, tmp2)) != 2) {
+    GST_WARNING_OBJECT (dlna_src,
+        "Problems parsing DLNA.ORG_CI from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s",
+        HEAD_RESPONSE_HEADERS[idx], field_str, ret_code, tmp1, tmp2);
+  } else {
+    if (tmp2[0] == '1') {
+      head_response->content_features->is_converted = TRUE;
+    } else {
+      head_response->content_features->is_converted = FALSE;
+    }
   }
 
   return TRUE;
@@ -3420,6 +3482,9 @@ dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
         head_response->content_features->playspeed_strs[i]);
   }
   struct_str = g_string_append (struct_str, "\n");
+
+  dlna_src_struct_append_header_value_bool (struct_str,
+      "Conversion Indicator?: ", head_response->content_features->is_converted);
 
   dlna_src_struct_append_header_value_bool (struct_str,
       "Time Seek Supported Flag?: ",
