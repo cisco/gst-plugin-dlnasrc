@@ -3171,15 +3171,15 @@ dlna_src_head_response_parse_conversion_indicator (GstDlnaSrc * dlna_src,
   GST_LOG_OBJECT (dlna_src, "Found CI Field: %s", field_str);
   gint ret_code = 0;
 
-  gchar tmp1[256] = { 0 };
-  gchar tmp2[256] = { 0 };
+  gchar header[256] = { 0 };
+  gchar value[256] = { 0 };
 
-  if ((ret_code = sscanf (field_str, "%255[^=]=%s", tmp1, tmp2)) != 2) {
+  if ((ret_code = sscanf (field_str, "%255[^=]=%s", header, value)) != 2) {
     GST_WARNING_OBJECT (dlna_src,
         "Problems parsing DLNA.ORG_CI from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s",
-        HEAD_RESPONSE_HEADERS[idx], field_str, ret_code, tmp1, tmp2);
+        HEAD_RESPONSE_HEADERS[idx], field_str, ret_code, header, value);
   } else {
-    if (tmp2[0] == '1') {
+    if (value[0] == '1') {
       head_response->content_features->is_converted = TRUE;
     } else {
       head_response->content_features->is_converted = FALSE;
