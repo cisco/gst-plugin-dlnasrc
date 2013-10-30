@@ -2357,7 +2357,7 @@ dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src,
   head_response->content_features->flag_full_clear_text_set = FALSE;
   head_response->content_features->flag_limited_clear_text_set = FALSE;
 
-  // {"DLNA.ORG_PN", STRING_TYPE}
+  // {"DLNA.ORG_CI", FLAG_TYPE}
   head_response->content_features->conversion_idx = HEADER_INDEX_CI;
   head_response->content_features->is_converted = FALSE;
 
