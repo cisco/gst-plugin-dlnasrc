@@ -2158,7 +2158,7 @@ dlna_src_soup_log_msg (GstDlnaSrc * dlna_src)
     log_str = g_string_append (log_str, "REQUEST HEADERS:\n");
     soup_message_headers_iter_init (&iter, dlna_src->soup_msg->request_headers);
     while (soup_message_headers_iter_next (&iter, &header_name, &header_value))
-      g_string_append_printf (log_str, "%s: %s", header_name, header_value);
+      g_string_append_printf (log_str, "%s: %s\n", header_name, header_value);
 
     g_string_append_printf (log_str, "RESPONSE: HTTP/1.%d %d %s\n",
         soup_message_get_http_version (dlna_src->soup_msg),
