@@ -30,6 +30,7 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include <stdio.h>
 #include <gst/gst.h>
@@ -363,6 +364,10 @@ dlna_src_convert_bytes_to_npt_nanos (GstDlnaSrc * dlna_src, guint64 bytes,
 static gboolean
 dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
     guint64 * bytes);
+
+static void
+dlna_src_nanos_to_npt (GstDlnaSrc * dlna_src, guint64 npt_nanos,
+    GString * npt_str);
 
 #define gst_dlna_src_parent_class parent_class
 
@@ -1912,6 +1917,7 @@ dlna_src_update_overall_info (GstDlnaSrc * dlna_src,
 
   guint64 content_size;
   gchar *souphttpsrc_location = NULL;
+  GString *npt_str = g_string_sized_new (32);
 
   if (!head_response) {
     GST_WARNING_OBJECT (dlna_src,
@@ -1971,12 +1977,11 @@ dlna_src_update_overall_info (GstDlnaSrc * dlna_src,
       dlna_src->npt_end_str =
           g_strdup (head_response->available_seek_npt_end_str);
       dlna_src->npt_end_nanos = head_response->available_seek_npt_end;
-      // *TODO* - dlnasrc #51 - use npt utilities - figure out how to get formatted time string given nanos
-      dlna_src->npt_duration_str =
-          g_strdup (head_response->available_seek_npt_end_str);
       dlna_src->npt_duration_nanos =
           head_response->available_seek_npt_end -
           head_response->available_seek_npt_start;
+      dlna_src_nanos_to_npt (dlna_src, dlna_src->npt_duration_nanos, npt_str);
+      dlna_src->npt_duration_str = g_strdup (npt_str->str);
       GST_INFO_OBJECT (dlna_src,
           "Time seek range values coming from availableSeekRange.dlna.org");
     } else if (head_response->time_seek_npt_start_str) {
@@ -2230,10 +2235,9 @@ dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src,
   GST_LOG_OBJECT (dlna_src, "Called");
 
   // Allocate storage
-  GstDlnaSrcHeadResponse *head_response =
-      g_try_malloc0 (sizeof (GstDlnaSrcHeadResponse));
+  GstDlnaSrcHeadResponse *head_response = g_slice_new (GstDlnaSrcHeadResponse);
   head_response->content_features =
-      g_try_malloc0 (sizeof (GstDlnaSrcHeadResponseContentFeatures));
+      g_slice_new (GstDlnaSrcHeadResponseContentFeatures);
 
   // Initialize structs
   // {"HTTP", STRING_TYPE}
@@ -3255,20 +3259,19 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
                 strstr (g_ascii_strup (*ptr, strlen (*ptr)),
                     CONTENT_TYPE_HEADERS[HEADER_INDEX_CONTENT_FORMAT])) !=
             NULL) {
-          if ((ret_code =
-                  sscanf (tmp_str, "%31[^=]=\"%31[^\"]%31s", tmp1, tmp2,
-                      tmp3)) != 3) {
+
+          if ((ret_code = sscanf (tmp_str, "%31[^=]=%31s", tmp1, tmp2)) != 2) {
             GST_WARNING_OBJECT (dlna_src,
                 "Problems parsing DTCP CONTENT FORMAT from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s, %s",
                 HEAD_RESPONSE_HEADERS[idx], tmp_str, ret_code, tmp1, tmp2,
                 tmp3);
           } else {
             GST_LOG_OBJECT (dlna_src, "Found field: %s",
-                CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_PORT]);
+                CONTENT_TYPE_HEADERS[HEADER_INDEX_CONTENT_FORMAT]);
             head_response->content_type = g_strdup (tmp2);
           }
         }
-        //  APPLICATION/X-DTCP1
+        //  APPLICATION/X-DTCP1a
         else if ((tmp_str =
                 strstr (g_ascii_strup (*ptr, strlen (*ptr)),
                     CONTENT_TYPE_HEADERS[HEADER_INDEX_APP_DTCP])) != NULL) {
@@ -3824,6 +3827,35 @@ dlna_src_npt_to_nanos (GstDlnaSrc * dlna_src, gchar * string,
 
   return ret;
 }
+
+/**
+ * Formats given nanoseconds into string which represents normal play time (npt).
+ * The format of NPT is as follows:
+ *
+ * npt time  = npt hhmmss
+ *
+ * npthhmmss = npthh":"nptmm":"nptss["."1*3DIGIT]
+ * npthh     = 1*DIGIT     ; any positive number
+ * nptmm     = 1*2DIGIT    ; 0-59
+ * nptss     = 1*2DIGIT    ; 0-59
+ *
+ * @param   dlna_src            this element, needed for logging
+ * @param   media_time_nanos    nanoseconds to be formatted into string
+ * @param   string              returning normal play time string
+ */
+static void
+dlna_src_nanos_to_npt (GstDlnaSrc * dlna_src, guint64 media_time_nanos,
+    GString * npt_str)
+{
+  guint64 media_time_ms = media_time_nanos / GST_MSECOND;
+  gint hours = media_time_ms / (60 * 60 * 1000);
+  gint remainder = media_time_ms % (60 * 60 * 1000);
+  gint minutes = remainder / (60 * 1000);
+  float seconds = roundf ((remainder % (60 * 1000))) / 1000.0;
+
+  g_string_append_printf (npt_str, "%d:%02d:%02.3f", hours, minutes, seconds);
+}
+
 
 /* entry point to initialize the plug-in
  * initialize the plug-in itself
