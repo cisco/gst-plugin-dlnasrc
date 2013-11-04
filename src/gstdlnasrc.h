@@ -63,27 +63,28 @@ struct _GstDlnaSrc
 
     GstPad* src_pad;
 
-    // Name used to identify this element as source in playsrc2 logging
+    /* Name used to identify this element as source in playsrc2
+       logging */
     gchar* cl_name;
 
-    // DTCP Key Storage
+    /* DTCP Key Storage */
     guint dtcp_blocksize;
     gchar* dtcp_key_storage;
 
-    // Stream info
+    /* Stream info */
     gchar *uri;
 
     SoupSession *soup_session;
     SoupMessage *soup_msg;
 
-    // Socket params used to issue HEAD request
+    /* Socket params used to issue HEAD request */
     gchar *uri_addr;
     guint uri_port;
     gint sock;
 
     GstDlnaSrcHeadResponse* server_info;
 
-    // Current playback rate
+    /* Current playback rate */
     gfloat rate;
 
     gfloat requested_rate;
