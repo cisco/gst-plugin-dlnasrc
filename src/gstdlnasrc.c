@@ -47,13 +47,12 @@ enum
   PROP_CL_NAME,
   PROP_SUPPORTED_RATES,
   PROP_DTCP_BLOCKSIZE,
-  //...
 };
 
 #define DLNA_SRC_CL_NAME "dlnasrc"
 #define DEFAULT_DTCP_BLOCKSIZE       524288
 
-// Constant names for elements in this src
+/* Constant names for elements in this src */
 #define ELEMENT_NAME_SOUP_HTTP_SRC "soup-http-source"
 #define ELEMENT_NAME_DTCP_DECRYPTER "dtcp-decrypter"
 
@@ -62,28 +61,28 @@ static const gchar CRLF[] = "\r\n";
 
 static const gchar COLON[] = ":";
 
-// Constant strings identifiers for header fields in HEAD response
+/* Constant strings identifiers for header fields in HEAD response */
 static const gchar *HEAD_RESPONSE_HEADERS[] = {
-  "HTTP/",                      // 0
-  "VARY",                       // 1
-  "TIMESEEKRANGE.DLNA.ORG",     // 2
-  "TRANSFERMODE.DLNA.ORG",      // 3
-  "DATE",                       // 4
-  "CONTENT-TYPE",               // 5
-  "SERVER",                     // 6
-  "TRANSFER-ENCODING",          // 7
-  "CONTENTFEATURES.DLNA.ORG",   // 8
-  "CONTENT-RANGE.DTCP.COM",     // 9
-  "PRAGMA",                     // 10
-  "CACHE-CONTROL",              // 11
-  "CONTENT-LENGTH",             // 12
-  "ACCEPT-RANGES",              // 13
-  "CONTENT-RANGE",              // 14
-  "AVAILABLESEEKRANGE.DLNA.ORG" // 15
+  "HTTP/",                      /* 0  */
+  "VARY",                       /* 1  */
+  "TIMESEEKRANGE.DLNA.ORG",     /* 2  */
+  "TRANSFERMODE.DLNA.ORG",      /* 3  */
+  "DATE",                       /* 4  */
+  "CONTENT-TYPE",               /* 5  */
+  "SERVER",                     /* 6  */
+  "TRANSFER-ENCODING",          /* 7  */
+  "CONTENTFEATURES.DLNA.ORG",   /* 8  */
+  "CONTENT-RANGE.DTCP.COM",     /* 9  */
+  "PRAGMA",                     /* 10 */
+  "CACHE-CONTROL",              /* 11 */
+  "CONTENT-LENGTH",             /* 12 */
+  "ACCEPT-RANGES",              /* 13 */
+  "CONTENT-RANGE",              /* 14 */
+  "AVAILABLESEEKRANGE.DLNA.ORG" /* 15 */
 };
 
-// Constants which represent indices in HEAD_RESPONSE_HEADERS string array
-// NOTE: Needs to stay in sync with HEAD_RESPONSE_HEADERS
+/* Constants which represent indices in HEAD_RESPONSE_HEADERS string
+ * array. NOTE: Needs to stay in sync with HEAD_RESPONSE_HEADERS */
 #define HEADER_INDEX_HTTP 0
 #define HEADER_INDEX_VARY 1
 #define HEADER_INDEX_TIMESEEKRANGE 2
@@ -101,30 +100,31 @@ static const gchar *HEAD_RESPONSE_HEADERS[] = {
 #define HEADER_INDEX_CONTENT_RANGE 14
 #define HEADER_INDEX_AVAILABLE_RANGE 15
 
-// Count of field headers in HEAD_RESPONSE_HEADERS along with HEADER_INDEX_* constants
+/* Count of field headers in HEAD_RESPONSE_HEADERS along with
+ * HEADER_INDEX_* constants */
 static const gint HEAD_RESPONSE_HEADERS_CNT = 16;
 
-// Subfield headers which specify ranges
+/* Subfield headers which specify ranges */
 static const gchar *RANGE_HEADERS[] = {
-  "NPT",                        // 0
-  "BYTES",                      // 1
-  "CLEARTEXTBYTES",             // 2
+  "NPT",                        /* 0 */
+  "BYTES",                      /* 1 */
+  "CLEARTEXTBYTES",             /* 2 */
 };
 
 #define HEADER_INDEX_NPT 0
 #define HEADER_INDEX_BYTES 1
 #define HEADER_INDEX_CLEAR_TEXT 2
 
-// Subfield headers within ACCEPT-RANGES
+/* Subfield headers within ACCEPT-RANGES */
 static const gchar *ACCEPT_RANGES_BYTES = "BYTES";
 
-// Subfield headers within CONTENTFEATURES.DLNA.ORG
+/* Subfield headers within CONTENTFEATURES.DLNA.ORG */
 static const gchar *CONTENT_FEATURES_HEADERS[] = {
-  "DLNA.ORG_PN",                // 0
-  "DLNA.ORG_OP",                // 1
-  "DLNA.ORG_PS",                // 2
-  "DLNA.ORG_FLAGS",             // 3
-  "DLNA.ORG_CI",                // 4
+  "DLNA.ORG_PN",                /* 0 */
+  "DLNA.ORG_OP",                /* 1 */
+  "DLNA.ORG_PS",                /* 2 */
+  "DLNA.ORG_FLAGS",             /* 3 */
+  "DLNA.ORG_CI",                /* 4 */
 };
 
 #define HEADER_INDEX_PN 0
@@ -133,12 +133,12 @@ static const gchar *CONTENT_FEATURES_HEADERS[] = {
 #define HEADER_INDEX_FLAGS 3
 #define HEADER_INDEX_CI 4
 
-// Subfield headers with CONTENT-TYPE
+/* Subfield headers with CONTENT-TYPE */
 static const gchar *CONTENT_TYPE_HEADERS[] = {
-  "DTCP1HOST",                  // 0
-  "DTCP1PORT",                  // 1
-  "CONTENTFORMAT",              // 2
-  "APPLICATION/X-DTCP1"         // 3
+  "DTCP1HOST",                  /* 0 */
+  "DTCP1PORT",                  /* 1 */
+  "CONTENTFORMAT",              /* 2 */
+  "APPLICATION/X-DTCP1"         /* 3 */
 };
 
 #define HEADER_INDEX_DTCP_HOST 0
@@ -147,27 +147,27 @@ static const gchar *CONTENT_TYPE_HEADERS[] = {
 #define HEADER_INDEX_APP_DTCP 3
 
 
-/**
+/*
  * DLNA Flag parameters defined in DLNA spec
  * primary flags - 8 hexadecimal digits representing 32 binary flags
  * protocol info dlna org flags represented by primary flags followed
  * by reserved data of 24 hexadecimal digits (zeros)
  */
-static const gint SP_FLAG = 1 << 31;    //(Sender Paced Flag), content src is clock
-static const gint LOP_NPT = 1 << 30;    //(Limited Operations Flags: Time-Based Seek)
-static const gint LOP_BYTES = 1 << 29;  //(Limited Operations Flags: Byte-Based Seek)
-static const gint PLAYCONTAINER_PARAM = 1 << 28;        //(DLNA PlayContainer Flag)
-static const gint S0_INCREASING = 1 << 27;      //(UCDAM s0 Increasing Flag) (content has no fixed beginning)
-static const gint SN_INCREASING = 1 << 26;      //(UCDAM sN Increasing Flag) (content has no fixed ending)
-static const gint RTSP_PAUSE = 1 << 25; //(Pause media operation support for RTP Serving Endpoints)
-static const gint TM_S = 1 << 24;       //(Streaming Mode Flag) - av content must have this set
-static const gint TM_I = 1 << 23;       //(Interactive Mode Flag)
-static const gint TM_B = 1 << 22;       //(Background Mode Flag)
-static const gint HTTP_STALLING = 1 << 21;      //(HTTP Connection Stalling Flag)
-static const gint DLNA_V15_FLAG = 1 << 20;      //(DLNA v1.5 versioning flag)
-static const gint LP_FLAG = 1 << 16;    //(Link Content Flag)
-static const gint CLEARTEXTBYTESEEK_FULL_FLAG = 1 << 15;        // Support for Full RADA ClearTextByteSeek header
-static const gint LOP_CLEARTEXTBYTES = 1 << 14; // Support for Limited RADA ClearTextByteSeek header
+static const gint SP_FLAG = 1 << 31;             /* (Sender Paced Flag), content src is clock */
+static const gint LOP_NPT = 1 << 30;             /* (Limited Operations Flags: Time-Based Seek) */
+static const gint LOP_BYTES = 1 << 29;           /* (Limited Operations Flags: Byte-Based Seek) */
+static const gint PLAYCONTAINER_PARAM = 1 << 28; /* (DLNA PlayContainer Flag) */
+static const gint S0_INCREASING = 1 << 27;       /* (UCDAM s0 Increasing Flag) (content has no fixed beginning) */
+static const gint SN_INCREASING = 1 << 26;       /* (UCDAM sN Increasing Flag) (content has no fixed ending) */
+static const gint RTSP_PAUSE = 1 << 25;          /* (Pause media operation support for RTP Serving Endpoints) */
+static const gint TM_S = 1 << 24;                /* (Streaming Mode Flag) - av content must have this set */
+static const gint TM_I = 1 << 23;                /* (Interactive Mode Flag) */
+static const gint TM_B = 1 << 22;                /* (Background Mode Flag) */
+static const gint HTTP_STALLING = 1 << 21;       /* (HTTP Connection Stalling Flag) */
+static const gint DLNA_V15_FLAG = 1 << 20;       /* (DLNA v1.5 versioning flag) */
+static const gint LP_FLAG = 1 << 16;             /* (Link Content Flag) */
+static const gint CLEARTEXTBYTESEEK_FULL_FLAG = 1 << 15; /* Support for Full RADA ClearTextByteSeek header */
+static const gint LOP_CLEARTEXTBYTES = 1 << 14;  /* Support for Limited RADA ClearTextByteSeek header */
 
 static const int RESERVED_FLAGS_LENGTH = 24;
 
@@ -192,17 +192,14 @@ static const int RESERVED_FLAGS_LENGTH = 24;
 #define HEADER_TIME_SEEK_RANGE_TITLE "TimeSeekRange.dlna.org"
 #define HEADER_TIME_SEEK_RANGE_VALUE "npt=0-"
 
-// Description of a pad that the element will (or might) create and use
-//
-static GstStaticPadTemplate gst_dlna_src_pad_template = GST_STATIC_PAD_TEMPLATE ("src", // name for pad
-    GST_PAD_SRC,                // direction of pad
-    GST_PAD_ALWAYS,             // indicates if pad exists
-    GST_STATIC_CAPS ("ANY")     // Supported types by this element (capabilities)
+/* Description of a pad that the element will (or might) create and use */
+static GstStaticPadTemplate gst_dlna_src_pad_template = GST_STATIC_PAD_TEMPLATE ("src", /* name for pad */
+    GST_PAD_SRC,                /* direction of pad */
+    GST_PAD_ALWAYS,             /* indicates if pad exists */
+    GST_STATIC_CAPS ("ANY")     /* Supported types by this element (capabilities) */
     );
 
-// **********************
-// Method declarations associated with gstreamer framework function pointers
-//
+/* Method declarations associated with gstreamer framework function pointers */
 static void gst_dlna_src_dispose (GObject * object);
 
 static void gst_dlna_src_set_property (GObject * object, guint prop_id,
@@ -220,16 +217,11 @@ static gboolean gst_dlna_src_query (GstPad * pad, GstObject * parent,
 static GstStateChangeReturn gst_dlna_src_change_state (GstElement * element,
     GstStateChange transition);
 
-// **********************
-// Method declarations associated with URI handling
-//
+/* Method declarations associated with URI handling */
 static void gst_dlna_src_uri_handler_init (gpointer g_iface,
     gpointer iface_data);
 
-
-// **********************
-// Local method declarations
-//
+/* Local method declarations */
 static gboolean
 dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri, GError ** error);
 
@@ -375,8 +367,6 @@ G_DEFINE_TYPE_WITH_CODE (GstDlnaSrc, gst_dlna_src, GST_TYPE_BIN,
     G_IMPLEMENT_INTERFACE (GST_TYPE_URI_HANDLER,
         gst_dlna_src_uri_handler_init));
 
-// Recommended in tutorial for writing a plugin
-//
 void
 gst_play_marshal_VOID__OBJECT_BOOLEAN (GClosure * closure,
     GValue * return_value G_GNUC_UNUSED,
@@ -384,8 +374,6 @@ gst_play_marshal_VOID__OBJECT_BOOLEAN (GClosure * closure,
     const GValue * param_values,
     gpointer invocation_hint G_GNUC_UNUSED, gpointer marshal_data);
 
-// GStreamer debugging facilities
-//
 GST_DEBUG_CATEGORY_STATIC (gst_dlna_src_debug);
 #define GST_CAT_DEFAULT gst_dlna_src_debug
 
@@ -413,7 +401,7 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
       "Receive data as a client via HTTP with DLNA extensions",
       "Eric Winkelman <e.winkelman@cablelabs.com>");
 
-  // Add the src pad template
+  /* Add the src pad template */
   gst_element_class_add_pad_template (gstelement_klass,
       gst_static_pad_template_get (&gst_dlna_src_pad_template));
 
@@ -557,7 +545,7 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
   GstDlnaSrc *dlna_src = GST_DLNA_SRC (object);
 
   int i = 0;
-  GArray *garray = NULL;        // Just call the default handler
+  GArray *garray = NULL;  /* Just call the default handler */
 
   gfloat rate = 0;
   int psCnt = 0;
@@ -593,7 +581,7 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
       if ((dlna_src->server_info != NULL) &&
           (dlna_src->server_info->content_features != NULL) &&
           (dlna_src->server_info->content_features->playspeeds_cnt > 0)) {
-        // Put rates into GArray
+        /* Put rates into GArray */
         psCnt = dlna_src->server_info->content_features->playspeeds_cnt;
         garray = g_array_sized_new (TRUE, TRUE, sizeof (gfloat), psCnt);
         for (i = 0; i < psCnt; i++) {
@@ -603,7 +591,7 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
               g_array_index (garray, gfloat, i));
         }
 
-        // Convert GArray into GValue
+        /* Convert GArray into GValue */
         memset (value, 0, sizeof (*value));
         g_value_init (value, G_TYPE_ARRAY);
         g_value_take_boxed (value, garray);
@@ -703,7 +691,7 @@ gst_dlna_src_event (GstPad * pad, GstObject * parent, GstEvent * event)
     case GST_EVENT_LATENCY:
     case GST_EVENT_NAVIGATION:
     case GST_EVENT_RECONFIGURE:
-      // Just call default handler to handle
+      /* Just call default handler to handle */
       break;
 
     default:
@@ -712,7 +700,7 @@ gst_dlna_src_event (GstPad * pad, GstObject * parent, GstEvent * event)
       break;
   }
 
-  // If not handled, pass on to default pad handler
+  /* If not handled, pass on to default pad handler */
   if (!ret) {
     ret = gst_pad_event_default (pad, parent, event);
   }
@@ -767,15 +755,16 @@ gst_dlna_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
       break;
 
     case GST_QUERY_LATENCY:
-      // Don't know latency, let some other element handle this
+      /* Don't know latency, let some other element handle this */
       break;
 
     case GST_QUERY_POSITION:
-      // Don't know current position in stream, let some other element handle this
+      /* Don't know current position in stream, let some other element
+         handle this */
       break;
 
     default:
-      // Call the default handler
+      /* Call the default handler */
       GST_LOG_OBJECT (dlna_src,
           "Got unsupported src query: %s, passing to default handler",
           GST_QUERY_TYPE_NAME (query));
@@ -806,13 +795,13 @@ dlna_src_handle_query_duration (GstDlnaSrc * dlna_src, GstQuery * query)
 
   GST_LOG_OBJECT (dlna_src, "Called");
 
-  // Make sure a URI has been set and HEAD response received
+  /* Make sure a URI has been set and HEAD response received */
   if ((dlna_src->uri == NULL) || (dlna_src->server_info == NULL)) {
     GST_INFO_OBJECT (dlna_src,
         "No URI and/or HEAD response info, unable to handle query");
     return FALSE;
   }
-  // Parse query to see what format was requested
+  /* Parse query to see what format was requested */
   gst_query_parse_duration (query, &format, &duration);
 
   if (format == GST_FORMAT_BYTES) {
@@ -839,7 +828,7 @@ dlna_src_handle_query_duration (GstDlnaSrc * dlna_src, GstQuery * query)
       GST_DEBUG_OBJECT (dlna_src,
           "Duration in media time not available for content item");
   } else {
-    // Can not handle other format types, returning false
+    /* Can not handle other format types, returning false */
     GST_DEBUG_OBJECT (dlna_src,
         "Got duration query with non-supported format type: %s, passing to default handler",
         gst_format_get_name (format));
@@ -866,19 +855,19 @@ dlna_src_handle_query_seeking (GstDlnaSrc * dlna_src, GstQuery * query)
 
   GST_DEBUG_OBJECT (dlna_src, "Called");
 
-  // Make sure a URI has been set and HEAD response received
+  /* Make sure a URI has been set and HEAD response received */
   if ((dlna_src->uri == NULL) || (dlna_src->server_info == NULL)) {
     GST_INFO_OBJECT (dlna_src,
         "No URI and/or HEAD response info, unable to handle query");
     return FALSE;
   }
-  // Parse query to see what format was requested
+  /* Parse query to see what format was requested */
   gst_query_parse_seeking (query, &format, &supports_seeking, &seek_start,
       &seek_end);
 
   if (format == GST_FORMAT_BYTES) {
     if (dlna_src->byte_seek_supported) {
-      // Set results of query but don't do actual seek
+      /* Set results of query but don't do actual seek */
       gst_query_set_seeking (query, GST_FORMAT_BYTES, TRUE,
           dlna_src->byte_start, dlna_src->byte_end);
       ret = TRUE;
@@ -893,7 +882,7 @@ dlna_src_handle_query_seeking (GstDlnaSrc * dlna_src, GstQuery * query)
           "Seeking in bytes not available for content item");
   } else if (format == GST_FORMAT_TIME) {
     if (dlna_src->time_seek_supported) {
-      // Set results of query
+      /* Set results of query */
       gst_query_set_seeking (query, GST_FORMAT_TIME, TRUE,
           dlna_src->npt_start_nanos, dlna_src->npt_end_nanos);
       ret = TRUE;
@@ -907,7 +896,7 @@ dlna_src_handle_query_seeking (GstDlnaSrc * dlna_src, GstQuery * query)
       GST_DEBUG_OBJECT (dlna_src,
           "Seeking in media time not available for content item");
   } else {
-    // Can not handle other format types, returning false
+    /* Can not handle other format types, returning false */
     GST_DEBUG_OBJECT (dlna_src,
         "Got seeking query with non-supported format type: %s, passing to default handler",
         GST_QUERY_TYPE_NAME (query));
@@ -935,19 +924,19 @@ dlna_src_handle_query_segment (GstDlnaSrc * dlna_src, GstQuery * query)
 
   GST_LOG_OBJECT (dlna_src, "Called");
 
-  // Make sure a URI has been set and HEAD response received
+  /* Make sure a URI has been set and HEAD response received */
   if ((dlna_src->uri == NULL) || (dlna_src->server_info == NULL)) {
     GST_INFO_OBJECT (dlna_src,
         "No URI and/or HEAD response info, unable to handle query");
     return FALSE;
   }
-  // Parse query to see what format was requested
+  /* Parse query to see what format was requested */
   gst_query_parse_segment (query, &rate, &format, &start, &end);
 
   if (format == GST_FORMAT_BYTES) {
     if (dlna_src->byte_seek_supported) {
 
-      // Set segment info based on server support of byte based seeks
+      /* Set segment info based on server support of byte based seeks */
       gst_query_set_segment (query, dlna_src->rate, GST_FORMAT_BYTES,
           dlna_src->byte_start, dlna_src->byte_end);
       ret = TRUE;
@@ -976,7 +965,7 @@ dlna_src_handle_query_segment (GstDlnaSrc * dlna_src, GstQuery * query)
       GST_DEBUG_OBJECT (dlna_src,
           "Segment info in media time not available for content item");
   } else {
-    // Can not handle other format types, returning false
+    /* Can not handle other format types, returning false */
     GST_DEBUG_OBJECT (dlna_src,
         "Got segment query with non-supported format type: %s, passing to default handler",
         GST_QUERY_TYPE_NAME (query));
@@ -996,23 +985,23 @@ dlna_src_handle_query_segment (GstDlnaSrc * dlna_src, GstQuery * query)
 static gboolean
 dlna_src_handle_query_convert (GstDlnaSrc * dlna_src, GstQuery * query)
 {
-  // Always return true since no other element can do this
+  /* Always return true since no other element can do this */
   gboolean ret = TRUE;
   GstFormat src_fmt, dest_fmt;
   gint64 src_val, dest_val;
 
   GST_LOG_OBJECT (dlna_src, "Called");
 
-  // Make sure a URI has been set and HEAD response received and server
-  // supports time seek so conversion can be performed
+  /* Make sure a URI has been set and HEAD response received and server
+     supports time seek so conversion can be performed */
   if (dlna_src->uri == NULL || !dlna_src->time_seek_supported) {
     GST_INFO_OBJECT (dlna_src, "Not enough info to handle conversion query");
     return FALSE;
   }
-  // Parse query to see what format was requested
+  /* Parse query to see what format was requested */
   gst_query_parse_convert (query, &src_fmt, &src_val, &dest_fmt, &dest_val);
 
-  // Print out info about conversion that has been requested
+  /* Print out info about conversion that has been requested */
   GST_DEBUG_OBJECT (dlna_src,
       "Got conversion query: src fmt: %s, dest fmt: %s, src val: %"
       G_GUINT64_FORMAT ", dest: val %" G_GUINT64_FORMAT,
@@ -1050,7 +1039,7 @@ dlna_src_handle_query_convert (GstDlnaSrc * dlna_src, GstQuery * query)
     return FALSE;
   }
 
-  // Return results in query
+  /* Return results in query */
   gst_query_set_convert (query, src_fmt, src_val, dest_fmt, dest_val);
 
   return ret;
@@ -1081,7 +1070,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
   guint32 new_seqnum;
   gboolean convert_start = FALSE;
 
-  // Make sure a URI has been set and HEAD response received
+  /* Make sure a URI has been set and HEAD response received */
   if ((dlna_src->uri == NULL) || (dlna_src->server_info == NULL)) {
     GST_INFO_OBJECT (dlna_src,
         "No URI and/or HEAD response info, event handled");
@@ -1094,9 +1083,9 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
       GST_INFO_OBJECT (dlna_src, "Already processed seek event %d", new_seqnum);
       return FALSE;
     } else
-      // *TODO* - see dlnasrc issue #63
-      // Got same event now byte based since some element converted it to bytes
-      // Convert here if time seek is supported since it is more accurate
+      /* *TODO* - see dlnasrc issue #63
+         Got same event now byte based since some element converted it to bytes
+         Convert here if time seek is supported since it is more accurate */
     if (dlna_src->time_seek_supported) {
       convert_start = TRUE;
       GST_INFO_OBJECT (dlna_src,
@@ -1110,7 +1099,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
     dlna_src->time_seek_event_start = 0;
   }
 
-  // Parse event received
+  /* Parse event received */
   gst_event_parse_seek (event, &rate, (GstFormat *) & format,
       (GstSeekFlags *) & flags,
       (GstSeekType *) & start_type, (gint64 *) & start,
@@ -1122,7 +1111,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
       G_GUINT64_FORMAT, gst_event_get_seqnum (event), rate,
       gst_format_get_name (format), flags, start_type, start, stop_type, stop);
 
-  // Convert bytes based on last time seek change
+  /* Convert bytes based on last time seek change */
   if (convert_start) {
     GST_INFO_OBJECT (dlna_src,
         "Supplied start byte %" G_GUINT64_FORMAT
@@ -1134,17 +1123,17 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
       return TRUE;
     }
   }
-  // Verify requested change is valid
+  /* Verify requested change is valid */
   if (!dlna_src_is_change_valid
       (dlna_src, rate, format, start, start_type, stop, stop_type)) {
     GST_WARNING_OBJECT (dlna_src, "Requested change is invalid, event handled");
 
     return TRUE;
   }
-  // *TODO* - is this needed here??? Assign play rate to supplied rate
+  /* *TODO* - is this needed here??? Assign play rate to supplied rate */
   dlna_src->rate = rate;
 
-  // Set up new requested values
+  /* Set up new requested values */
   dlna_src->requested_rate = rate;
   dlna_src->requested_format = format;
   dlna_src->requested_start = start;
@@ -1158,15 +1147,15 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
         "Set requested stop to end of range since content is live: %"
         G_GUINT64_FORMAT, dlna_src->requested_stop);
   }
-  // Make sure info is available for soup http src header adjustments
+  /* Make sure info is available for soup http src header adjustments */
   if ((dlna_src->uri) && (dlna_src->server_info) &&
       (dlna_src->server_info->content_features != NULL)) {
-    // Adjust headers for http src so change can be requested
+    /* Adjust headers for http src so change can be requested */
     if (!dlna_src_adjust_http_src_headers (dlna_src, dlna_src->requested_rate,
             dlna_src->requested_format, dlna_src->requested_start,
             dlna_src->requested_stop, new_seqnum)) {
       GST_ERROR_OBJECT (dlna_src, "Problems adjusting soup http src headers");
-      // Returning true to prevent further processing
+      /* Returning true to prevent further processing */
       return TRUE;
     }
   } else
@@ -1206,7 +1195,7 @@ dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
 
   gsize live_content_head_request_headers_size = 1;
 
-  // Check if supplied rate is supported
+  /* Check if supplied rate is supported */
   if ((rate == 1.0) || (dlna_src_is_rate_supported (dlna_src, rate))) {
     GST_INFO_OBJECT (dlna_src, "New rate of %4.1f is supported by server",
         rate);
@@ -1216,11 +1205,11 @@ dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
     return FALSE;
   }
 
-  // Check if supplied start is valid
+  /* Check if supplied start is valid */
   if (format == GST_FORMAT_BYTES) {
     if (dlna_src->byte_seek_supported) {
 
-      // Verify encrypted start byte is within range
+      /* Verify encrypted start byte is within range */
       if (start < dlna_src->byte_start || start > dlna_src->byte_end) {
         GST_WARNING_OBJECT (dlna_src,
             "Specified start byte %" G_GUINT64_FORMAT
@@ -1239,7 +1228,7 @@ dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
       return FALSE;
     }
   } else if (format == GST_FORMAT_TIME) {
-    // Verify start time is within range
+    /* Verify start time is within range */
     if (dlna_src->time_seek_supported) {
 
       if (dlna_src->is_live) {
@@ -1298,14 +1287,15 @@ dlna_src_is_rate_supported (GstDlnaSrc * dlna_src, gfloat rate)
 {
   gboolean is_supported = FALSE;
 
-  // Make sure server supports time seeks since that will be required when
-  // requesting rate change
+  /* Make sure server supports time seeks since that will be required when
+     requesting rate change */
   if (!dlna_src->time_seek_supported) {
     GST_WARNING_OBJECT (dlna_src,
         "Unable to change rate, not supported by server");
     return FALSE;
   }
-  // Look through list of server supported playspeeds to see if rate is supported
+  /* Look through list of server supported playspeeds to see if rate
+     is supported */
   int i = 0;
   for (i = 0; i < dlna_src->server_info->content_features->playspeeds_cnt; i++) {
     if (dlna_src->server_info->content_features->playspeeds[i] == rate) {
@@ -1355,23 +1345,23 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
   const gchar *range_dtcp_field_value_prefix = "bytes=";
   gchar range_dtcp_field_value[64] = { 0 };
 
-  // Make sure range header is included by default
+  /* Make sure range header is included by default */
   GValue boolean_value = G_VALUE_INIT;
   g_value_init (&boolean_value, G_TYPE_BOOLEAN);
   g_value_set_boolean (&boolean_value, FALSE);
   g_object_set_property (G_OBJECT (dlna_src->http_src), "exclude-range-header",
       &boolean_value);
 
-  // Create header structure with dlna transfer mode header
+  /* Create header structure with dlna transfer mode header */
   extra_headers_struct = gst_structure_new ("extraHeadersStruct",
       "transferMode.dlna.org", G_TYPE_STRING, "Streaming", NULL);
   if (extra_headers_struct == NULL) {
     GST_WARNING_OBJECT (dlna_src, "Problems creating extra headers structure");
     return FALSE;
   }
-  // If rate != 1.0, add playspeed header and time seek range header
+  /* If rate != 1.0, add playspeed header and time seek range header */
   if (rate != 1.0) {
-    // Get string representation of rate
+    /* Get string representation of rate */
     int i = 0;
     gchar *rateStr = NULL;
     for (i = 0; i < dlna_src->server_info->content_features->playspeeds_cnt;
@@ -1389,14 +1379,14 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
     g_snprintf (playspeed_field_value, 64, "%s%s",
         playspeed_field_value_prefix, rateStr);
 
-    // Add header to structure
+    /* Add header to structure */
     gst_structure_set (extra_headers_struct, playspeed_field_name,
         G_TYPE_STRING, &playspeed_field_value, NULL);
     GST_INFO_OBJECT (dlna_src,
         "Adjust headers by including playspeed header value: %s",
         playspeed_field_value);
   }
-  // Add time seek header for all non 1x rates or for time based seeks
+  /* Add time seek header for all non 1x rates or for time based seeks */
   if (rate != 1.0 || (format == GST_FORMAT_TIME
           && dlna_src->time_seek_supported)) {
     if (format != GST_FORMAT_TIME) {
@@ -1423,7 +1413,7 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
       } else
         GST_INFO_OBJECT (dlna_src, "Stop undefined, no conversion needed");
     } else {
-      // Already in time format
+      /* Already in time format */
       start_time_nanos = start;
       stop_time_nanos = stop;
       GST_INFO_OBJECT (dlna_src,
@@ -1431,7 +1421,7 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
           start_time_nanos, stop_time_nanos);
     }
 
-    // Convert times from nanos into secs string
+    /* Convert times from nanos into secs string */
     start_time_secs = start_time_nanos / GST_SECOND;
 
     if (stop_time_nanos == GST_CLOCK_TIME_NONE) {
@@ -1448,7 +1438,7 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
           "%s%" G_GUINT64_FORMAT ".0-%" G_GUINT64_FORMAT ".0",
           time_seek_range_field_value_prefix, start_time_secs, stop_time_secs);
     }
-    // Add header to structure
+    /* Add header to structure */
     gst_structure_set (extra_headers_struct, time_seek_range_field_name,
         G_TYPE_STRING, &time_seek_range_field_value, NULL);
 
@@ -1456,10 +1446,10 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
         "Adjust headers by including TimeSeekRange header value: %s",
         time_seek_range_field_value);
 
-    // Set flag so range header is not included by souphttpsrc
+    /* Set flag so range header is not included by souphttpsrc */
     disable_range_header = TRUE;
 
-    // Record seqnum since have handled this event as time seek
+    /* Record seqnum since have handled this event as time seek */
     dlna_src->handled_time_seek_seqnum = TRUE;
   } else
     GST_INFO_OBJECT (dlna_src,
@@ -1470,13 +1460,13 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
         "Saving start time incase get this event again in bytes in order to do acurate conversion");
     dlna_src->time_seek_event_start = start;
   }
-  // If dtcp protected content and rate = 1.0, add range.dtcp.com header
+  /* If dtcp protected content and rate = 1.0, add range.dtcp.com header */
   if (rate == 1.0 && format == GST_FORMAT_BYTES
       && dlna_src->is_encrypted && dlna_src->byte_seek_supported) {
     g_snprintf (range_dtcp_field_value, 64, "%s%" G_GUINT64_FORMAT "-",
         range_dtcp_field_value_prefix, start);
 
-    // Add header to structure
+    /* Add header to structure */
     gst_structure_set (extra_headers_struct, range_dtcp_field_name,
         G_TYPE_STRING, &range_dtcp_field_value, NULL);
 
@@ -1484,19 +1474,19 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
         "Adjust headers by including Range.dtcp.com header value: %s",
         range_dtcp_field_value);
 
-    // Set flag so range header is not included by souphttpsrc
+    /* Set flag so range header is not included by souphttpsrc */
     disable_range_header = TRUE;
   } else
     GST_INFO_OBJECT (dlna_src, "Not adjusting with range.dtcp.com");
 
-  // Set extra header property of soup http src
+  /* Set extra header property of soup http src */
   g_value_init (&struct_value, GST_TYPE_STRUCTURE);
   gst_value_set_structure (&struct_value, extra_headers_struct);
   g_object_set_property (G_OBJECT (dlna_src->http_src), "extra-headers",
       &struct_value);
   gst_structure_free (extra_headers_struct);
 
-  // Disable range header if necessary
+  /* Disable range header if necessary */
   if (disable_range_header || !dlna_src->byte_seek_supported) {
     g_value_set_boolean (&boolean_value, TRUE);
     g_object_set_property (G_OBJECT (dlna_src->http_src),
@@ -1510,11 +1500,7 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
 }
 
 
-/*********************************************/
-/**********                         **********/
-/********** GstUriHandler INTERFACE **********/
-/**********                         **********/
-/*********************************************/
+/* GstUriHandler INTERFACE */
 static guint
 gst_dlna_src_uri_get_type (GType type)
 {
@@ -1611,7 +1597,8 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
     g_object_set (G_OBJECT (dlna_src->http_src), "location", dlna_src->uri,
         NULL);
 
-  // Create src ghost pad of dlna src using http src so playbin will recognize element as a src
+  /* Create src ghost pad of dlna src using http src so playbin will
+     recognize element as a src */
   GST_DEBUG_OBJECT (dlna_src, "Getting http src pad");
   GstPad *pad = gst_element_get_static_pad (dlna_src->http_src, "src");
   if (!pad) {
@@ -1628,11 +1615,11 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
   gst_element_add_pad (GST_ELEMENT (&dlna_src->bin), dlna_src->src_pad);
   gst_object_unref (pad);
 
-  // Configure event function on sink pad before adding pad to element
+  /* Configure event function on sink pad before adding pad to element */
   gst_pad_set_event_function (dlna_src->src_pad,
       (GstPadEventFunction) gst_dlna_src_event);
 
-  // Configure event function on sink pad before adding pad to element
+  /* Configure event function on sink pad before adding pad to element */
   gst_pad_set_query_function (dlna_src->src_pad,
       (GstPadQueryFunction) gst_dlna_src_query);
 
@@ -1665,7 +1652,7 @@ dlna_src_setup_dtcp (GstDlnaSrc * dlna_src)
     GST_DEBUG_OBJECT (dlna_src, "Alread setup for dtcp content");
     return TRUE;
   }
-  // Create non-encrypt sink element
+  /* Create non-encrypt sink element */
   GST_INFO_OBJECT (dlna_src, "Creating dtcp decrypter");
   dlna_src->dtcp_decrypter = gst_element_factory_make ("dtcpip",
       ELEMENT_NAME_DTCP_DECRYPTER);
@@ -1674,18 +1661,18 @@ dlna_src_setup_dtcp (GstDlnaSrc * dlna_src)
         "The dtcp decrypter element could not be created. Exiting.");
     return FALSE;
   }
-  // Set DTCP host property
+  /* Set DTCP host property */
   g_object_set (G_OBJECT (dlna_src->dtcp_decrypter), "dtcp1host",
       dlna_src->server_info->dtcp_host, NULL);
 
-  // Set DTCP port property
+  /* Set DTCP port property */
   g_object_set (G_OBJECT (dlna_src->dtcp_decrypter), "dtcp1port",
       dlna_src->server_info->dtcp_port, NULL);
 
-  // Add this element to the src
+  /* Add this element to the src */
   gst_bin_add (GST_BIN (&dlna_src->bin), dlna_src->dtcp_decrypter);
 
-  // Link elements together
+  /* Link elements together */
   if (!gst_element_link_many
       (dlna_src->http_src, dlna_src->dtcp_decrypter, NULL)) {
     GST_ERROR_OBJECT (dlna_src, "Problems linking elements in src. Exiting.");
@@ -1707,15 +1694,15 @@ dlna_src_setup_dtcp (GstDlnaSrc * dlna_src)
   gst_element_add_pad (GST_ELEMENT (&dlna_src->bin), dlna_src->src_pad);
   gst_object_unref (pad);
 
-  // Configure event function on sink pad before adding pad to element
+  /* Configure event function on sink pad before adding pad to element */
   gst_pad_set_event_function (dlna_src->src_pad,
       (GstPadEventFunction) gst_dlna_src_event);
 
-  // Configure event function on sink pad before adding pad to element
+  /* Configure event function on sink pad before adding pad to element */
   gst_pad_set_query_function (dlna_src->src_pad,
       (GstPadQueryFunction) gst_dlna_src_query);
 
-  // Setup the block size for dtcp
+  /* Setup the block size for dtcp */
   g_object_set (dlna_src->http_src, "blocksize", dlna_src->dtcp_blocksize,
       NULL);
 
@@ -1766,19 +1753,19 @@ dlna_src_uri_gather_info (GstDlnaSrc * dlna_src)
     GST_DEBUG_OBJECT (dlna_src, "No URI set yet");
     return TRUE;
   }
-  // Make sure a soup session is open
+  /* Make sure a soup session is open */
   if (!dlna_src_soup_session_open (dlna_src)) {
     GST_ERROR_OBJECT (dlna_src,
         "Problems initializing struct to store HEAD response");
     return FALSE;
   }
-  // Initialize server info
+  /* Initialize server info */
   if (!dlna_src_head_response_init_struct (dlna_src, &dlna_src->server_info)) {
     GST_ERROR_OBJECT (dlna_src,
         "Problems initializing struct to store HEAD response");
     return FALSE;
   }
-  // Issue first head with just content features to determine what server supports
+  /* Issue first head with just content features to determine what server supports */
   GST_DEBUG_OBJECT (dlna_src,
       "Issuing HEAD Request with content features to determine what server supports");
 
@@ -1789,7 +1776,7 @@ dlna_src_uri_gather_info (GstDlnaSrc * dlna_src)
         "Problems issuing HEAD request to get content features");
     return FALSE;
   }
-  // Formulate second HEAD request to gather more info
+  /* Formulate second HEAD request to gather more info */
   if (dlna_src->is_live) {
 
     GST_INFO_OBJECT (dlna_src,
@@ -1835,7 +1822,7 @@ dlna_src_uri_gather_info (GstDlnaSrc * dlna_src)
     GST_INFO_OBJECT (dlna_src, "Not issuing another HEAD request");
   }
 
-  // Print out results of HEAD request
+  /* Print out results of HEAD request */
   dlna_src_head_response_struct_to_str (dlna_src, dlna_src->server_info,
       struct_str);
 
@@ -1871,10 +1858,10 @@ dlna_src_soup_issue_head (GstDlnaSrc * dlna_src, gsize header_array_size,
   head_response->ret_code =
       soup_session_send_message (dlna_src->soup_session, dlna_src->soup_msg);
 
-  // Print out request & response
+  /* Print out request & response */
   dlna_src_soup_log_msg (dlna_src);
 
-  // Make sure return code from HEAD response is some form of success
+  /* Make sure return code from HEAD response is some form of success */
   if (head_response->ret_code != HTTP_STATUS_OK &&
       head_response->ret_code != HTTP_STATUS_CREATED &&
       head_response->ret_code != HTTP_STATUS_PARTIAL) {
@@ -1884,18 +1871,18 @@ dlna_src_soup_issue_head (GstDlnaSrc * dlna_src, gsize header_array_size,
         head_response->ret_code, head_response->ret_msg);
     return FALSE;
   }
-  // Parse HEAD response to gather info about URI content item
+  /* Parse HEAD response to gather info about URI content item */
   if (!dlna_src_head_response_parse (dlna_src, head_response)) {
     GST_WARNING_OBJECT (dlna_src, "Problems parsing HEAD response");
     return FALSE;
   }
 
   if (do_update_overall_info) {
-    // Update info based on response to HEAD info
+    /* Update info based on response to HEAD info */
     if (!dlna_src_update_overall_info (dlna_src, head_response))
       GST_INFO_OBJECT (dlna_src, "Problems initializing content info");
   }
-  // Clear out existing message - *todo* - do I need to free it?
+  /* Clear out existing message - *todo* - do I need to free it? */
   dlna_src->soup_msg = NULL;
 
   return TRUE;
@@ -2027,7 +2014,7 @@ dlna_src_update_overall_info (GstDlnaSrc * dlna_src,
       head_response->accept_byte_ranges)
     dlna_src->byte_seek_supported = TRUE;
 
-  // Make sure content size has been set for souphttpsrc
+  /* Make sure content size has been set for souphttpsrc */
   if (dlna_src->byte_total && dlna_src->http_src) {
     content_size = dlna_src->byte_total;
 
@@ -2039,7 +2026,7 @@ dlna_src_update_overall_info (GstDlnaSrc * dlna_src,
     GST_INFO_OBJECT (dlna_src,
         "Unable set content size due to either null souphttpsrc or total == 0");
 
-  // Make sure location has been set for souphttpsrc
+  /* Make sure location has been set for souphttpsrc */
   g_object_get (G_OBJECT (dlna_src->http_src), "location",
       &souphttpsrc_location, NULL);
   if (!souphttpsrc_location)
@@ -2120,8 +2107,8 @@ dlna_src_soup_session_open (GstDlnaSrc * dlna_src)
     GST_DEBUG_OBJECT (dlna_src, "Session is already open");
     return TRUE;
   }
-  // *TODO* - dlnasrc issue #94 - Old version (need to upgrade to Libsoup 2.44)
-  // Creating sync version since need to wait for HEAD responses
+  /* *TODO* - dlnasrc issue #94 - Old version (need to upgrade to Libsoup 2.44)
+     Creating sync version since need to wait for HEAD responses */
   dlna_src->soup_session = soup_session_sync_new ();
 
   if (!dlna_src->soup_session) {
@@ -2192,7 +2179,7 @@ dlna_src_head_response_parse (GstDlnaSrc * dlna_src,
   gint idx;
   const gchar *field_values[HEAD_RESPONSE_HEADERS_CNT];
 
-  // Initialize array of strings used to store field values
+  /* Initialize array of strings used to store field values */
   for (i = 0; i < HEAD_RESPONSE_HEADERS_CNT; i++)
     field_values[i] = NULL;
 
@@ -2200,17 +2187,17 @@ dlna_src_head_response_parse (GstDlnaSrc * dlna_src,
   while (soup_message_headers_iter_next (&iter, &header_name, &header_value)) {
     GST_LOG_OBJECT (dlna_src, "%s: %s", header_name, header_value);
 
-    // Look for field header contained in this string
+    /* Look for field header contained in this string */
     idx = dlna_src_head_response_get_field_idx (dlna_src, header_name);
 
-    // If found field header, extract value
+    /* If found field header, extract value */
     if (idx != -1)
       field_values[idx] = header_value;
     else
       GST_INFO_OBJECT (dlna_src, "No Idx found for Field:%s", header_name);
   }
 
-  // Parse value from each field header string
+  /* Parse value from each field header string */
   for (i = 0; i < HEAD_RESPONSE_HEADERS_CNT; i++) {
     if (field_values[i] != NULL) {
       dlna_src_head_response_assign_field_value (dlna_src, head_response, i,
@@ -2234,22 +2221,22 @@ dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src,
 {
   GST_LOG_OBJECT (dlna_src, "Called");
 
-  // Allocate storage
+  /* Allocate storage */
   GstDlnaSrcHeadResponse *head_response = g_slice_new (GstDlnaSrcHeadResponse);
   head_response->content_features =
       g_slice_new (GstDlnaSrcHeadResponseContentFeatures);
 
-  // Initialize structs
-  // {"HTTP", STRING_TYPE}
+  /* Initialize structs
+     {"HTTP", STRING_TYPE} */
   head_response->http_rev_idx = HEADER_INDEX_HTTP;
   head_response->http_rev = NULL;
   head_response->ret_code = 0;
   head_response->ret_msg = NULL;
 
-  // {"TIMESEEKRANGE.DLNA.ORG", STRING_TYPE},
+  /* {"TIMESEEKRANGE.DLNA.ORG", STRING_TYPE}, */
   head_response->time_seek_idx = HEADER_INDEX_TIMESEEKRANGE;
 
-  // {"NPT", NPT_RANGE_TYPE},
+  /* {"NPT", NPT_RANGE_TYPE}, */
   head_response->npt_seek_idx = HEADER_INDEX_NPT;
   head_response->time_seek_npt_start_str = NULL;
   head_response->time_seek_npt_end_str = NULL;
@@ -2258,16 +2245,16 @@ dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src,
   head_response->time_seek_npt_end = 0;
   head_response->time_seek_npt_duration = 0;
 
-  // {"BYTES", BYTE_RANGE_TYPE},
+  /* {"BYTES", BYTE_RANGE_TYPE}, */
   head_response->byte_seek_idx = HEADER_INDEX_BYTES;
   head_response->time_byte_seek_start = 0;
   head_response->time_byte_seek_end = 0;
   head_response->time_byte_seek_total = 0;
 
-  // {"CLEARTEXTBYTES", BYTE_RANGE_TYPE},
+  /* {"CLEARTEXTBYTES", BYTE_RANGE_TYPE}, */
   head_response->clear_text_idx = HEADER_INDEX_CLEAR_TEXT;
 
-  // {"AVAILABLESEEKRANGE.DLNA.ORG", STRING_TYPE},
+  /* {"AVAILABLESEEKRANGE.DLNA.ORG", STRING_TYPE}, */
   head_response->available_range_idx = HEADER_INDEX_AVAILABLE_RANGE;
   head_response->available_seek_npt_start_str = NULL;
   head_response->available_seek_npt_end_str = NULL;
@@ -2278,72 +2265,72 @@ dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src,
   head_response->available_seek_cleartext_start = 0;
   head_response->available_seek_cleartext_end = 0;
 
-  // {CONTENT RANGE DTCP, BYTE_RANGE_TYPE},
+  /* {CONTENT RANGE DTCP, BYTE_RANGE_TYPE}, */
   head_response->dtcp_range_idx = HEADER_INDEX_DTCP_RANGE;
   head_response->dtcp_range_start = 0;
   head_response->dtcp_range_end = 0;
   head_response->dtcp_range_total = 0;
 
-  // {"TRANSFERMODE.DLNA.ORG", STRING_TYPE}
+  /* {"TRANSFERMODE.DLNA.ORG", STRING_TYPE} */
   head_response->transfer_mode_idx = HEADER_INDEX_TRANSFERMODE;
   head_response->transfer_mode = NULL;
 
-  // {"TRANSFER-ENCODING", STRING_TYPE}
+  /* {"TRANSFER-ENCODING", STRING_TYPE} */
   head_response->transfer_encoding_idx = HEADER_INDEX_TRANSFER_ENCODING;
 
   head_response->transfer_encoding = NULL;
 
-  // {"DATE", STRING_TYPE}
+  /* {"DATE", STRING_TYPE} */
   head_response->date_idx = HEADER_INDEX_DATE;
   head_response->date = NULL;
 
-  // {"SERVER", STRING_TYPE}
+  /* {"SERVER", STRING_TYPE} */
   head_response->server_idx = HEADER_INDEX_SERVER;
   head_response->server = NULL;
 
-  // {"CONTENT-LENGTH", NUMERIC_TYPE}
+  /* {"CONTENT-LENGTH", NUMERIC_TYPE} */
   head_response->content_length_idx = HEADER_INDEX_CONTENT_LENGTH;
   head_response->content_length = 0;
 
-  // {"ACCEPT-RANGES", STRING_TYPE}
+  /* {"ACCEPT-RANGES", STRING_TYPE} */
   head_response->accept_ranges_idx = HEADER_INDEX_ACCEPT_RANGES;
   head_response->accept_ranges = NULL;
   head_response->accept_byte_ranges = FALSE;
 
-  // {"CONTENT-RANGE", STRING_TYPE}
+  /* {"CONTENT-RANGE", STRING_TYPE} */
   head_response->content_range_idx = HEADER_INDEX_CONTENT_RANGE;
   head_response->content_range_start = 0;
   head_response->content_range_end = 0;
   head_response->content_range_total = 0;
 
-  // {"CONTENT-TYPE", STRING_TYPE}
+  /* {"CONTENT-TYPE", STRING_TYPE} */
   head_response->content_type_idx = HEADER_INDEX_CONTENT_TYPE;
   head_response->content_type = NULL;
 
-  // Addition subfields in CONTENT TYPE if dtcp encrypted
+  /* Addition subfields in CONTENT TYPE if dtcp encrypted */
   head_response->dtcp_host_idx = HEADER_INDEX_DTCP_HOST;
   head_response->dtcp_host = NULL;
   head_response->dtcp_port_idx = HEADER_INDEX_DTCP_PORT;
   head_response->dtcp_port = -1;
   head_response->content_format_idx = HEADER_INDEX_CONTENT_FORMAT;
 
-  // {"CONTENTFEATURES.DLNA.ORG", STRING_TYPE},
+  /* {"CONTENTFEATURES.DLNA.ORG", STRING_TYPE}, */
   head_response->content_features_idx = HEADER_INDEX_CONTENTFEATURES;
 
-  // {"DLNA.ORG_PN", STRING_TYPE}
+  /* {"DLNA.ORG_PN", STRING_TYPE} */
   head_response->content_features->profile_idx = HEADER_INDEX_PN;
   head_response->content_features->profile = NULL;
 
-  // {"DLNA.ORG_OP", FLAG_TYPE}
+  /* {"DLNA.ORG_OP", FLAG_TYPE} */
   head_response->content_features->operations_idx = HEADER_INDEX_OP;
   head_response->content_features->op_time_seek_supported = FALSE;
   head_response->content_features->op_range_supported = FALSE;
 
-  // {"DLNA.ORG_PS", NUMERIC_TYPE}, // 13
+  /* {"DLNA.ORG_PS", NUMERIC_TYPE}, // 13 */
   head_response->content_features->playspeeds_idx = HEADER_INDEX_PS;
   head_response->content_features->playspeeds_cnt = 0;
 
-  // {"DLNA.ORG_FLAGS", FLAG_TYPE} // 14
+  /* {"DLNA.ORG_FLAGS", FLAG_TYPE} // 14 */
   head_response->content_features->flags_idx = HEADER_INDEX_FLAGS;
   head_response->content_features->flag_sender_paced_set = FALSE;
   head_response->content_features->flag_limited_time_seek_set = FALSE;
@@ -2361,7 +2348,7 @@ dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src,
   head_response->content_features->flag_full_clear_text_set = FALSE;
   head_response->content_features->flag_limited_clear_text_set = FALSE;
 
-  // {"DLNA.ORG_CI", FLAG_TYPE}
+  /* {"DLNA.ORG_CI", FLAG_TYPE} */
   head_response->content_features->conversion_idx = HEADER_INDEX_CI;
   head_response->content_features->is_converted = FALSE;
 
@@ -2424,7 +2411,7 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
   gint ret_code = 0;
   guint64 guint64_value = 0;
 
-  // Get value based on index
+  /* Get value based on index */
   switch (idx) {
     case HEADER_INDEX_TRANSFERMODE:
       head_response->transfer_mode = g_strdup (field_value);
@@ -2528,7 +2515,7 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
     case HEADER_INDEX_VARY:
     case HEADER_INDEX_PRAGMA:
     case HEADER_INDEX_CACHE_CONTROL:
-      // Ignore field values
+      /* Ignore field values */
       break;
 
     default:
@@ -2562,7 +2549,7 @@ static gboolean
 dlna_src_head_response_parse_time_seek (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, gint idx, const gchar * field_str)
 {
-  // Extract start and end NPT from TimeSeekRange header
+  /* Extract start and end NPT from TimeSeekRange header */
   if (!dlna_src_parse_npt_range (dlna_src, field_str,
           &head_response->time_seek_npt_start_str,
           &head_response->time_seek_npt_end_str,
@@ -2570,10 +2557,10 @@ dlna_src_head_response_parse_time_seek (GstDlnaSrc * dlna_src,
           &head_response->time_seek_npt_start,
           &head_response->time_seek_npt_end,
           &head_response->time_seek_npt_duration))
-    // Return, errors which have been logged already
+    /* Return, errors which have been logged already */
     return FALSE;
 
-  // Extract start and end bytes from TimeSeekRange header if present
+  /* Extract start and end bytes from TimeSeekRange header if present */
   if (strstr (g_ascii_strup (field_str, strlen (field_str)),
           RANGE_HEADERS[HEADER_INDEX_BYTES])) {
     if (!dlna_src_parse_byte_range (dlna_src, field_str, HEADER_INDEX_BYTES,
@@ -2609,28 +2596,29 @@ static gboolean
 dlna_src_head_response_parse_available_range (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, gint idx, const gchar * field_str)
 {
-  // Extract start and end NPT from availableSeekRange header
+  /* Extract start and end NPT from availableSeekRange header */
   if (!dlna_src_parse_npt_range (dlna_src, field_str,
           &head_response->available_seek_npt_start_str,
           &head_response->available_seek_npt_end_str,
           NULL,
           &head_response->available_seek_npt_start,
           &head_response->available_seek_npt_end, NULL))
-    // Return, errors which have been logged already
+    /* Return, errors which have been logged already */
     return FALSE;
 
-  // Extract start and end bytes from availableSeekRange header using bytes
+  /* Extract start and end bytes from availableSeekRange header using bytes */
   if (!dlna_src_parse_byte_range (dlna_src, field_str,
           HEADER_INDEX_BYTES, &head_response->available_seek_start,
           &head_response->available_seek_end, NULL))
-    // Return, errors which have been logged already
+    /* Return, errors which have been logged already */
     return FALSE;
-  // Extract start and end bytes from availableSeekRange header using clear text bytes
+  /* Extract start and end bytes from availableSeekRange header using clear
+     text bytes */
   if (!dlna_src_parse_byte_range (dlna_src, field_str,
           HEADER_INDEX_CLEAR_TEXT,
           &head_response->available_seek_cleartext_start,
           &head_response->available_seek_cleartext_end, NULL))
-    // Return, errors which have been logged already
+    /* Return, errors which have been logged already */
     return FALSE;
 
   return TRUE;
@@ -2669,7 +2657,7 @@ dlna_src_parse_byte_range (GstDlnaSrc * dlna_src,
   guint64 ullong2 = 0;
   guint64 ullong3 = 0;
 
-  // Extract BYTES portion of header value
+  /* Extract BYTES portion of header value */
   header =
       strstr (g_ascii_strup (field_str, strlen (field_str)),
       RANGE_HEADERS[header_index]);
@@ -2687,9 +2675,9 @@ dlna_src_parse_byte_range (GstDlnaSrc * dlna_src,
     return FALSE;
   }
 
-  // Determine if byte string includes total which is not an *
+  /* Determine if byte string includes total which is not an '*' */
   if (strstr (header_value, "/") && !strstr (header_value, "*")) {
-    // Extract start and end and total BYTES
+    /* Extract start and end and total BYTES */
     if ((ret_code =
             sscanf (header_value,
                 "%" G_GUINT64_FORMAT "-%" G_GUINT64_FORMAT "/%"
@@ -2755,7 +2743,7 @@ dlna_src_parse_npt_range (GstDlnaSrc * dlna_src, const gchar * field_str,
   gchar tmp2[32] = { 0 };
   gchar tmp3[32] = { 0 };
 
-  // Extract NPT portion of header value
+  /* Extract NPT portion of header value */
   header =
       strstr (g_ascii_strup (field_str, strlen (field_str)),
       RANGE_HEADERS[HEADER_INDEX_NPT]);
@@ -2770,7 +2758,7 @@ dlna_src_parse_npt_range (GstDlnaSrc * dlna_src, const gchar * field_str,
     return FALSE;
   }
 
-  // Determine if npt string includes total
+  /* Determine if npt string includes total */
   if (strstr (header_value, "/")) {
     if ((ret_code =
             sscanf (header_value, "%31[^-]-%31[^/]/%31s %*s", tmp1, tmp2,
@@ -2819,12 +2807,14 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
 {
   GST_LOG_OBJECT (dlna_src, "Called with field str: %s", field_value);
 
-  // Split CONTENTFEATURES.DLNA.ORG into following sub-fields using ";" as deliminator
-  //"DLNA.ORG_PN"
-  //"DLNA.ORG_OP"
-  //"DLNA.ORG_PS"
-  //"DLNA.ORG_FLAGS"
-  //"DLNA.ORG_CI"
+  /* Split CONTENTFEATURES.DLNA.ORG into following sub-fields
+     using ";" as deliminator
+
+       "DLNA.ORG_PN"
+       "DLNA.ORG_OP"
+       "DLNA.ORG_PS"
+       "DLNA.ORG_FLAGS"
+       "DLNA.ORG_CI" */
   gchar *pn_str = NULL;
   gchar *op_str = NULL;
   gchar *ps_str = NULL;
@@ -2833,13 +2823,13 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
   gchar **tokens = NULL;
   gchar *tmp_str = NULL;
 
-  // Split into parts using ";" as delmin
+  /* Split into parts using ";" as delmin */
   tokens = g_strsplit (field_value, ";", 0);
   gchar **ptr;
   for (ptr = tokens; *ptr; ptr++) {
     if (strlen (*ptr) > 0) {
 
-      // "DLNA.ORG_PN"
+      /* "DLNA.ORG_PN" */
       if ((tmp_str =
               strstr (g_ascii_strup (*ptr, strlen (*ptr)),
                   CONTENT_FEATURES_HEADERS[HEADER_INDEX_PN])) != NULL) {
@@ -2847,7 +2837,7 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
             CONTENT_FEATURES_HEADERS[HEADER_INDEX_PN]);
         pn_str = *ptr;
       }
-      // "DLNA.ORG_OP"
+      /* "DLNA.ORG_OP" */
       else if ((tmp_str =
               strstr (g_ascii_strup (*ptr, strlen (*ptr)),
                   CONTENT_FEATURES_HEADERS[HEADER_INDEX_OP])) != NULL) {
@@ -2855,7 +2845,7 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
             CONTENT_FEATURES_HEADERS[HEADER_INDEX_OP]);
         op_str = *ptr;
       }
-      // "DLNA.ORG_PS"
+      /* "DLNA.ORG_PS" */
       else if ((tmp_str =
               strstr (g_ascii_strup (*ptr, strlen (*ptr)),
                   CONTENT_FEATURES_HEADERS[HEADER_INDEX_PS])) != NULL) {
@@ -2863,7 +2853,7 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
             CONTENT_FEATURES_HEADERS[HEADER_INDEX_PS]);
         ps_str = *ptr;
       }
-      // "DLNA.ORG_FLAGS"
+      /* "DLNA.ORG_FLAGS" */
       else if ((tmp_str =
               strstr (g_ascii_strup (*ptr, strlen (*ptr)),
                   CONTENT_FEATURES_HEADERS[HEADER_INDEX_FLAGS])) != NULL) {
@@ -2871,7 +2861,7 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
             CONTENT_FEATURES_HEADERS[HEADER_INDEX_FLAGS]);
         flags_str = *ptr;
       }
-      // "DLNA.ORG_CI"
+      /* "DLNA.ORG_CI" */
       else if ((tmp_str =
               strstr (g_ascii_strup (*ptr, strlen (*ptr)),
                   CONTENT_FEATURES_HEADERS[HEADER_INDEX_CI])) != NULL) {
@@ -2978,13 +2968,13 @@ dlna_src_head_response_parse_operations (GstDlnaSrc * dlna_src,
   } else {
     GST_LOG_OBJECT (dlna_src, "OP Field value: %s", tmp2);
 
-    // Verify length is as expected = 2
+    /* Verify length is as expected = 2 */
     if (strlen (tmp2) != 2) {
       GST_WARNING_OBJECT (dlna_src,
           "DLNA.ORG_OP from HEAD response sub field %s value: %s, is not at expected len of 2",
           field_str, tmp2);
     } else {
-      // First char represents time seek support
+      /* First char represents time seek support */
       if ((tmp2[0] == '0') || (tmp2[0] == '1')) {
         if (tmp2[0] == '0') {
           head_response->content_features->op_time_seek_supported = FALSE;
@@ -2997,7 +2987,7 @@ dlna_src_head_response_parse_operations (GstDlnaSrc * dlna_src,
             field_str, tmp2);
       }
 
-      // Second char represents range support
+      /* Second char represents range support */
       if ((tmp2[1] == '0') || (tmp2[1] == '1')) {
         if (tmp2[1] == '0') {
           head_response->content_features->op_range_supported = FALSE;
@@ -3046,21 +3036,21 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src,
   } else {
     GST_LOG_OBJECT (dlna_src, "PS Field value: %s", tmp2);
 
-    // Tokenize list of comma separated playspeeds
+    /* Tokenize list of comma separated playspeeds */
     tokens = g_strsplit (tmp2, ",", PLAYSPEEDS_MAX_CNT);
     gchar **ptr;
     for (ptr = tokens; *ptr; ptr++) {
       if (strlen (*ptr) > 0) {
         GST_LOG_OBJECT (dlna_src, "Found PS: %s", *ptr);
 
-        // Store string representation
+        /* Store string representation */
         head_response->content_features->playspeed_strs
             [head_response->content_features->playspeeds_cnt]
             = g_strdup (*ptr);
 
-        // Check if this is a non-fractional value
+        /* Check if this is a non-fractional value */
         if (strstr (*ptr, "/") == NULL) {
-          // Convert str to numeric value
+          /* Convert str to numeric value */
           if ((ret_code = sscanf (*ptr, "%f", &rate)) != 1) {
             GST_WARNING_OBJECT (dlna_src,
                 "Problems converting playspeed %s into numeric value", *ptr);
@@ -3071,7 +3061,7 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src,
                 rate;
           }
         } else {
-          // Handle conversion of fractional values
+          /* Handle conversion of fractional values */
           if ((ret_code = sscanf (*ptr, "%d/%d", &n, &d)) != 2) {
             GST_WARNING_OBJECT (dlna_src,
                 "Problems converting fractional playspeed %s into numeric value",
@@ -3121,7 +3111,7 @@ dlna_src_head_response_parse_flags (GstDlnaSrc * dlna_src,
   } else {
     GST_LOG_OBJECT (dlna_src, "FLAGS Field value: %s", tmp2);
 
-    // Get value of each of the defined flags
+    /* Get value of each of the defined flags */
     head_response->content_features->flag_sender_paced_set =
         dlna_src_head_response_is_flag_set (dlna_src, tmp2, SP_FLAG);
     head_response->content_features->flag_limited_time_seek_set =
@@ -3215,24 +3205,24 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
   gchar **tokens = NULL;
   gchar *tmp_str;
 
-  // If not DTCP content, this field is mime-type
+  /* If not DTCP content, this field is mime-type */
   if (strstr (g_ascii_strup (field_value, strlen (field_value)),
           "DTCP") == NULL) {
     head_response->content_type = g_strdup (field_value);
   } else {
-    // DTCP related info in subfields
-    // Split CONTENT-TYPE into following sub-fields using ";" as deliminator
-    //
-    // DTCP1HOST
-    // DTCP1PORT
-    // CONTENTFORMAT
+    /* DTCP related info in subfields
+       Split CONTENT-TYPE into following sub-fields using ";" as deliminator
 
-    // Split into parts using ";" as delmin
+       DTCP1HOST
+       DTCP1PORT
+       CONTENTFORMAT */
+
+    /* Split into parts using ";" as delmin */
     tokens = g_strsplit (field_value, ";", 0);
     gchar **ptr;
     for (ptr = tokens; *ptr; ptr++) {
       if (strlen (*ptr) > 0) {
-        // DTCP1HOST
+        /* DTCP1HOST */
         if ((tmp_str =
                 strstr (g_ascii_strup (*ptr, strlen (*ptr)),
                     CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_HOST])) != NULL) {
@@ -3240,7 +3230,7 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
               CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_HOST]);
           head_response->dtcp_host = g_strdup ((strstr (tmp_str, "=") + 1));
         }
-        // DTCP1PORT
+        /* DTCP1PORT */
         else if ((tmp_str =
                 strstr (g_ascii_strup (*ptr, strlen (*ptr)),
                     CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_PORT])) != NULL) {
@@ -3254,7 +3244,7 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
                 CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_PORT]);
           }
         }
-        // CONTENTFORMAT
+        /* CONTENTFORMAT */
         else if ((tmp_str =
                 strstr (g_ascii_strup (*ptr, strlen (*ptr)),
                     CONTENT_TYPE_HEADERS[HEADER_INDEX_CONTENT_FORMAT])) !=
@@ -3271,11 +3261,11 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
             head_response->content_type = g_strdup (tmp2);
           }
         }
-        //  APPLICATION/X-DTCP1a
+        /*  APPLICATION/X-DTCP1 */
         else if ((tmp_str =
                 strstr (g_ascii_strup (*ptr, strlen (*ptr)),
                     CONTENT_TYPE_HEADERS[HEADER_INDEX_APP_DTCP])) != NULL) {
-          // Ignore this field
+          /* Ignore this field */
         } else {
           GST_WARNING_OBJECT (dlna_src, "Unrecognized sub field:%s", *ptr);
         }
@@ -3305,12 +3295,12 @@ dlna_src_head_response_is_flag_set (GstDlnaSrc * dlna_src,
         "FLAGS Field value null or too short : %s", flags_str);
     return FALSE;
   }
-  // Drop reserved flags off of value (prepended zeros will be ignored)
+  /* Drop reserved flags off of value (prepended zeros will be ignored) */
   gchar *tmp_str = g_strdup (flags_str);
   gint len = strlen (tmp_str);
   tmp_str[len - RESERVED_FLAGS_LENGTH] = '\0';
 
-  // Convert into long using hexidecimal format
+  /* Convert into long using hexidecimal format */
   gint64 value = strtoll (tmp_str, NULL, 16);
 
   g_free (tmp_str);
@@ -3687,9 +3677,9 @@ static gboolean
 dlna_src_convert_bytes_to_npt_nanos (GstDlnaSrc * dlna_src, guint64 bytes,
     guint64 * npt_nanos)
 {
-  // Unable to issue time seek range header with bytes and get back npt
-  // so just using the time seek range results from previous head to estimate
-  // what npt would be for supplied byte
+  /* Unable to issue time seek range header with bytes and get back npt
+     so just using the time seek range results from previous head to estimate
+     what npt would be for supplied byte */
   *npt_nanos = (bytes * dlna_src->npt_duration_nanos) / dlna_src->byte_total;
 
   GST_INFO_OBJECT (dlna_src,
@@ -3715,7 +3705,7 @@ static gboolean
 dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
     guint64 * bytes)
 {
-  // Issue head to get conversion info
+  /* Issue head to get conversion info */
   GstDlnaSrcHeadResponse *head_response = NULL;
   gchar head_request_str[MAX_HTTP_BUF_SIZE] = { 0 };
   gint head_request_max_size = MAX_HTTP_BUF_SIZE;
@@ -3725,7 +3715,7 @@ dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
       { {HEADER_TIME_SEEK_RANGE_TITLE, HEADER_TIME_SEEK_RANGE_VALUE} };
   gsize time_seek_head_request_headers_array_size = 1;
 
-  // Convert start time from nanos into secs string
+  /* Convert start time from nanos into secs string */
   guint64 npt_secs = npt_nanos / GST_SECOND;
 
   if (!dlna_src_head_response_init_struct (dlna_src, &head_response)) {
@@ -3733,12 +3723,12 @@ dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
         "Problems initializing struct to store HEAD response");
     return FALSE;
   }
-  // Include time seek range
+  /* Include time seek range */
   if (g_strlcat (head_request_str, "TimeSeekRange.dlna.org: npt=",
           head_request_max_size) >= head_request_max_size)
     goto overflow;
 
-  // Include starting npt (since bytes are only include in response)
+  /* Include starting npt (since bytes are only include in response */
   g_snprintf (tmpStr, tmp_str_max_size, "%" G_GUINT64_FORMAT, npt_secs);
   if (g_strlcat (head_request_str, tmpStr,
           head_request_max_size) >= head_request_max_size)
@@ -3763,7 +3753,7 @@ dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
       "Converted %" GST_TIME_FORMAT " npt to %" G_GUINT64_FORMAT " bytes",
       GST_TIME_ARGS (npt_nanos), *bytes);
 
-  // Free head response structure
+  /* Free head response structure */
   dlna_src_head_response_free (dlna_src, head_response);
 
   return TRUE;
@@ -3804,7 +3794,7 @@ dlna_src_npt_to_nanos (GstDlnaSrc * dlna_src, gchar * string,
   float secs = 0.;
 
   if (sscanf (string, "%u:%u:%f", &hours, &mins, &secs) == 3) {
-    // Long form
+    /* Long form */
     *media_time_nanos =
         ((hours * 60 * 60 * 1000) + (mins * 60 * 1000) +
         (secs * 1000)) * 1000000L;
@@ -3814,7 +3804,7 @@ dlna_src_npt_to_nanos (GstDlnaSrc * dlna_src, gchar * string,
         "Convert npt str %s hr=%d:mn=%d:s=%f into nanosecs: %"
         G_GUINT64_FORMAT, string, hours, mins, secs, *media_time_nanos);
   } else if (sscanf (string, "%f", &secs) == 1) {
-    // Short form
+    /* Short form */
     *media_time_nanos = (secs * 1000) * 1000000L;
     ret = TRUE;
     GST_LOG_OBJECT (dlna_src,
@@ -3871,10 +3861,11 @@ dlna_src_init (GstPlugin * dlna_src)
   GST_DEBUG_CATEGORY_INIT (gst_dlna_src_debug, "dlnasrc", 0,
       "MPEG+DLNA Player");
 
-  // *TODO* - setting  + 1 forces this element to get selected as src by playsrc2
+  /* *TODO* - setting  + 1 forces this element to get selected as
+     src by playsrc2 */
   return gst_element_register ((GstPlugin *) dlna_src, "dlnasrc",
       GST_RANK_PRIMARY + 101,
-      //                  GST_RANK_PRIMARY-1,
+      /*                  GST_RANK_PRIMARY-1, */
       GST_TYPE_DLNA_SRC);
 }
 
