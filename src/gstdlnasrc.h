@@ -77,15 +77,14 @@ struct _GstDlnaSrc
     SoupMessage *soup_msg;
 
     // Socket params used to issue HEAD request
-    gchar *uri_addr;
-    guint uri_port;
-    gint sock;
+    //gchar *uri_addr;
+    //guint uri_port;
+    //gint sock;
 
     GstDlnaSrcHeadResponse* server_info;
 
     // Current playback rate
     gfloat rate;
-
     gfloat requested_rate;
     GstFormat requested_format;
     guint64 requested_start;
