@@ -230,8 +230,10 @@ static void gst_dlna_src_uri_handler_init (gpointer g_iface,
 // **********************
 // Local method declarations
 //
-static gboolean
-dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri, GError ** error);
+static gboolean dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri,
+    GError ** error);
+
+static gboolean dlna_src_uri_init (GstDlnaSrc * dlna_src);
 
 static gboolean dlna_src_uri_gather_info (GstDlnaSrc * dlna_src);
 
@@ -454,10 +456,19 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
 static void
 gst_dlna_src_init (GstDlnaSrc * dlna_src)
 {
-  GST_DEBUG_OBJECT (dlna_src, "Initializing");
+  GST_INFO_OBJECT (dlna_src, "Initializing");
+
+  dlna_src->http_src = NULL;
+  dlna_src->dtcp_decrypter = NULL;
+  dlna_src->src_pad = NULL;
 
   dlna_src->cl_name = g_strdup (DLNA_SRC_CL_NAME);
   dlna_src->dtcp_blocksize = DEFAULT_DTCP_BLOCKSIZE;
+  dlna_src->src_pad = NULL;
+  dlna_src->dtcp_key_storage = NULL;
+  dlna_src->uri = NULL;
+  dlna_src->soup_session = NULL;
+  dlna_src->soup_msg = NULL;
 
   dlna_src->is_uri_initialized = FALSE;
   dlna_src->is_live = FALSE;
@@ -477,14 +488,14 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
   dlna_src->npt_duration_str = NULL;
 
   dlna_src->rate = 1.0;
-  dlna_src->handled_time_seek_seqnum = FALSE;
-  dlna_src->time_seek_seqnum = 0;
   dlna_src->requested_rate = 1.0;
   dlna_src->requested_format = GST_FORMAT_BYTES;
   dlna_src->requested_start = 0;
   dlna_src->requested_stop = -1;
 
-  dlna_src_setup_bin (dlna_src);
+  dlna_src->handled_time_seek_seqnum = FALSE;
+  dlna_src->time_seek_event_start = 0;
+  dlna_src->time_seek_seqnum = 0;
 
   GST_LOG_OBJECT (dlna_src, "Initialization complete");
 }
@@ -582,13 +593,11 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
       break;
 
     case PROP_SUPPORTED_RATES:
-      if (!dlna_src->is_uri_initialized) {
-        GST_INFO_OBJECT (dlna_src,
-            "Supported rates info not available, gathering info");
-        if (!dlna_src_uri_gather_info (dlna_src))
-          GST_ERROR_OBJECT (dlna_src,
-              "Problems gathering information about URI");
-      }
+      GST_INFO_OBJECT (dlna_src,
+          "Supported rates info not available, make sure URI is initialized");
+      if (!dlna_src_uri_init (dlna_src))
+        GST_ERROR_OBJECT (dlna_src, "Problems initializing URI");
+
       GST_LOG_OBJECT (dlna_src, "Getting property: supported rates");
       if ((dlna_src->server_info != NULL) &&
           (dlna_src->server_info->content_features != NULL) &&
@@ -632,14 +641,11 @@ gst_dlna_src_change_state (GstElement * element, GstStateChange transition)
   switch (transition) {
     case GST_STATE_CHANGE_NULL_TO_READY:
       break;
-
     case GST_STATE_CHANGE_READY_TO_PAUSED:
-      if (!dlna_src->is_uri_initialized) {
-        if (!dlna_src_uri_gather_info (dlna_src)) {
-          GST_ERROR_OBJECT (dlna_src,
-              "Problems gathering information about URI");
-          return ret;
-        }
+      GST_INFO_OBJECT (dlna_src, "Make sure URI is initialized");
+      if (!dlna_src_uri_init (dlna_src)) {
+        GST_ERROR_OBJECT (dlna_src, "Problems initializing URI");
+        return ret;
       }
       break;
     default:
@@ -1205,6 +1211,7 @@ dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
   };
 
   gsize live_content_head_request_headers_size = 1;
+  GST_INFO_OBJECT (dlna_src, "Called");
 
   // Check if supplied rate is supported
   if ((rate == 1.0) || (dlna_src_is_rate_supported (dlna_src, rate))) {
@@ -1562,7 +1569,9 @@ gst_dlna_src_uri_handler_init (gpointer g_iface, gpointer iface_data)
  * Sets the URI property to the supplied value.  It is called either via the URI
  * handler interface set method or via setting the element's property.  The
  * additional setup (issuing HEAD and setting up souphttpsrc for GET) for the URI
- * is performed when state changes from READY->PAUSED.
+ * is suppose to be performed when state changes from READY->PAUSED but it seems
+ * that it must be performed here otherwise we get an error and playback fails due
+ * to unlinked.
  */
 static gboolean
 dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri, GError ** error)
@@ -1576,6 +1585,35 @@ dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri, GError ** error)
     return FALSE;
 
   dlna_src->uri = g_strdup (uri);
+
+  return dlna_src_uri_init (dlna_src);
+}
+
+/**
+ * Gathers the info about the URI and then sets up the bin, either including the
+ * dtcp decrypter element or not based on HEAD response.
+ */
+static gboolean
+dlna_src_uri_init (GstDlnaSrc * dlna_src)
+{
+  GST_INFO_OBJECT (dlna_src, "Called");
+
+  if (dlna_src->is_uri_initialized) {
+    GST_DEBUG_OBJECT (dlna_src, "Returning since URI is already initialized");
+    return TRUE;
+  }
+
+  if (!dlna_src_uri_gather_info (dlna_src)) {
+    GST_ERROR_OBJECT (dlna_src, "Problems gathering URI info");
+    return FALSE;
+  }
+
+  if (!dlna_src_setup_bin (dlna_src)) {
+    GST_ERROR_OBJECT (dlna_src, "Problems setting up dtcp elements");
+    return FALSE;
+  }
+
+  dlna_src->is_uri_initialized = TRUE;
 
   return TRUE;
 }
@@ -1593,6 +1631,7 @@ static gboolean
 dlna_src_setup_bin (GstDlnaSrc * dlna_src)
 {
   guint64 content_size;
+  GstPad *pad = NULL;
 
   GST_INFO_OBJECT (dlna_src, "called");
 
@@ -1607,21 +1646,39 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
 
   gst_bin_add (GST_BIN (&dlna_src->bin), dlna_src->http_src);
 
-  if (dlna_src->uri)
+  if (dlna_src->uri) {
+    GST_INFO_OBJECT (dlna_src, "Setting URI of souphttpsrc");
     g_object_set (G_OBJECT (dlna_src->http_src), "location", dlna_src->uri,
         NULL);
+  } else
+    GST_INFO_OBJECT (dlna_src, "Not setting URI of souphttpsrc");
 
-  // Create src ghost pad of dlna src using http src so playbin will recognize element as a src
-  GST_DEBUG_OBJECT (dlna_src, "Getting http src pad");
-  GstPad *pad = gst_element_get_static_pad (dlna_src->http_src, "src");
+  /* Setup dtcp element if necessary */
+  if (dlna_src->is_encrypted) {
+    GST_INFO_OBJECT (dlna_src, "Setting up dtcp");
+    if (!dlna_src_setup_dtcp (dlna_src)) {
+      GST_ERROR_OBJECT (dlna_src, "Problems setting up dtcp elements");
+      return FALSE;
+    }
+    GST_INFO_OBJECT (dlna_src, "DTCP setup successful");
+  } else
+    GST_INFO_OBJECT (dlna_src, "No DTCP setup required");
+
+  /* Create src ghost pad of dlna src so playbin will recognize element as a src */
+  if (dlna_src->is_encrypted) {
+    GST_DEBUG_OBJECT (dlna_src, "Getting decrypter src pad");
+    pad = gst_element_get_static_pad (dlna_src->dtcp_decrypter, "src");
+  } else {
+    GST_DEBUG_OBJECT (dlna_src, "Getting http src pad");
+    pad = gst_element_get_static_pad (dlna_src->http_src, "src");
+  }
   if (!pad) {
     GST_ERROR_OBJECT (dlna_src,
-        "Could not get pad for dtcp decrypter. Exiting.");
+        "Could not get pad to ghost pad for dlnasrc. Exiting.");
     return FALSE;
   }
 
-  GST_DEBUG_OBJECT (dlna_src,
-      "Creating src pad for dlnasrc bin using http src pad");
+  GST_DEBUG_OBJECT (dlna_src, "Got src pad to use for ghostpad of dlnasrc bin");
   dlna_src->src_pad = gst_ghost_pad_new ("src", pad);
   gst_pad_set_active (dlna_src->src_pad, TRUE);
 
@@ -1661,8 +1718,8 @@ dlna_src_setup_dtcp (GstDlnaSrc * dlna_src)
 {
   GST_INFO_OBJECT (dlna_src, "Setup for dtcp content");
 
-  if (!dlna_src->dtcp_decrypter) {
-    GST_DEBUG_OBJECT (dlna_src, "Alread setup for dtcp content");
+  if (dlna_src->dtcp_decrypter) {
+    GST_INFO_OBJECT (dlna_src, "Already setup for dtcp content");
     return TRUE;
   }
   // Create non-encrypt sink element
@@ -1690,30 +1747,8 @@ dlna_src_setup_dtcp (GstDlnaSrc * dlna_src)
       (dlna_src->http_src, dlna_src->dtcp_decrypter, NULL)) {
     GST_ERROR_OBJECT (dlna_src, "Problems linking elements in src. Exiting.");
     return FALSE;
-  }
-
-  GST_INFO_OBJECT (dlna_src, "Getting dtcpip decrypter src pad");
-  GstPad *pad = gst_element_get_static_pad (dlna_src->dtcp_decrypter, "src");
-  if (!pad) {
-    GST_ERROR_OBJECT (dlna_src,
-        "Could not get pad for dtcp decrypter. Exiting.");
-    return FALSE;
-  }
-
-  GST_INFO_OBJECT (dlna_src,
-      "Creating src pad for dlnasrc bin using decyrpter src pad");
-  dlna_src->src_pad = gst_ghost_pad_new ("src", pad);
-  gst_pad_set_active (dlna_src->src_pad, TRUE);
-  gst_element_add_pad (GST_ELEMENT (&dlna_src->bin), dlna_src->src_pad);
-  gst_object_unref (pad);
-
-  // Configure event function on sink pad before adding pad to element
-  gst_pad_set_event_function (dlna_src->src_pad,
-      (GstPadEventFunction) gst_dlna_src_event);
-
-  // Configure event function on sink pad before adding pad to element
-  gst_pad_set_query_function (dlna_src->src_pad,
-      (GstPadQueryFunction) gst_dlna_src_query);
+  } else
+    GST_INFO_OBJECT (dlna_src, "Linked http src and dtcp decrypter");
 
   // Setup the block size for dtcp
   g_object_set (dlna_src->http_src, "blocksize", dlna_src->dtcp_blocksize,
@@ -1760,7 +1795,7 @@ dlna_src_uri_gather_info (GstDlnaSrc * dlna_src)
       { {HEADER_DTCP_RANGE_BYTES_TITLE, HEADER_DTCP_RANGE_BYTES_VALUE} };
   gsize dtcp_range_head_request_headers_array_size = 1;
 
-  GST_LOG_OBJECT (dlna_src, "Called");
+  GST_INFO_OBJECT (dlna_src, "Called");
 
   if (!dlna_src->uri) {
     GST_DEBUG_OBJECT (dlna_src, "No URI set yet");
@@ -1779,7 +1814,7 @@ dlna_src_uri_gather_info (GstDlnaSrc * dlna_src)
     return FALSE;
   }
   // Issue first head with just content features to determine what server supports
-  GST_DEBUG_OBJECT (dlna_src,
+  GST_INFO_OBJECT (dlna_src,
       "Issuing HEAD Request with content features to determine what server supports");
 
   if (!dlna_src_soup_issue_head (dlna_src,
@@ -1842,8 +1877,6 @@ dlna_src_uri_gather_info (GstDlnaSrc * dlna_src)
   GST_INFO_OBJECT (dlna_src, "Parsed HEAD Response into struct: %s",
       struct_str->str);
 
-  dlna_src->is_uri_initialized = TRUE;
-
   return TRUE;
 }
 
@@ -1854,7 +1887,7 @@ dlna_src_soup_issue_head (GstDlnaSrc * dlna_src, gsize header_array_size,
 {
   gint i;
 
-  GST_DEBUG_OBJECT (dlna_src, "Creating soup message");
+  GST_INFO_OBJECT (dlna_src, "Creating soup message");
   dlna_src->soup_msg = soup_message_new (SOUP_METHOD_HEAD, dlna_src->uri);
   if (!dlna_src->soup_msg) {
     GST_WARNING_OBJECT (dlna_src,
@@ -1891,10 +1924,13 @@ dlna_src_soup_issue_head (GstDlnaSrc * dlna_src, gsize header_array_size,
   }
 
   if (do_update_overall_info) {
+    GST_INFO_OBJECT (dlna_src, "Updating overall info");
     // Update info based on response to HEAD info
     if (!dlna_src_update_overall_info (dlna_src, head_response))
-      GST_INFO_OBJECT (dlna_src, "Problems initializing content info");
-  }
+      GST_WARNING_OBJECT (dlna_src, "Problems initializing content info");
+  } else
+    GST_INFO_OBJECT (dlna_src, "Not updating overall info");
+
   // Clear out existing message - *todo* - do I need to free it?
   dlna_src->soup_msg = NULL;
 
@@ -1913,10 +1949,9 @@ static gboolean
 dlna_src_update_overall_info (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response)
 {
-  GST_LOG_OBJECT (dlna_src, "Called");
+  GST_INFO_OBJECT (dlna_src, "Called");
 
   guint64 content_size;
-  gchar *souphttpsrc_location = NULL;
   GString *npt_str = g_string_sized_new (32);
 
   if (!head_response) {
@@ -2038,23 +2073,6 @@ dlna_src_update_overall_info (GstDlnaSrc * dlna_src,
   } else
     GST_INFO_OBJECT (dlna_src,
         "Unable set content size due to either null souphttpsrc or total == 0");
-
-  // Make sure location has been set for souphttpsrc
-  g_object_get (G_OBJECT (dlna_src->http_src), "location",
-      &souphttpsrc_location, NULL);
-  if (!souphttpsrc_location)
-    g_object_set (G_OBJECT (dlna_src->http_src), "location", dlna_src->uri,
-        NULL);
-
-  /* Setup dtcp element if necessary */
-  if (dlna_src->is_encrypted) {
-    if (!dlna_src_setup_dtcp (dlna_src)) {
-      GST_ERROR_OBJECT (dlna_src, "Problems setting up dtcp elements");
-      return FALSE;
-    }
-    GST_INFO_OBJECT (dlna_src, "DTCP setup successful");
-  } else
-    GST_INFO_OBJECT (dlna_src, "No DTCP setup required");
 
   return TRUE;
 }
