@@ -1599,7 +1599,7 @@ dlna_src_uri_init (GstDlnaSrc * dlna_src)
   GST_INFO_OBJECT (dlna_src, "Called");
 
   if (dlna_src->is_uri_initialized) {
-    GST_ERROR_OBJECT (dlna_src, "Returning since URI is already initialized");
+    GST_DEBUG_OBJECT (dlna_src, "Returning since URI is already initialized");
     return TRUE;
   }
 
