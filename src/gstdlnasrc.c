@@ -1664,7 +1664,7 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
   } else
     GST_INFO_OBJECT (dlna_src, "No DTCP setup required");
 
-  // Create src ghost pad of dlna src so playbin will recognize element as a src
+  /* Create src ghost pad of dlna src so playbin will recognize element as a src */
   if (dlna_src->is_encrypted) {
     GST_DEBUG_OBJECT (dlna_src, "Getting decrypter src pad");
     pad = gst_element_get_static_pad (dlna_src->dtcp_decrypter, "src");
