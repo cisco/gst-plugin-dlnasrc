@@ -81,7 +81,6 @@ struct _GstDlnaSrc
 
     /* Current playback rate */
     gfloat rate;
-
     gfloat requested_rate;
     GstFormat requested_format;
     guint64 requested_start;

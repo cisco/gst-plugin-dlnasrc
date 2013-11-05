@@ -1599,7 +1599,7 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
   } else
     GST_INFO_OBJECT (dlna_src, "Not setting URI of souphttpsrc");
 
-  /* Setup dtcp element if content is encrypted */
+  /* Setup dtcp element if necessary */
   if (dlna_src->is_encrypted) {
     GST_INFO_OBJECT (dlna_src, "Setting up dtcp");
     if (!dlna_src_setup_dtcp (dlna_src)) {
@@ -1688,9 +1688,32 @@ dlna_src_setup_dtcp (GstDlnaSrc * dlna_src)
       (dlna_src->http_src, dlna_src->dtcp_decrypter, NULL)) {
     GST_ERROR_OBJECT (dlna_src, "Problems linking elements in src. Exiting.");
     return FALSE;
-  } else
-    GST_INFO_OBJECT (dlna_src, "Linked http src and dtcp decrypter");
+  }
 
+  GST_INFO_OBJECT (dlna_src, "Getting dtcpip decrypter src pad");
+  GstPad *pad = gst_element_get_static_pad (dlna_src->dtcp_decrypter, "src");
+  if (!pad) {
+    GST_ERROR_OBJECT (dlna_src,
+        "Could not get pad for dtcp decrypter. Exiting.");
+    return FALSE;
+  }
+
+  GST_INFO_OBJECT (dlna_src,
+      "Creating src pad for dlnasrc bin using decyrpter src pad");
+  dlna_src->src_pad = gst_ghost_pad_new ("src", pad);
+  gst_pad_set_active (dlna_src->src_pad, TRUE);
+  gst_element_add_pad (GST_ELEMENT (&dlna_src->bin), dlna_src->src_pad);
+  gst_object_unref (pad);
+
+  // Configure event function on sink pad before adding pad to element
+  gst_pad_set_event_function (dlna_src->src_pad,
+      (GstPadEventFunction) gst_dlna_src_event);
+
+  // Configure event function on sink pad before adding pad to element
+  gst_pad_set_query_function (dlna_src->src_pad,
+      (GstPadQueryFunction) gst_dlna_src_query);
+
+  // Setup the block size for dtcp
   g_object_set (dlna_src->http_src, "blocksize", dlna_src->dtcp_blocksize,
       NULL);
 
