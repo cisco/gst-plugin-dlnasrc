@@ -50,11 +50,6 @@ typedef struct _GstDlnaSrcClass GstDlnaSrcClass;
 typedef struct _GstDlnaSrcHeadResponse GstDlnaSrcHeadResponse;
 typedef struct _GstDlnaSrcHeadResponseContentFeatures GstDlnaSrcHeadResponseContentFeatures;
 
-/**
- * GstDlnaSrc:
- *
- * High-level dlna element
- */
 struct _GstDlnaSrc
 {
     GstBin bin;
@@ -67,11 +62,9 @@ struct _GstDlnaSrc
        logging */
     gchar* cl_name;
 
-    /* DTCP Key Storage */
     guint dtcp_blocksize;
     gchar* dtcp_key_storage;
 
-    /* Stream info */
     gchar *uri;
 
     SoupSession *soup_session;
@@ -79,7 +72,6 @@ struct _GstDlnaSrc
 
     GstDlnaSrcHeadResponse* server_info;
 
-    /* Current playback rate */
     gfloat rate;
     gfloat requested_rate;
     GstFormat requested_format;
