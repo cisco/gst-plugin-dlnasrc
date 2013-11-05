@@ -968,10 +968,12 @@ dlna_src_handle_query_segment (GstDlnaSrc * dlna_src, GstQuery * query)
 static gboolean
 dlna_src_handle_query_convert (GstDlnaSrc * dlna_src, GstQuery * query)
 {
-  // Always return true since no other element can do this
+  /* Always return true since no other element can do this */
   gboolean ret = TRUE;
   GstFormat src_fmt, dest_fmt;
   gint64 src_val, dest_val;
+  gint64 start_byte = 0;
+  gint64 start_npt = 0;
 
   GST_LOG_OBJECT (dlna_src, "Called");
 
@@ -988,8 +990,6 @@ dlna_src_handle_query_convert (GstDlnaSrc * dlna_src, GstQuery * query)
       gst_format_get_name (src_fmt),
       gst_format_get_name (dest_fmt), src_val, dest_val);
 
-  gint64 start_byte = 0;
-  gint64 start_npt = 0;
   if (src_fmt == GST_FORMAT_BYTES) {
     start_byte = src_val;
   } else if (src_fmt == GST_FORMAT_TIME) {
@@ -1106,7 +1106,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
 
     return TRUE;
   }
-  // *TODO* - is this needed here??? Assign play rate to supplied rate
+  /* *TODO* - is this needed here??? Assign play rate to supplied rate */
   dlna_src->rate = rate;
 
   dlna_src->requested_rate = rate;
@@ -1257,6 +1257,7 @@ static gboolean
 dlna_src_is_rate_supported (GstDlnaSrc * dlna_src, gfloat rate)
 {
   gboolean is_supported = FALSE;
+  int i = 0;
 
   if (!dlna_src->time_seek_supported) {
     GST_WARNING_OBJECT (dlna_src,
@@ -1265,7 +1266,6 @@ dlna_src_is_rate_supported (GstDlnaSrc * dlna_src, gfloat rate)
   }
 
   /* Look through list of server supported playspeeds and verify rate is supported */
-  int i = 0;
   for (i = 0; i < dlna_src->server_info->content_features->playspeeds_cnt; i++) {
     if (dlna_src->server_info->content_features->playspeeds[i] == rate) {
       is_supported = TRUE;
@@ -1297,6 +1297,8 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
   GstStructure *extra_headers_struct;
 
   gboolean disable_range_header = FALSE;
+  int i = 0;
+  gchar *rateStr = NULL;
 
   const gchar *playspeed_field_name = "PlaySpeed.dlna.org";
   const gchar *playspeed_field_value_prefix = "speed=";
@@ -1332,8 +1334,6 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
   /* If rate != 1.0, add playspeed header and time seek range header */
   if (rate != 1.0) {
     /* Get string representation of rate (use original values to make fractions easy like 1/3) */
-    int i = 0;
-    gchar *rateStr = NULL;
     for (i = 0; i < dlna_src->server_info->content_features->playspeeds_cnt;
         i++) {
       if (dlna_src->server_info->content_features->playspeeds[i] == rate) {
@@ -1466,7 +1466,6 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
 
   return TRUE;
 }
-
 
 static guint
 gst_dlna_src_uri_get_type (GType type)
@@ -1689,7 +1688,7 @@ dlna_src_setup_dtcp (GstDlnaSrc * dlna_src)
     GST_ERROR_OBJECT (dlna_src, "Problems linking elements in src. Exiting.");
     return FALSE;
   }
-  // Setup the block size for dtcp
+  /* Setup the block size for dtcp */
   g_object_set (dlna_src->http_src, "blocksize", dlna_src->dtcp_blocksize,
       NULL);
 
@@ -2338,11 +2337,12 @@ static gint
 dlna_src_head_response_get_field_idx (GstDlnaSrc * dlna_src,
     const gchar * field_str)
 {
+  gint idx = -1;
+  int i = 0;
+
   GST_LOG_OBJECT (dlna_src, "Determine associated HEAD response field: %s",
       field_str);
 
-  gint idx = -1;
-  int i = 0;
   for (i = 0; i < HEAD_RESPONSE_HEADERS_CNT; i++) {
     if (strstr (g_ascii_strup (field_str, strlen (field_str)),
             HEAD_RESPONSE_HEADERS[i]) != NULL) {
@@ -2367,17 +2367,16 @@ static gboolean
 dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, gint idx, const gchar * field_value)
 {
-  GST_LOG_OBJECT (dlna_src,
-      "Store value received in HEAD response field for field %d - %s, value: %s",
-      idx, HEAD_RESPONSE_HEADERS[idx], field_value);
-
   gboolean rc = TRUE;
-
   gchar tmp1[32] = { 0 };
   gchar tmp2[32] = { 0 };
   gint int_value = 0;
   gint ret_code = 0;
   guint64 guint64_value = 0;
+
+  GST_LOG_OBJECT (dlna_src,
+      "Store value received in HEAD response field for field %d - %s, value: %s",
+      idx, HEAD_RESPONSE_HEADERS[idx], field_value);
 
   /* Get value based on index */
   switch (idx) {
@@ -2894,11 +2893,11 @@ static gboolean
 dlna_src_head_response_parse_profile (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, gint idx, const gchar * field_str)
 {
-  GST_LOG_OBJECT (dlna_src, "Found PN Field: %s", field_str);
   gint ret_code = 0;
-
   gchar tmp1[256] = { 0 };
   gchar tmp2[256] = { 0 };
+
+  GST_LOG_OBJECT (dlna_src, "Found PN Field: %s", field_str);
 
   if ((ret_code = sscanf (field_str, "%255[^=]=%255s", tmp1, tmp2)) != 2) {
     GST_WARNING_OBJECT (dlna_src,
@@ -2923,11 +2922,11 @@ static gboolean
 dlna_src_head_response_parse_operations (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, gint idx, const gchar * field_str)
 {
-  GST_LOG_OBJECT (dlna_src, "Found OP Field: %s", field_str);
   gint ret_code = 0;
-
   gchar tmp1[256] = { 0 };
   gchar tmp2[256] = { 0 };
+
+  GST_LOG_OBJECT (dlna_src, "Found OP Field: %s", field_str);
 
   if ((ret_code = sscanf (field_str, "%255[^=]=%255s", tmp1, tmp2)) != 2) {
     GST_WARNING_OBJECT (dlna_src,
@@ -2984,16 +2983,16 @@ static gboolean
 dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, gint idx, const gchar * field_str)
 {
-  GST_LOG_OBJECT (dlna_src, "Found PS Field: %s", field_str);
-
   gint ret_code = 0;
-
   gchar tmp1[256] = { 0 };
   gchar tmp2[256] = { 0 };
   gfloat rate = 0;
   int d;
   int n;
   gchar **tokens;
+  gchar **ptr;
+
+  GST_LOG_OBJECT (dlna_src, "Found PS Field: %s", field_str);
 
   if ((ret_code = sscanf (field_str, "%255[^=]=%255s", tmp1, tmp2)) != 2) {
     GST_WARNING_OBJECT (dlna_src,
@@ -3005,7 +3004,6 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src,
 
     /* Tokenize list of comma separated playspeeds */
     tokens = g_strsplit (tmp2, ",", PLAYSPEEDS_MAX_CNT);
-    gchar **ptr;
     for (ptr = tokens; *ptr; ptr++) {
       if (strlen (*ptr) > 0) {
         GST_LOG_OBJECT (dlna_src, "Found PS: %s", *ptr);
@@ -3064,11 +3062,11 @@ static gboolean
 dlna_src_head_response_parse_flags (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, gint idx, const gchar * field_str)
 {
-  GST_LOG_OBJECT (dlna_src, "Found Flags Field: %s", field_str);
   gint ret_code = 0;
-
   gchar tmp1[256] = { 0 };
   gchar tmp2[256] = { 0 };
+
+  GST_LOG_OBJECT (dlna_src, "Found Flags Field: %s", field_str);
 
   if ((ret_code = sscanf (field_str, "%255[^=]=%255s", tmp1, tmp2)) != 2) {
     GST_WARNING_OBJECT (dlna_src,
@@ -3077,7 +3075,6 @@ dlna_src_head_response_parse_flags (GstDlnaSrc * dlna_src,
   } else {
     GST_LOG_OBJECT (dlna_src, "FLAGS Field value: %s", tmp2);
 
-    // Get value of each of the defined flags
     head_response->content_features->flag_sender_paced_set =
         dlna_src_head_response_is_flag_set (dlna_src, tmp2, SP_FLAG);
     head_response->content_features->flag_limited_time_seek_set =
@@ -3128,11 +3125,11 @@ static gboolean
 dlna_src_head_response_parse_conversion_indicator (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, gint idx, const gchar * field_str)
 {
-  GST_LOG_OBJECT (dlna_src, "Found CI Field: %s", field_str);
   gint ret_code = 0;
-
   gchar header[256] = { 0 };
   gchar value[256] = { 0 };
+
+  GST_LOG_OBJECT (dlna_src, "Found CI Field: %s", field_str);
 
   if ((ret_code = sscanf (field_str, "%255[^=]=%s", header, value)) != 2) {
     GST_WARNING_OBJECT (dlna_src,
@@ -3163,13 +3160,15 @@ static gboolean
 dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, gint idx, const gchar * field_value)
 {
-  GST_LOG_OBJECT (dlna_src, "Found Content Type Field: %s", field_value);
   gint ret_code = 0;
   gchar tmp1[32] = { 0 };
   gchar tmp2[32] = { 0 };
   gchar tmp3[32] = { 0 };
   gchar **tokens = NULL;
   gchar *tmp_str;
+  gchar **ptr;
+
+  GST_LOG_OBJECT (dlna_src, "Found Content Type Field: %s", field_value);
 
   /* If not DTCP content, this field is mime-type */
   if (strstr (g_ascii_strup (field_value, strlen (field_value)),
@@ -3184,7 +3183,6 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
        CONTENTFORMAT
      */
     tokens = g_strsplit (field_value, ";", 0);
-    gchar **ptr;
     for (ptr = tokens; *ptr; ptr++) {
       if (strlen (*ptr) > 0) {
         /* DTCP1HOST */
@@ -3255,18 +3253,22 @@ static gboolean
 dlna_src_head_response_is_flag_set (GstDlnaSrc * dlna_src,
     const gchar * flags_str, gint flag)
 {
+  gint64 value;
+  gchar *tmp_str;
+  gsize len;
+
   if ((flags_str == NULL) || (strlen (flags_str) <= RESERVED_FLAGS_LENGTH)) {
     GST_WARNING_OBJECT (dlna_src,
         "FLAGS Field value null or too short : %s", flags_str);
     return FALSE;
   }
   /* Drop reserved flags off of value (prepended zeros will be ignored) */
-  gchar *tmp_str = g_strdup (flags_str);
-  gint len = strlen (tmp_str);
+  tmp_str = g_strdup (flags_str);
+  len = strlen (tmp_str);
   tmp_str[len - RESERVED_FLAGS_LENGTH] = '\0';
 
   /* Convert into long using hexidecimal format */
-  gint64 value = strtoll (tmp_str, NULL, 16);
+  value = strtoll (tmp_str, NULL, 16);
 
   g_free (tmp_str);
 
@@ -3720,7 +3722,6 @@ dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
       "Converted %" GST_TIME_FORMAT " npt to %" G_GUINT64_FORMAT " bytes",
       GST_TIME_ARGS (npt_nanos), *bytes);
 
-  // Free head response structure
   dlna_src_head_response_free (dlna_src, head_response);
 
   return TRUE;
