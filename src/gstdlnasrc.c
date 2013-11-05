@@ -1521,10 +1521,8 @@ gst_dlna_src_uri_handler_init (gpointer g_iface, gpointer iface_data)
 static gboolean
 dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri, GError ** error)
 {
-  if (dlna_src->uri) {
-    g_free (dlna_src->uri);
-    dlna_src->uri = NULL;
-  }
+  g_free (dlna_src->uri);
+  dlna_src->uri = NULL;
 
   if (uri == NULL)
     return FALSE;
@@ -2031,8 +2029,7 @@ dlna_src_head_response_free (GstDlnaSrc * dlna_src,
   int i = 0;
   if (head_response) {
     if (head_response->content_features) {
-      if (head_response->content_features->profile)
-        g_free (head_response->content_features->profile);
+      g_free (head_response->content_features->profile);
 
       if (head_response->content_features->playspeeds_cnt > 0) {
         for (i = 0; i < head_response->content_features->playspeeds_cnt; i++)
@@ -2041,30 +2038,18 @@ dlna_src_head_response_free (GstDlnaSrc * dlna_src,
       g_free (head_response->content_features);
     }
 
-    if (head_response->http_rev)
-      g_free (head_response->http_rev);
-    if (head_response->ret_msg)
-      g_free (head_response->ret_msg);
-    if (head_response->accept_ranges)
-      g_free (head_response->accept_ranges);
-    if (head_response->time_seek_npt_start_str)
-      g_free (head_response->time_seek_npt_start_str);
-    if (head_response->time_seek_npt_end_str)
-      g_free (head_response->time_seek_npt_end_str);
-    if (head_response->time_seek_npt_duration_str)
-      g_free (head_response->time_seek_npt_duration_str);
-    if (head_response->transfer_mode)
-      g_free (head_response->transfer_mode);
-    if (head_response->transfer_encoding)
-      g_free (head_response->transfer_encoding);
-    if (head_response->date)
-      g_free (head_response->date);
-    if (head_response->server)
-      g_free (head_response->server);
-    if (head_response->content_type)
-      g_free (head_response->content_type);
-    if (head_response->dtcp_host)
-      g_free (head_response->dtcp_host);
+    g_free (head_response->http_rev);
+    g_free (head_response->ret_msg);
+    g_free (head_response->accept_ranges);
+    g_free (head_response->time_seek_npt_start_str);
+    g_free (head_response->time_seek_npt_end_str);
+    g_free (head_response->time_seek_npt_duration_str);
+    g_free (head_response->transfer_mode);
+    g_free (head_response->transfer_encoding);
+    g_free (head_response->date);
+    g_free (head_response->server);
+    g_free (head_response->content_type);
+    g_free (head_response->dtcp_host);
 
     g_free (head_response);
   }
