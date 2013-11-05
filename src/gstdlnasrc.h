@@ -77,11 +77,6 @@ struct _GstDlnaSrc
     SoupSession *soup_session;
     SoupMessage *soup_msg;
 
-    /* Socket params used to issue HEAD request */
-    gchar *uri_addr;
-    guint uri_port;
-    gint sock;
-
     GstDlnaSrcHeadResponse* server_info;
 
     /* Current playback rate */
