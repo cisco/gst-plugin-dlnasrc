@@ -43,12 +43,10 @@ enum
 {
   PROP_0,
   PROP_URI,
-  PROP_CL_NAME,
   PROP_SUPPORTED_RATES,
   PROP_DTCP_BLOCKSIZE,
 };
 
-#define DLNA_SRC_CL_NAME "dlnasrc"
 #define DEFAULT_DTCP_BLOCKSIZE       524288
 
 #define ELEMENT_NAME_SOUP_HTTP_SRC "soup-http-source"
@@ -399,12 +397,6 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
       g_param_spec_string ("uri", "Stream URI",
           "Sets URI A/V stream", NULL, G_PARAM_READWRITE));
 
-  g_object_class_install_property (gobject_klass, PROP_CL_NAME,
-      g_param_spec_string ("cl_name",
-          "CableLabs name",
-          "CableLabs name used to verify playbin selected source",
-          NULL, G_PARAM_READABLE));
-
   g_object_class_install_property (gobject_klass, PROP_SUPPORTED_RATES,
       g_param_spec_boxed ("supported_rates",
           "Supported Playspeed rates",
@@ -435,7 +427,6 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
   dlna_src->dtcp_decrypter = NULL;
   dlna_src->src_pad = NULL;
 
-  dlna_src->cl_name = g_strdup (DLNA_SRC_CL_NAME);
   dlna_src->dtcp_blocksize = DEFAULT_DTCP_BLOCKSIZE;
   dlna_src->src_pad = NULL;
   dlna_src->dtcp_key_storage = NULL;
@@ -553,14 +544,6 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
         g_value_set_string (value, dlna_src->uri);
         GST_LOG_OBJECT (dlna_src, "Get property returning: %s",
             g_value_get_string (value));
-      }
-      break;
-
-    case PROP_CL_NAME:
-      GST_LOG_OBJECT (dlna_src,
-          "Getting property: CableLab's assigned src name");
-      if (dlna_src->cl_name != NULL) {
-        g_value_set_string (value, dlna_src->cl_name);
       }
       break;
 

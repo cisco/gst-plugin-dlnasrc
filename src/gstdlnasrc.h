@@ -58,10 +58,6 @@ struct _GstDlnaSrc
 
     GstPad* src_pad;
 
-    /* Name used to identify this element as source in playsrc2
-       logging */
-    gchar* cl_name;
-
     guint dtcp_blocksize;
     gchar* dtcp_key_storage;
 
