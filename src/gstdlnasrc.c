@@ -1925,9 +1925,11 @@ dlna_src_update_overall_info (GstDlnaSrc * dlna_src,
     }
 
     if (head_response->available_seek_npt_start_str) {
+      g_free (dlna_src->npt_start_str);
       dlna_src->npt_start_str =
           g_strdup (head_response->available_seek_npt_start_str);
       dlna_src->npt_start_nanos = head_response->available_seek_npt_start;
+      g_free (dlna_src->npt_end_str);
       dlna_src->npt_end_str =
           g_strdup (head_response->available_seek_npt_end_str);
       dlna_src->npt_end_nanos = head_response->available_seek_npt_end;
@@ -1935,16 +1937,20 @@ dlna_src_update_overall_info (GstDlnaSrc * dlna_src,
           head_response->available_seek_npt_end -
           head_response->available_seek_npt_start;
       dlna_src_nanos_to_npt (dlna_src, dlna_src->npt_duration_nanos, npt_str);
+      g_free (dlna_src->npt_duration_str);
       dlna_src->npt_duration_str = g_strdup (npt_str->str);
       GST_INFO_OBJECT (dlna_src,
           "Time seek range values coming from availableSeekRange.dlna.org");
     } else if (head_response->time_seek_npt_start_str) {
       dlna_src->npt_start_nanos = head_response->time_seek_npt_start;
+      g_free (dlna_src->npt_start_str);
       dlna_src->npt_start_str =
           g_strdup (head_response->time_seek_npt_start_str);
       dlna_src->npt_end_nanos = head_response->time_seek_npt_end;
+      g_free (dlna_src->npt_end_str);
       dlna_src->npt_end_str = g_strdup (head_response->time_seek_npt_end_str);
       dlna_src->npt_duration_nanos = head_response->time_seek_npt_duration;
+      g_free (dlna_src->npt_duration_str);
       dlna_src->npt_duration_str =
           g_strdup (head_response->time_seek_npt_duration_str);
       GST_INFO_OBJECT (dlna_src,
@@ -2363,10 +2369,12 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
   /* Get value based on index */
   switch (idx) {
     case HEADER_INDEX_TRANSFERMODE:
+      g_free (head_response->transfer_mode);
       head_response->transfer_mode = g_strdup (field_value);
       break;
 
     case HEADER_INDEX_DATE:
+      g_free (head_response->date);
       head_response->date = g_strdup (field_value);
       break;
 
@@ -2390,6 +2398,7 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
       break;
 
     case HEADER_INDEX_ACCEPT_RANGES:
+      g_free (head_response->accept_ranges);
       head_response->accept_ranges = g_strdup (field_value);
       if (strstr (g_ascii_strup (head_response->accept_ranges,
                   strlen (head_response->accept_ranges)), ACCEPT_RANGES_BYTES))
@@ -2407,10 +2416,12 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
       break;
 
     case HEADER_INDEX_SERVER:
+      g_free (head_response->server);
       head_response->server = g_strdup (field_value);
       break;
 
     case HEADER_INDEX_TRANSFER_ENCODING:
+      g_free (head_response->transfer_encoding);
       head_response->transfer_encoding = g_strdup (field_value);
       break;
 
@@ -2422,8 +2433,10 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
             "Problems with HEAD response field header %s, idx: %d, value: %s, retcode: %d, tmp: %s, %s",
             HEAD_RESPONSE_HEADERS[idx], idx, field_value, ret_code, tmp1, tmp2);
       } else {
+        g_free (head_response->http_rev);
         head_response->http_rev = g_strdup (tmp1);
         head_response->ret_code = int_value;
+        g_free (head_response->ret_msg);
         head_response->ret_msg = g_strdup (tmp2);
       }
       break;
@@ -2719,6 +2732,7 @@ dlna_src_parse_npt_range (GstDlnaSrc * dlna_src, const gchar * field_str,
       return FALSE;
     }
 
+    g_free (*total_str);
     *total_str = g_strdup (tmp3);
     if (strcmp (*total_str, "*") != 0)
       if (!dlna_src_npt_to_nanos (dlna_src, *total_str, total))
@@ -2732,10 +2746,12 @@ dlna_src_parse_npt_range (GstDlnaSrc * dlna_src, const gchar * field_str,
       return FALSE;
     }
   }
+  g_free (*start_str);
   *start_str = g_strdup (tmp1);
   if (!dlna_src_npt_to_nanos (dlna_src, *start_str, start))
     return FALSE;
 
+  g_free (*stop_str);
   *stop_str = g_strdup (tmp2);
   if (!dlna_src_npt_to_nanos (dlna_src, *stop_str, stop))
     return FALSE;
@@ -2886,6 +2902,7 @@ dlna_src_head_response_parse_profile (GstDlnaSrc * dlna_src,
         "Problems parsing DLNA.ORG_PN from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s",
         HEAD_RESPONSE_HEADERS[idx], field_str, ret_code, tmp1, tmp2);
   } else {
+    g_free (head_response->content_features->profile);
     head_response->content_features->profile = g_strdup (tmp2);
   }
   return TRUE;
@@ -2991,6 +3008,8 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src,
         GST_LOG_OBJECT (dlna_src, "Found PS: %s", *ptr);
 
         /* Store string representation to facilitate fractional string conversion */
+        g_free (head_response->content_features->playspeed_strs
+            [head_response->content_features->playspeeds_cnt]);
         head_response->content_features->playspeed_strs
             [head_response->content_features->playspeeds_cnt]
             = g_strdup (*ptr);
@@ -3155,6 +3174,7 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
   /* If not DTCP content, this field is mime-type */
   if (strstr (g_ascii_strup (field_value, strlen (field_value)),
           "DTCP") == NULL) {
+    g_free (head_response->content_type);
     head_response->content_type = g_strdup (field_value);
   } else {
     /* DTCP related info in subfields
@@ -3173,6 +3193,7 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
                     CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_HOST])) != NULL) {
           GST_LOG_OBJECT (dlna_src, "Found field: %s",
               CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_HOST]);
+          g_free (head_response->dtcp_host);
           head_response->dtcp_host = g_strdup ((strstr (tmp_str, "=") + 1));
         }
         /* DTCP1PORT */
@@ -3203,6 +3224,7 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
           } else {
             GST_LOG_OBJECT (dlna_src, "Found field: %s",
                 CONTENT_TYPE_HEADERS[HEADER_INDEX_CONTENT_FORMAT]);
+            g_free (head_response->content_type);
             head_response->content_type = g_strdup (tmp2);
           }
         }
