@@ -193,7 +193,7 @@ GST_STATIC_PAD_TEMPLATE ("src",
     GST_STATIC_CAPS ("ANY")
     );
 
-static void gst_dlna_src_dispose (GObject * object);
+static void gst_dlna_src_finalize (GObject * object);
 
 static void gst_dlna_src_set_property (GObject * object, guint prop_id,
     const GValue * value, GParamSpec * spec);
@@ -231,9 +231,6 @@ static gboolean
 dlna_src_soup_issue_head (GstDlnaSrc * dlna_src, gsize header_array_size,
     gchar * headers[][2], GstDlnaSrcHeadResponse * head_response,
     gboolean do_update_overall_info);
-
-static void dlna_src_head_response_free (GstDlnaSrc * dlna_src,
-    GstDlnaSrcHeadResponse * head_response);
 
 static gboolean dlna_src_head_response_parse (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response);
@@ -286,6 +283,9 @@ static gboolean dlna_src_update_overall_info (GstDlnaSrc * dlna_src,
 
 static gboolean dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse ** head_response);
+
+static void dlna_src_head_response_free_struct (GstDlnaSrc * dlna_src,
+    GstDlnaSrcHeadResponse * head_response);
 
 static void dlna_src_head_response_struct_to_str (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, GString * struct_str);
@@ -408,7 +408,7 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
           "Size in bytes to read per buffer when content is dtcp encrypted (-1 = default)",
           0, G_MAXUINT, DEFAULT_DTCP_BLOCKSIZE, G_PARAM_READWRITE));
 
-  gobject_klass->dispose = GST_DEBUG_FUNCPTR (gst_dlna_src_dispose);
+  gobject_klass->finalize = GST_DEBUG_FUNCPTR (gst_dlna_src_finalize);
   gstelement_klass->change_state = gst_dlna_src_change_state;
 }
 
@@ -470,13 +470,21 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
  * @param object  element to destroy
  */
 static void
-gst_dlna_src_dispose (GObject * object)
+gst_dlna_src_finalize (GObject * object)
 {
   GstDlnaSrc *dlna_src = GST_DLNA_SRC (object);
 
   GST_INFO_OBJECT (dlna_src, " Disposing the dlna src");
 
-  G_OBJECT_CLASS (parent_class)->dispose (object);
+  dlna_src_soup_session_close (dlna_src);
+
+  dlna_src_head_response_free_struct (dlna_src, dlna_src->server_info);
+
+  g_free (dlna_src->dtcp_key_storage);
+  g_free (dlna_src->uri);
+  g_object_unref (dlna_src->soup_msg);
+
+  G_OBJECT_CLASS (parent_class)->finalize (object);
 }
 
 /**
@@ -548,11 +556,6 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
       break;
 
     case PROP_SUPPORTED_RATES:
-      GST_INFO_OBJECT (dlna_src,
-          "Supported rates info not available, make sure URI is initialized");
-      if (!dlna_src_uri_init (dlna_src))
-        GST_ERROR_OBJECT (dlna_src, "Problems initializing URI");
-
       GST_LOG_OBJECT (dlna_src, "Getting property: supported rates");
       if ((dlna_src->server_info != NULL) &&
           (dlna_src->server_info->content_features != NULL) &&
@@ -595,11 +598,6 @@ gst_dlna_src_change_state (GstElement * element, GstStateChange transition)
     case GST_STATE_CHANGE_NULL_TO_READY:
       break;
     case GST_STATE_CHANGE_READY_TO_PAUSED:
-      GST_INFO_OBJECT (dlna_src, "Make sure URI is initialized");
-      if (!dlna_src_uri_init (dlna_src)) {
-        GST_ERROR_OBJECT (dlna_src, "Problems initializing URI");
-        return ret;
-      }
       break;
     default:
       break;
@@ -613,11 +611,8 @@ gst_dlna_src_change_state (GstElement * element, GstStateChange transition)
 
   switch (transition) {
     case GST_STATE_CHANGE_PAUSED_TO_READY:
-      dlna_src_soup_session_close (dlna_src);
-
       break;
     case GST_STATE_CHANGE_READY_TO_NULL:
-      /* De-allocate non-stream-specific resources (libs, mem) */
       break;
     default:
       break;
@@ -1497,11 +1492,14 @@ gst_dlna_src_uri_handler_init (gpointer g_iface, gpointer iface_data)
 static gboolean
 dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri, GError ** error)
 {
-  g_free (dlna_src->uri);
-  dlna_src->uri = NULL;
-
   if (uri == NULL)
     return FALSE;
+
+  if (dlna_src->uri) {
+    dlna_src_head_response_free_struct (dlna_src, dlna_src->server_info);
+    g_free (dlna_src->uri);
+    dlna_src->uri = NULL;
+  }
 
   dlna_src->uri = g_strdup (uri);
 
@@ -1793,6 +1791,8 @@ dlna_src_uri_gather_info (GstDlnaSrc * dlna_src)
   GST_INFO_OBJECT (dlna_src, "Parsed HEAD Response into struct: %s",
       struct_str->str);
 
+  g_string_free (struct_str, TRUE);
+
   return TRUE;
 }
 
@@ -1803,6 +1803,10 @@ dlna_src_soup_issue_head (GstDlnaSrc * dlna_src, gsize header_array_size,
 {
   gint i;
 
+  if (dlna_src->soup_msg) {
+    GST_INFO_OBJECT (dlna_src, "Freeing soup message");
+    g_object_unref (dlna_src->soup_msg);
+  }
   GST_INFO_OBJECT (dlna_src, "Creating soup message");
   dlna_src->soup_msg = soup_message_new (SOUP_METHOD_HEAD, dlna_src->uri);
   if (!dlna_src->soup_msg) {
@@ -1989,6 +1993,8 @@ dlna_src_update_overall_info (GstDlnaSrc * dlna_src,
     GST_INFO_OBJECT (dlna_src,
         "Unable set content size due to either null souphttpsrc or total == 0");
 
+  g_string_free (npt_str, TRUE);
+
   return TRUE;
 }
 
@@ -1999,9 +2005,16 @@ dlna_src_update_overall_info (GstDlnaSrc * dlna_src,
  * @param   head_response   free memory associated with this struct
  */
 static void
-dlna_src_head_response_free (GstDlnaSrc * dlna_src,
+dlna_src_head_response_free_struct (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response)
 {
+  g_free (dlna_src->npt_start_str);
+  g_free (dlna_src->npt_end_str);
+  g_free (dlna_src->npt_duration_str);
+  g_free (dlna_src->npt_start_str);
+  g_free (dlna_src->npt_end_str);
+  g_free (dlna_src->npt_duration_str);
+
   int i = 0;
   if (head_response) {
     if (head_response->content_features) {
@@ -2011,7 +2024,8 @@ dlna_src_head_response_free (GstDlnaSrc * dlna_src,
         for (i = 0; i < head_response->content_features->playspeeds_cnt; i++)
           g_free (head_response->content_features->playspeed_strs[i]);
       }
-      g_free (head_response->content_features);
+      g_slice_free (GstDlnaSrcHeadResponseContentFeatures,
+          head_response->content_features);
     }
 
     g_free (head_response->http_rev);
@@ -2026,8 +2040,13 @@ dlna_src_head_response_free (GstDlnaSrc * dlna_src,
     g_free (head_response->server);
     g_free (head_response->content_type);
     g_free (head_response->dtcp_host);
+    g_free (head_response->available_seek_npt_start_str);
+    g_free (head_response->available_seek_npt_end_str);
+    g_free (head_response->time_seek_npt_start_str);
+    g_free (head_response->time_seek_npt_end_str);
+    g_free (head_response->time_seek_npt_duration_str);
 
-    g_free (head_response);
+    g_slice_free (GstDlnaSrcHeadResponse, head_response);
   }
 }
 
@@ -2093,6 +2112,8 @@ dlna_src_soup_log_msg (GstDlnaSrc * dlna_src)
     GST_INFO_OBJECT (dlna_src, "%s", log_str->str);
   } else
     GST_INFO_OBJECT (dlna_src, "Null soup http message");
+
+  g_string_free (log_str, TRUE);
 }
 
 /**
@@ -3683,7 +3704,7 @@ dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
       "Converted %" GST_TIME_FORMAT " npt to %" G_GUINT64_FORMAT " bytes",
       GST_TIME_ARGS (npt_nanos), *bytes);
 
-  dlna_src_head_response_free (dlna_src, head_response);
+  dlna_src_head_response_free_struct (dlna_src, head_response);
 
   return TRUE;
 
