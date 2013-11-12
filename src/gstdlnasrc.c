@@ -434,6 +434,18 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
   dlna_src->soup_session = NULL;
   dlna_src->soup_msg = NULL;
 
+  dlna_src->server_info = NULL;
+
+  dlna_src->rate = 1.0;
+  dlna_src->requested_rate = 1.0;
+  dlna_src->requested_format = GST_FORMAT_BYTES;
+  dlna_src->requested_start = 0;
+  dlna_src->requested_stop = -1;
+
+  dlna_src->time_seek_seqnum = 0;
+  dlna_src->time_seek_event_start = 0;
+  dlna_src->handled_time_seek_seqnum = FALSE;
+
   dlna_src->is_uri_initialized = FALSE;
   dlna_src->is_live = FALSE;
   dlna_src->is_encrypted = FALSE;
@@ -450,16 +462,6 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
   dlna_src->npt_start_str = NULL;
   dlna_src->npt_end_str = NULL;
   dlna_src->npt_duration_str = NULL;
-
-  dlna_src->rate = 1.0;
-  dlna_src->requested_rate = 1.0;
-  dlna_src->requested_format = GST_FORMAT_BYTES;
-  dlna_src->requested_start = 0;
-  dlna_src->requested_stop = -1;
-
-  dlna_src->handled_time_seek_seqnum = FALSE;
-  dlna_src->time_seek_event_start = 0;
-  dlna_src->time_seek_seqnum = 0;
 
   GST_LOG_OBJECT (dlna_src, "Initialization complete");
 }
@@ -590,7 +592,7 @@ gst_dlna_src_change_state (GstElement * element, GstStateChange transition)
   GstStateChangeReturn ret = GST_STATE_CHANGE_SUCCESS;
   GstDlnaSrc *dlna_src = GST_DLNA_SRC (element);
 
-  GST_INFO_OBJECT (dlna_src, "Changing state from %s to %s",
+  GST_LOG_OBJECT (dlna_src, "Changing state from %s to %s",
       gst_element_state_get_name (GST_STATE_TRANSITION_CURRENT (transition)),
       gst_element_state_get_name (GST_STATE_TRANSITION_NEXT (transition)));
 
@@ -2026,10 +2028,9 @@ dlna_src_head_response_free_struct (GstDlnaSrc * dlna_src,
     if (head_response->content_features) {
       g_free (head_response->content_features->profile);
 
-      if (head_response->content_features->playspeeds_cnt > 0) {
-        for (i = 0; i < head_response->content_features->playspeeds_cnt; i++)
-          g_free (head_response->content_features->playspeed_strs[i]);
-      }
+      for (i = 0; i < PLAYSPEEDS_MAX_CNT; i++)
+        g_free (head_response->content_features->playspeed_strs[i]);
+
       g_slice_free (GstDlnaSrcHeadResponseContentFeatures,
           head_response->content_features);
     }
@@ -2178,6 +2179,7 @@ static gboolean
 dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse ** head_response_ptr)
 {
+  gint i;
   GST_LOG_OBJECT (dlna_src, "Called");
 
   GstDlnaSrcHeadResponse *head_response = g_slice_new (GstDlnaSrcHeadResponse);
@@ -2285,6 +2287,8 @@ dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src,
   /* DLNA.ORG_PS */
   head_response->content_features->playspeeds_idx = HEADER_INDEX_PS;
   head_response->content_features->playspeeds_cnt = 0;
+  for (i = 0; i < PLAYSPEEDS_MAX_CNT; i++)
+    head_response->content_features->playspeed_strs[i] = NULL;
 
   /* DLNA.ORG_FLAGS */
   head_response->content_features->flags_idx = HEADER_INDEX_FLAGS;
