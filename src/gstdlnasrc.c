@@ -36,6 +36,7 @@
 #include <gst/gst.h>
 #include <glib-object.h>
 #include <libsoup/soup.h>
+#include <glib/gprintf.h>
 
 #include "gstdlnasrc.h"
 
@@ -224,6 +225,8 @@ static gboolean dlna_src_setup_bin (GstDlnaSrc * dlna_src);
 
 static gboolean dlna_src_setup_dtcp (GstDlnaSrc * dlna_src);
 
+static GstPipeline *dlna_src_get_pipeline (GstObject * object);
+
 static gboolean dlna_src_soup_session_open (GstDlnaSrc * dlna_src);
 static void dlna_src_soup_session_close (GstDlnaSrc * dlna_src);
 static void dlna_src_soup_log_msg (GstDlnaSrc * dlna_src);
@@ -307,6 +310,10 @@ static void dlna_src_struct_append_header_value_str_guint64 (GString *
 
 static gboolean dlna_src_handle_event_seek (GstDlnaSrc * dlna_src,
     GstPad * pad, GstEvent * event);
+
+static gboolean
+dlna_src_handle_event_reconfigure (GstDlnaSrc * dlna_src, GstPad * pad,
+    GstEvent * event);
 
 static gboolean dlna_src_handle_query_duration (GstDlnaSrc * dlna_src,
     GstQuery * query);
@@ -426,9 +433,9 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
   dlna_src->http_src = NULL;
   dlna_src->dtcp_decrypter = NULL;
   dlna_src->src_pad = NULL;
+  dlna_src->src_caps = NULL;
 
   dlna_src->dtcp_blocksize = DEFAULT_DTCP_BLOCKSIZE;
-  dlna_src->src_pad = NULL;
   dlna_src->dtcp_key_storage = NULL;
   dlna_src->uri = NULL;
   dlna_src->soup_session = NULL;
@@ -592,7 +599,7 @@ gst_dlna_src_change_state (GstElement * element, GstStateChange transition)
   GstStateChangeReturn ret = GST_STATE_CHANGE_SUCCESS;
   GstDlnaSrc *dlna_src = GST_DLNA_SRC (element);
 
-  GST_LOG_OBJECT (dlna_src, "Changing state from %s to %s",
+  GST_INFO_OBJECT (dlna_src, "Changing state from %s to %s",
       gst_element_state_get_name (GST_STATE_TRANSITION_CURRENT (transition)),
       gst_element_state_get_name (GST_STATE_TRANSITION_NEXT (transition)));
 
@@ -600,6 +607,17 @@ gst_dlna_src_change_state (GstElement * element, GstStateChange transition)
     case GST_STATE_CHANGE_NULL_TO_READY:
       break;
     case GST_STATE_CHANGE_READY_TO_PAUSED:
+      if (0) {
+      if (dlna_src->is_encrypted) {
+        GST_INFO_OBJECT (dlna_src, "Setting up dtcp");
+        if (!dlna_src_setup_dtcp (dlna_src)) {
+          GST_ERROR_OBJECT (dlna_src, "Problems setting up dtcp elements");
+          return FALSE;
+        }
+        GST_INFO_OBJECT (dlna_src, "DTCP setup successful");
+      } else
+        GST_INFO_OBJECT (dlna_src, "No DTCP setup required");
+      }
       break;
     default:
       break;
@@ -655,10 +673,15 @@ gst_dlna_src_event (GstPad * pad, GstObject * parent, GstEvent * event)
           GST_EVENT_TYPE_NAME (event));
       break;
 
+    case GST_EVENT_RECONFIGURE:
+      GST_INFO_OBJECT (dlna_src, "Got src event: %s",
+          GST_EVENT_TYPE_NAME (event));
+          ret = dlna_src_handle_event_reconfigure (dlna_src, pad, event);
+      break;
+
     case GST_EVENT_QOS:
     case GST_EVENT_LATENCY:
     case GST_EVENT_NAVIGATION:
-    case GST_EVENT_RECONFIGURE:
       /* Just call default handler to handle */
       break;
 
@@ -689,6 +712,7 @@ static gboolean
 gst_dlna_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
 {
   gboolean ret = FALSE;
+  //GstCaps *caps;
   GstDlnaSrc *dlna_src = GST_DLNA_SRC (gst_pad_get_parent (pad));
 
   GST_LOG_OBJECT (dlna_src, "Got src query: %s", GST_QUERY_TYPE_NAME (query));
@@ -722,6 +746,29 @@ gst_dlna_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
       ret = TRUE;
       break;
 
+    case GST_QUERY_CAPS:
+      GST_INFO_OBJECT (dlna_src, "caps query");
+      /*
+      if (dlna_src->is_encrypted) {
+        GST_INFO_OBJECT (dlna_src, "x-dtcp - Setting caps query results to dtcp");
+        caps = gst_caps_new_simple ("application/x-dtcp1",
+                "dtcpip-server", G_TYPE_STRING, "192.168.2.18",
+                "dtcpip-port", G_TYPE_INT, 8999,
+                NULL);
+      } else {
+        GST_INFO_OBJECT (dlna_src, "Setting caps query results to any");
+        caps = gst_caps_new_any ();
+      }
+      */
+      gst_query_set_caps_result (query, dlna_src->src_caps);
+      //gst_caps_unref (caps);
+      ret = TRUE;
+      break;
+
+    case GST_QUERY_ACCEPT_CAPS:
+      GST_INFO_OBJECT (dlna_src, "accept caps query");
+      break;
+
     case GST_QUERY_LATENCY:
       /* Don't know latency, let some other element handle this */
       break;
@@ -731,7 +778,7 @@ gst_dlna_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
       break;
 
     default:
-      GST_LOG_OBJECT (dlna_src,
+      GST_INFO_OBJECT (dlna_src,
           "Got unsupported src query: %s, passing to default handler",
           GST_QUERY_TYPE_NAME (query));
       break;
@@ -1112,6 +1159,46 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
   GST_DEBUG_OBJECT (dlna_src,
       "returning false to make sure souphttpsrc gets chance to process");
   return FALSE;
+}
+
+/* Upstream caps renegotiation is requested by sending a GST_EVENT_RECONFIGURE
+ * event upstream. The idea is that it will instruct the upstream element to
+ * reconfigure its caps by doing a new query for the allowed caps and then choosing
+ * a new caps. The element that sends out the RECONFIGURE event would influence the
+ * selection of the new caps by returning the new prefered caps from its
+ * GST_QUERY_CAPS query function. The RECONFIGURE event will set the
+ * GST_PAD_FLAG_NEED_RECONFIGURE on all pads that it travels over.
+ */
+static gboolean
+dlna_src_handle_event_reconfigure (GstDlnaSrc * dlna_src, GstPad * pad,
+    GstEvent * event)
+{
+  //GstCaps *caps = NULL;
+  /* Can't reconfigure so drop event */
+  gboolean result;
+
+  GST_INFO_OBJECT (dlna_src, "Handle reconfigure event");
+
+  /* Reconfigure caps by doing a new query for the allowed caps and then choosing
+   * a new caps
+   */
+  /*
+  if (dlna_src->is_encrypted) {
+    GST_INFO_OBJECT (dlna_src, "x-dtcp - Setting accept caps query to dtcp");
+    caps = gst_caps_new_simple ("application/x-dtcp1",
+            "dtcpip-server", G_TYPE_STRING, "192.168.2.18",
+            "dtcpip-port", G_TYPE_INT, 8999,
+            NULL);
+  } else {
+    GST_INFO_OBJECT (dlna_src, "Setting accept caps query results to any");
+    caps = gst_caps_new_any ();
+  }
+  */
+  result = gst_pad_query_accept_caps (pad, dlna_src->src_caps);
+  //gst_caps_unref (caps);
+  GST_INFO_OBJECT (dlna_src, "Returning accept caps result: %d", result);
+
+  return result;
 }
 
 /**
@@ -1546,6 +1633,7 @@ dlna_src_uri_init (GstDlnaSrc * dlna_src)
  *
  * @return	true if uri is set without problems, false otherwise
  */
+/*
 static gboolean
 dlna_src_setup_bin (GstDlnaSrc * dlna_src)
 {
@@ -1554,7 +1642,6 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
 
   GST_INFO_OBJECT (dlna_src, "called");
 
-  /* Setup souphttpsrc as source element for this bin */
   dlna_src->http_src =
       gst_element_factory_make ("souphttpsrc", ELEMENT_NAME_SOUP_HTTP_SRC);
   if (!dlna_src->http_src) {
@@ -1572,7 +1659,6 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
   } else
     GST_INFO_OBJECT (dlna_src, "Not setting URI of souphttpsrc");
 
-  /* Setup dtcp element if necessary */
   if (dlna_src->is_encrypted) {
     GST_INFO_OBJECT (dlna_src, "Setting up dtcp");
     if (!dlna_src_setup_dtcp (dlna_src)) {
@@ -1583,8 +1669,7 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
   } else
     GST_INFO_OBJECT (dlna_src, "No DTCP setup required");
 
-  /* Create src ghost pad of dlna src so playbin will recognize element as a src */
-  if (dlna_src->is_encrypted) {
+   if (dlna_src->is_encrypted) {
     GST_DEBUG_OBJECT (dlna_src, "Getting decrypter src pad");
     pad = gst_element_get_static_pad (dlna_src->dtcp_decrypter, "src");
   } else {
@@ -1621,6 +1706,80 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
 
   return TRUE;
 }
+*/
+
+static gboolean
+dlna_src_setup_bin (GstDlnaSrc * dlna_src)
+{
+  guint64 content_size;
+  GstPad *http_src_pad = NULL;
+  //GstCaps *caps;
+  //GValue boolean_value = G_VALUE_INIT;
+
+  GST_INFO_OBJECT (dlna_src, "called");
+
+  /* Setup souphttpsrc as source element for this bin */
+  dlna_src->http_src =
+      gst_element_factory_make ("souphttpsrc", ELEMENT_NAME_SOUP_HTTP_SRC);
+  if (!dlna_src->http_src) {
+    GST_ERROR_OBJECT (dlna_src,
+        "The http soup source element could not be created.");
+    return FALSE;
+  }
+
+  gst_bin_add (GST_BIN (&dlna_src->bin), dlna_src->http_src);
+
+  if (dlna_src->uri) {
+    GST_INFO_OBJECT (dlna_src, "Setting URI of souphttpsrc");
+    g_object_set (G_OBJECT (dlna_src->http_src), "location", dlna_src->uri,
+        NULL);
+  } else
+    GST_INFO_OBJECT (dlna_src, "Not setting URI of souphttpsrc");
+
+  GST_DEBUG_OBJECT (dlna_src, "Getting http src pad");
+  http_src_pad = gst_element_get_static_pad (dlna_src->http_src, "src");
+  if (!http_src_pad) {
+    GST_ERROR_OBJECT (dlna_src,
+        "Could not get pad to ghost pad for dlnasrc. Exiting.");
+    return FALSE;
+  }
+
+  GST_DEBUG_OBJECT (dlna_src, "Got src pad to use for ghostpad of dlnasrc bin");
+  dlna_src->src_pad = gst_ghost_pad_new ("src", http_src_pad);
+  gst_pad_set_active (dlna_src->src_pad, TRUE);
+  gst_element_add_pad (GST_ELEMENT (&dlna_src->bin), dlna_src->src_pad);
+  gst_pad_use_fixed_caps (dlna_src->src_pad);
+
+  /* If content is encrypted, need to adjust caps on src pad */
+  if (dlna_src->is_encrypted) {
+    GST_INFO_OBJECT (dlna_src, "x-dtcp Adjust caps for dtcp content");
+    dlna_src->src_caps = gst_caps_new_simple ("application/x-dtcp1",
+            CONTENT_TYPE_HEADERS[0], G_TYPE_STRING, "192.168.2.18",
+            CONTENT_TYPE_HEADERS[1], G_TYPE_INT, 8999,
+            NULL);
+    gst_pad_set_caps (http_src_pad, dlna_src->src_caps);
+  } else
+      dlna_src->src_caps = gst_caps_new_any();
+  gst_pad_set_caps (dlna_src->src_pad, dlna_src->src_caps);
+
+  gst_pad_set_event_function (dlna_src->src_pad,
+      (GstPadEventFunction) gst_dlna_src_event);
+
+  gst_pad_set_query_function (dlna_src->src_pad,
+      (GstPadQueryFunction) gst_dlna_src_query);
+
+  if (dlna_src->byte_total && dlna_src->http_src) {
+    content_size = dlna_src->byte_total;
+
+    g_object_set (G_OBJECT (dlna_src->http_src), "content-size", content_size,
+        NULL);
+    GST_INFO_OBJECT (dlna_src, "Set HTTP src content size: %" G_GUINT64_FORMAT,
+        content_size);
+  }
+  gst_object_unref (http_src_pad);
+
+  return TRUE;
+}
 
 /**
  * Setup dtcp decoder element and add to src in order to handle DTCP encrypted
@@ -1630,24 +1789,72 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
  *
  * @return	true if successfully setup, false otherwise
  */
+/*
 static gboolean
 dlna_src_setup_dtcp (GstDlnaSrc * dlna_src)
 {
+  GstPad* src_peer_pad;
+  GstElement* parent;
+  const gchar* parent_name;
   GST_INFO_OBJECT (dlna_src, "Setup for dtcp content");
 
-  if (dlna_src->dtcp_decrypter) {
-    GST_INFO_OBJECT (dlna_src, "Already setup for dtcp content");
-    return TRUE;
+  src_peer_pad = gst_pad_get_peer(dlna_src->src_pad);
+  if (!src_peer_pad) {
+      GST_ERROR_OBJECT (dlna_src, "Unable to find dtcp element due to no peer on src pad");
+      return FALSE;
   }
+  parent = gst_pad_get_parent_element(src_peer_pad);
+  if (!parent) {
+      GST_ERROR_OBJECT (dlna_src, "Unable to find parent of peer src pad");
+      return FALSE;
+  }
+  parent_name = g_type_name(G_OBJECT_TYPE (parent));
+  if (!parent_name) {
+      GST_ERROR_OBJECT (dlna_src, "Unable to get name of parent to verify dtcp decoder");
+      return FALSE;
+  }
+  if (strcmp(parent_name, "GstDtcpIp") == 0) {
+      dlna_src->dtcp_decrypter = parent;
+      GST_INFO_OBJECT (dlna_src, "Found dtcpip decrypter element");
 
-  GST_INFO_OBJECT (dlna_src, "Creating dtcp decrypter");
-  dlna_src->dtcp_decrypter = gst_element_factory_make ("dtcpip",
-      ELEMENT_NAME_DTCP_DECRYPTER);
-  if (!dlna_src->dtcp_decrypter) {
-    GST_ERROR_OBJECT (dlna_src,
-        "The dtcp decrypter element could not be created. Exiting.");
+      g_object_set (G_OBJECT (dlna_src->dtcp_decrypter), "dtcp1host",
+          dlna_src->server_info->dtcp_host, NULL);
+
+      g_object_set (G_OBJECT (dlna_src->dtcp_decrypter), "dtcp1port",
+          dlna_src->server_info->dtcp_port, NULL);
+
+      g_object_set (dlna_src->http_src, "blocksize", dlna_src->dtcp_blocksize,
+          NULL);
+  } else {
+      GST_ERROR_OBJECT (dlna_src, "Peer element on src pad was not dtcp decoder: %s", parent_name);
+      //return FALSE;
+  }
+  g_object_unref(src_peer_pad);
+
+  return TRUE;
+}
+*/
+static gboolean
+dlna_src_setup_dtcp (GstDlnaSrc * dlna_src)
+{
+  GstElement *dtcpip;
+  GstPipeline *pipeline;
+  GST_INFO_OBJECT (dlna_src, "Setup for dtcp content");
+
+  pipeline = dlna_src_get_pipeline (GST_OBJECT (dlna_src));
+  if (!pipeline) {
+    GST_ERROR_OBJECT (dlna_src, "Unable to find pipeline");
     return FALSE;
   }
+  GST_INFO_OBJECT (dlna_src, "Got pipeline");
+
+  dtcpip = gst_bin_get_by_name (GST_BIN (pipeline), "dtcpip0");
+  if (!dtcpip) {
+    GST_ERROR_OBJECT (dlna_src, "Unable to find dtcp element in pipeline");
+    return FALSE;
+  }
+  dlna_src->dtcp_decrypter = dtcpip;
+  GST_INFO_OBJECT (dlna_src, "Found dtcpip decrypter element");
 
   g_object_set (G_OBJECT (dlna_src->dtcp_decrypter), "dtcp1host",
       dlna_src->server_info->dtcp_host, NULL);
@@ -1655,18 +1862,28 @@ dlna_src_setup_dtcp (GstDlnaSrc * dlna_src)
   g_object_set (G_OBJECT (dlna_src->dtcp_decrypter), "dtcp1port",
       dlna_src->server_info->dtcp_port, NULL);
 
-  gst_bin_add (GST_BIN (&dlna_src->bin), dlna_src->dtcp_decrypter);
-
-  if (!gst_element_link_many
-      (dlna_src->http_src, dlna_src->dtcp_decrypter, NULL)) {
-    GST_ERROR_OBJECT (dlna_src, "Problems linking elements in src. Exiting.");
-    return FALSE;
-  }
-  /* Setup the block size for dtcp */
   g_object_set (dlna_src->http_src, "blocksize", dlna_src->dtcp_blocksize,
       NULL);
 
   return TRUE;
+}
+
+static GstPipeline *
+dlna_src_get_pipeline (GstObject * object)
+{
+  GstPipeline *pipeline = NULL;
+  GstObject *obj = object;
+  GstObject *parent = object;
+
+  /* NULL parent is indicator we have found pipeline */
+  while (NULL != parent) {
+    parent = GST_OBJECT_PARENT (obj);
+    if (NULL == parent)
+      pipeline = GST_PIPELINE (obj);
+    else
+      obj = parent;
+  }
+  return pipeline;
 }
 
 /**
@@ -3823,6 +4040,18 @@ dlna_src_nanos_to_npt (GstDlnaSrc * dlna_src, guint64 media_time_nanos,
 }
 
 
+//static GstStaticCaps dtcp_caps = GST_STATIC_CAPS ("application/x-dtcp1");
+//#define DTCP_CAPS gst_static_caps_get (&dtcp_caps)
+/*
+static void
+dlna_src_dtcp_type_find (GstTypeFind * tf, gpointer tf_plugin)
+{
+  //GstCaps* caps;
+  GstDlnaSrc *dlna_src = (GstDlnaSrc *) tf_plugin;
+
+  gst_type_find_suggest (tf, GST_TYPE_FIND_MAXIMUM, dlna_src->src_caps);
+}
+*/
 /* entry point to initialize the plug-in
  * initialize the plug-in itself
  * register the element factories and other features
@@ -3830,8 +4059,13 @@ dlna_src_nanos_to_npt (GstDlnaSrc * dlna_src, guint64 media_time_nanos,
 static gboolean
 dlna_src_init (GstPlugin * dlna_src)
 {
+  g_printf ("dlna_src_init() called\n");
+
   GST_DEBUG_CATEGORY_INIT (gst_dlna_src_debug, "dlnasrc", 0,
       "MPEG+DLNA Player");
+
+  //gst_type_find_register (dlna_src, "application/x-dtcp1",
+  //    GST_RANK_SECONDARY, dlna_src_dtcp_type_find, NULL, DTCP_CAPS, NULL, NULL);
 
   /* *TODO* - setting  + 1 forces this element to get selected as src by playsrc2 */
   return gst_element_register ((GstPlugin *) dlna_src, "dlnasrc",

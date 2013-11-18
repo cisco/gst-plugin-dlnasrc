@@ -57,6 +57,7 @@ struct _GstDlnaSrc
     GstElement* dtcp_decrypter;
 
     GstPad* src_pad;
+    GstCaps* src_caps;
 
     guint dtcp_blocksize;
     gchar* dtcp_key_storage;
