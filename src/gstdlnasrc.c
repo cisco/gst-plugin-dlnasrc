@@ -484,7 +484,8 @@ gst_dlna_src_finalize (GObject * object)
 
   g_free (dlna_src->dtcp_key_storage);
   g_free (dlna_src->uri);
-  g_object_unref (dlna_src->soup_msg);
+  if (dlna_src->soup_msg)
+    g_object_unref (dlna_src->soup_msg);
 
   G_OBJECT_CLASS (parent_class)->finalize (object);
 }
