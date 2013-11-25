@@ -1573,25 +1573,15 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
   } else
     GST_INFO_OBJECT (dlna_src, "Not setting URI of souphttpsrc");
 
-  /* Setup dtcp element if necessary */
-  if (dlna_src->is_encrypted) {
-    GST_INFO_OBJECT (dlna_src, "Setting up dtcp");
-    if (!dlna_src_setup_dtcp (dlna_src)) {
-      GST_ERROR_OBJECT (dlna_src, "Problems setting up dtcp elements");
-      return FALSE;
-    }
-    GST_INFO_OBJECT (dlna_src, "DTCP setup successful");
-  } else
-    GST_INFO_OBJECT (dlna_src, "No DTCP setup required");
+  /* Setup dtcp element regardless */
+  if (!dlna_src_setup_dtcp (dlna_src)) {
+    GST_ERROR_OBJECT (dlna_src, "Problems setting up dtcp elements");
+    return FALSE;
+  }
 
   /* Create src ghost pad of dlna src so playbin will recognize element as a src */
-  if (dlna_src->is_encrypted) {
-    GST_DEBUG_OBJECT (dlna_src, "Getting decrypter src pad");
-    pad = gst_element_get_static_pad (dlna_src->dtcp_decrypter, "src");
-  } else {
-    GST_DEBUG_OBJECT (dlna_src, "Getting http src pad");
-    pad = gst_element_get_static_pad (dlna_src->http_src, "src");
-  }
+  GST_DEBUG_OBJECT (dlna_src, "Getting decrypter src pad");
+  pad = gst_element_get_static_pad (dlna_src->dtcp_decrypter, "src");
   if (!pad) {
     GST_ERROR_OBJECT (dlna_src,
         "Could not get pad to ghost pad for dlnasrc. Exiting.");
@@ -1650,11 +1640,13 @@ dlna_src_setup_dtcp (GstDlnaSrc * dlna_src)
     return FALSE;
   }
 
+  if (dlna_src->is_encrypted) {
   g_object_set (G_OBJECT (dlna_src->dtcp_decrypter), "dtcp1host",
       dlna_src->server_info->dtcp_host, NULL);
 
   g_object_set (G_OBJECT (dlna_src->dtcp_decrypter), "dtcp1port",
       dlna_src->server_info->dtcp_port, NULL);
+  }
 
   gst_bin_add (GST_BIN (&dlna_src->bin), dlna_src->dtcp_decrypter);
 
@@ -1666,6 +1658,10 @@ dlna_src_setup_dtcp (GstDlnaSrc * dlna_src)
   /* Setup the block size for dtcp */
   g_object_set (dlna_src->http_src, "blocksize", dlna_src->dtcp_blocksize,
       NULL);
+
+  /* Make sure passthru mode is either disabled or enabled depending on content encryption */
+  g_object_set (dlna_src->dtcp_decrypter, "passthru-mode",
+      !dlna_src->is_encrypted, NULL);
 
   return TRUE;
 }
