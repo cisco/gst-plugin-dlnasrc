@@ -59,12 +59,14 @@ struct _GstDlnaSrc
     GstPad* src_pad;
 
     guint dtcp_blocksize;
-    gchar* dtcp_key_storage;
 
     gchar *uri;
 
     SoupSession *soup_session;
     SoupMessage *soup_msg;
+
+    gboolean is_standalone;
+    gboolean is_dlna;
 
     GstDlnaSrcHeadResponse* server_info;
 
