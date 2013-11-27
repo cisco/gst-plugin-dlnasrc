@@ -1549,7 +1549,7 @@ dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri, GError ** error)
   if (uri == NULL)
     return FALSE;
 
-  if (dlna_src->uri && (strcmp (dlna_src->uri, uri) == 0))
+  if (g_strcmp0 (dlna_src->uri, uri) == 0)
     return TRUE;
 
   if (dlna_src->uri) {
@@ -2796,7 +2796,7 @@ dlna_src_parse_npt_range (GstDlnaSrc * dlna_src, const gchar * field_str,
 
     g_free (*total_str);
     *total_str = g_strdup (tmp3);
-    if (strcmp (*total_str, "*") != 0)
+    if (g_strcmp0 (*total_str, "*") != 0)
       if (!dlna_src_npt_to_nanos (dlna_src, *total_str, total))
         return FALSE;
   } else {
