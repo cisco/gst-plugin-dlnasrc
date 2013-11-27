@@ -1570,7 +1570,7 @@ dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri, GError ** error)
 static gboolean
 dlna_src_uri_init (GstDlnaSrc * dlna_src)
 {
-  GST_INFO_OBJECT (dlna_src, "Called");
+  GST_DEBUG_OBJECT (dlna_src, "Initializing URI");
 
   if (dlna_src->is_uri_initialized) {
     GST_DEBUG_OBJECT (dlna_src, "Returning since URI is already initialized");
@@ -1760,7 +1760,7 @@ dlna_src_uri_gather_info (GstDlnaSrc * dlna_src)
       { {HEADER_DTCP_RANGE_BYTES_TITLE, HEADER_DTCP_RANGE_BYTES_VALUE} };
   gsize dtcp_range_head_request_headers_array_size = 1;
 
-  GST_INFO_OBJECT (dlna_src, "Called");
+  GST_DEBUG_OBJECT (dlna_src, "Gathering info about URI");
 
   if (!dlna_src->uri) {
     GST_DEBUG_OBJECT (dlna_src, "No URI set yet");
@@ -1859,10 +1859,10 @@ dlna_src_soup_issue_head (GstDlnaSrc * dlna_src, gsize header_array_size,
   gint i;
 
   if (dlna_src->soup_msg) {
-    GST_INFO_OBJECT (dlna_src, "Freeing soup message");
+    GST_DEBUG_OBJECT (dlna_src, "Freeing soup message");
     g_object_unref (dlna_src->soup_msg);
   }
-  GST_INFO_OBJECT (dlna_src, "Creating soup message");
+  GST_DEBUG_OBJECT (dlna_src, "Creating soup message");
   dlna_src->soup_msg = soup_message_new (SOUP_METHOD_HEAD, dlna_src->uri);
   if (!dlna_src->soup_msg) {
     GST_WARNING_OBJECT (dlna_src,
@@ -2052,7 +2052,7 @@ dlna_src_update_overall_info (GstDlnaSrc * dlna_src,
         content_size);
   } else
     GST_INFO_OBJECT (dlna_src,
-        "Unable set content size due to either null souphttpsrc or total == 0");
+        "Unable set content size of souphttpsrc due to either null souphttpsrc or total == 0");
 
   g_string_free (npt_str, TRUE);
 
