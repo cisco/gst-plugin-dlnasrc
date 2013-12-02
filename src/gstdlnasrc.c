@@ -552,8 +552,6 @@ gst_dlna_src_set_property (GObject * object, guint prop_id,
 {
   GstDlnaSrc *dlna_src = GST_DLNA_SRC (object);
 
-  GST_DEBUG_OBJECT (dlna_src, "Setting property: %d", prop_id);
-
   switch (prop_id) {
 
     case PROP_URI:
@@ -563,6 +561,7 @@ gst_dlna_src_set_property (GObject * object, guint prop_id,
             ("%s() - unable to set URI: %s",
                 __FUNCTION__, g_value_get_string (value)), NULL);
       }
+      GST_INFO_OBJECT (dlna_src, "Set URI: %s", dlna_src->uri);
       break;
     }
     case PROP_DTCP_BLOCKSIZE:
@@ -663,7 +662,7 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
 
     case PROP_IS_SEEKABLE:
       g_value_set_boolean (value, (dlna_src->byte_seek_supported
-              || dlna_src->time_seek_supported) ? TRUE : FALSE);
+              || dlna_src->time_seek_supported));
       break;
 
     default:
