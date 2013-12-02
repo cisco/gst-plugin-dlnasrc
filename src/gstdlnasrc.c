@@ -49,7 +49,10 @@ enum
   PROP_IS_DLNA,
   PROP_IS_ENCRYPTED,
   PROP_DTCP_HOST,
-  PROP_DTCP_PORT
+  PROP_DTCP_PORT,
+  PROP_DURATION_BYTES,
+  PROP_DURATION_TIME,
+  PROP_IS_SEEKABLE
 };
 
 #define DEFAULT_DTCP_BLOCKSIZE       524288
@@ -438,6 +441,21 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
           "Port number to use for dtcp/ip encrypted content", 0,
           G_MAXUINT, 0, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
+  g_object_class_install_property (gobject_klass, PROP_DURATION_TIME,
+      g_param_spec_uint64 ("duration-nanos", "duration of npt content in nanos",
+          "Duration of content in normal play time nanoseconds", 0,
+          G_MAXUINT64, 0, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+
+  g_object_class_install_property (gobject_klass, PROP_DURATION_BYTES,
+      g_param_spec_uint64 ("duration-bytes", "duration of content in bytes",
+          "Total size in bytes of content duration", 0,
+          G_MAXUINT64, 0, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+
+  g_object_class_install_property (gobject_klass, PROP_IS_SEEKABLE,
+      g_param_spec_boolean ("is-seekable", "Seeking supported by server",
+          "Seeking, either time or byte based, is supported by server",
+          FALSE, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+
   gobject_klass->finalize = GST_DEBUG_FUNCPTR (gst_dlna_src_finalize);
   gstelement_klass->change_state = gst_dlna_src_change_state;
 }
@@ -534,8 +552,6 @@ gst_dlna_src_set_property (GObject * object, guint prop_id,
 {
   GstDlnaSrc *dlna_src = GST_DLNA_SRC (object);
 
-  GST_DEBUG_OBJECT (dlna_src, "Setting property: %d", prop_id);
-
   switch (prop_id) {
 
     case PROP_URI:
@@ -545,6 +561,7 @@ gst_dlna_src_set_property (GObject * object, guint prop_id,
             ("%s() - unable to set URI: %s",
                 __FUNCTION__, g_value_get_string (value)), NULL);
       }
+      GST_INFO_OBJECT (dlna_src, "Set URI: %s", dlna_src->uri);
       break;
     }
     case PROP_DTCP_BLOCKSIZE:
@@ -626,11 +643,26 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
       break;
 
     case PROP_DTCP_HOST:
-      g_value_set_string (value, dlna_src->server_info->dtcp_host);
+      if (dlna_src->server_info)
+        g_value_set_string (value, dlna_src->server_info->dtcp_host);
       break;
 
     case PROP_DTCP_PORT:
-      g_value_set_uint (value, dlna_src->server_info->dtcp_port);
+      if (dlna_src->server_info)
+        g_value_set_uint (value, dlna_src->server_info->dtcp_port);
+      break;
+
+    case PROP_DURATION_TIME:
+      g_value_set_uint64 (value, dlna_src->npt_duration_nanos);
+      break;
+
+    case PROP_DURATION_BYTES:
+      g_value_set_uint64 (value, dlna_src->byte_total);
+      break;
+
+    case PROP_IS_SEEKABLE:
+      g_value_set_boolean (value, (dlna_src->byte_seek_supported
+              || dlna_src->time_seek_supported));
       break;
 
     default:
