@@ -57,6 +57,7 @@ struct _GstDlnaSrc
     GstElement* dtcp_decrypter;
 
     GstPad* src_pad;
+    GstPad* sink_pad;
 
     guint dtcp_blocksize;
 
@@ -65,7 +66,7 @@ struct _GstDlnaSrc
     SoupSession *soup_session;
     SoupMessage *soup_msg;
 
-    gboolean is_standalone;
+    gboolean passthru_mode;
     gboolean is_dlna;
 
     GstDlnaSrcHeadResponse* server_info;
