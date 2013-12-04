@@ -45,11 +45,6 @@ enum
   PROP_URI,
   PROP_SUPPORTED_RATES,
   PROP_DTCP_BLOCKSIZE,
-  PROP_PASSTHRU_MODE,
-  PROP_IS_DLNA,
-  PROP_DURATION_BYTES,
-  PROP_DURATION_TIME,
-  PROP_IS_SEEKABLE
 };
 
 #define DEFAULT_DTCP_BLOCKSIZE       524288
@@ -195,13 +190,6 @@ static GstStaticPadTemplate gst_dlna_src_pad_template =
 GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
     GST_PAD_ALWAYS,
-    GST_STATIC_CAPS ("ANY")
-    );
-
-static GstStaticPadTemplate gst_dlna_sink_pad_template =
-GST_STATIC_PAD_TEMPLATE ("sink",
-    GST_PAD_SINK,
-    GST_PAD_SOMETIMES,
     GST_STATIC_CAPS ("ANY")
     );
 
@@ -402,9 +390,6 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
   gst_element_class_add_pad_template (gstelement_klass,
       gst_static_pad_template_get (&gst_dlna_src_pad_template));
 
-  gst_element_class_add_pad_template (gstelement_klass,
-      gst_static_pad_template_get (&gst_dlna_sink_pad_template));
-
   gobject_klass->set_property = gst_dlna_src_set_property;
   gobject_klass->get_property = gst_dlna_src_get_property;
 
@@ -413,40 +398,15 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
           "Sets URI A/V stream", NULL, G_PARAM_READWRITE));
 
   g_object_class_install_property (gobject_klass, PROP_SUPPORTED_RATES,
-      g_param_spec_boxed ("supported-rates",
+      g_param_spec_boxed ("supported_rates",
           "Supported Playspeed rates",
           "List of supported playspeed rates of DLNA server content",
           G_TYPE_ARRAY, G_PARAM_READABLE));
 
   g_object_class_install_property (gobject_klass, PROP_DTCP_BLOCKSIZE,
-      g_param_spec_uint ("dtcp-blocksize", "DTCP Block size",
+      g_param_spec_uint ("dtcp_blocksize", "DTCP Block size",
           "Size in bytes to read per buffer when content is dtcp encrypted (-1 = default)",
           0, G_MAXUINT, DEFAULT_DTCP_BLOCKSIZE, G_PARAM_READWRITE));
-
-  g_object_class_install_property (gobject_klass, PROP_PASSTHRU_MODE,
-      g_param_spec_boolean ("passthru-mode", "Operating in Passthru Mode",
-          "DLNA server is not acting as source, it is installed after source",
-          FALSE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-
-  g_object_class_install_property (gobject_klass, PROP_IS_DLNA,
-      g_param_spec_boolean ("is-dlna", "DLNA Server Content",
-          "Content associated with URI is served by DLNA server",
-          FALSE, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
-
-  g_object_class_install_property (gobject_klass, PROP_DURATION_TIME,
-      g_param_spec_uint64 ("duration-nanos", "duration of npt content in nanos",
-          "Duration of content in normal play time nanoseconds", 0,
-          G_MAXUINT64, 0, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
-
-  g_object_class_install_property (gobject_klass, PROP_DURATION_BYTES,
-      g_param_spec_uint64 ("duration-bytes", "duration of content in bytes",
-          "Total size in bytes of content duration", 0,
-          G_MAXUINT64, 0, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
-
-  g_object_class_install_property (gobject_klass, PROP_IS_SEEKABLE,
-      g_param_spec_boolean ("is-seekable", "Seeking supported by server",
-          "Seeking, either time or byte based, is supported by server",
-          FALSE, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
   gobject_klass->finalize = GST_DEBUG_FUNCPTR (gst_dlna_src_finalize);
   gstelement_klass->change_state = gst_dlna_src_change_state;
@@ -469,12 +429,11 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
 
   dlna_src->dtcp_blocksize = DEFAULT_DTCP_BLOCKSIZE;
   dlna_src->src_pad = NULL;
+  dlna_src->dtcp_key_storage = NULL;
   dlna_src->uri = NULL;
   dlna_src->soup_session = NULL;
   dlna_src->soup_msg = NULL;
 
-  dlna_src->passthru_mode = FALSE;
-  dlna_src->is_dlna = FALSE;
   dlna_src->server_info = NULL;
 
   dlna_src->rate = 1.0;
@@ -523,6 +482,7 @@ gst_dlna_src_finalize (GObject * object)
 
   dlna_src_head_response_free_struct (dlna_src, dlna_src->server_info);
 
+  g_free (dlna_src->dtcp_key_storage);
   g_free (dlna_src->uri);
   if (dlna_src->soup_msg)
     g_object_unref (dlna_src->soup_msg);
@@ -544,6 +504,8 @@ gst_dlna_src_set_property (GObject * object, guint prop_id,
 {
   GstDlnaSrc *dlna_src = GST_DLNA_SRC (object);
 
+  GST_INFO_OBJECT (dlna_src, "Setting property: %d", prop_id);
+
   switch (prop_id) {
 
     case PROP_URI:
@@ -553,7 +515,6 @@ gst_dlna_src_set_property (GObject * object, guint prop_id,
             ("%s() - unable to set URI: %s",
                 __FUNCTION__, g_value_get_string (value)), NULL);
       }
-      GST_INFO_OBJECT (dlna_src, "Set URI: %s", dlna_src->uri);
       break;
     }
     case PROP_DTCP_BLOCKSIZE:
@@ -561,16 +522,6 @@ gst_dlna_src_set_property (GObject * object, guint prop_id,
       GST_INFO_OBJECT (dlna_src, "Set DTCP blocksize: %d",
           dlna_src->dtcp_blocksize);
       break;
-
-    case PROP_PASSTHRU_MODE:
-      dlna_src->passthru_mode = g_value_get_boolean (value);
-      GST_INFO_OBJECT (dlna_src, "Set passthru mode: %d",
-          dlna_src->passthru_mode);
-      if (!dlna_src_setup_bin (dlna_src)) {
-        GST_ERROR_OBJECT (dlna_src, "Problems setting up bin");
-      }
-      break;
-
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -590,6 +541,7 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
     GParamSpec * pspec)
 {
   GstDlnaSrc *dlna_src = GST_DLNA_SRC (object);
+
   int i = 0;
   GArray *garray = NULL;
   gfloat rate = 0;
@@ -598,9 +550,10 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
   switch (prop_id) {
 
     case PROP_URI:
+      GST_LOG_OBJECT (dlna_src, "Getting property: uri");
       if (dlna_src->uri != NULL) {
         g_value_set_string (value, dlna_src->uri);
-        GST_LOG_OBJECT (dlna_src, "Get uri returning: %s",
+        GST_LOG_OBJECT (dlna_src, "Get property returning: %s",
             g_value_get_string (value));
       }
       break;
@@ -627,27 +580,6 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
 
     case PROP_DTCP_BLOCKSIZE:
       g_value_set_uint (value, dlna_src->dtcp_blocksize);
-      break;
-
-    case PROP_PASSTHRU_MODE:
-      g_value_set_boolean (value, dlna_src->passthru_mode);
-      break;
-
-    case PROP_IS_DLNA:
-      g_value_set_boolean (value, dlna_src->is_dlna);
-      break;
-
-    case PROP_DURATION_TIME:
-      g_value_set_uint64 (value, dlna_src->npt_duration_nanos);
-      break;
-
-    case PROP_DURATION_BYTES:
-      g_value_set_uint64 (value, dlna_src->byte_total);
-      break;
-
-    case PROP_IS_SEEKABLE:
-      g_value_set_boolean (value, (dlna_src->byte_seek_supported
-              || dlna_src->time_seek_supported));
       break;
 
     default:
@@ -1090,11 +1022,6 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
   gint64 stop;
   guint32 new_seqnum;
   gboolean convert_start = FALSE;
-
-  if (dlna_src->passthru_mode) {
-    GST_INFO_OBJECT (dlna_src, "In passthru mode, not handling event yet");
-    return FALSE;
-  }
 
   if ((dlna_src->uri == NULL) || (dlna_src->server_info == NULL)) {
     GST_INFO_OBJECT (dlna_src,
@@ -1571,9 +1498,6 @@ dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri, GError ** error)
   if (uri == NULL)
     return FALSE;
 
-  if (g_strcmp0 (dlna_src->uri, uri) == 0)
-    return TRUE;
-
   if (dlna_src->uri) {
     dlna_src_head_response_free_struct (dlna_src, dlna_src->server_info);
     g_free (dlna_src->uri);
@@ -1605,7 +1529,7 @@ dlna_src_uri_init (GstDlnaSrc * dlna_src)
   }
 
   if (!dlna_src_setup_bin (dlna_src)) {
-    GST_ERROR_OBJECT (dlna_src, "Problems setting up bin");
+    GST_ERROR_OBJECT (dlna_src, "Problems setting up dtcp elements");
     return FALSE;
   }
 
@@ -1629,32 +1553,25 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
   guint64 content_size;
   GstPad *pad = NULL;
 
-  if (dlna_src->dtcp_decrypter) {
-    GST_INFO_OBJECT (dlna_src, "returning, bin already setup");
-    return TRUE;
+  GST_INFO_OBJECT (dlna_src, "called");
+
+  /* Setup souphttpsrc as source element for this bin */
+  dlna_src->http_src =
+      gst_element_factory_make ("souphttpsrc", ELEMENT_NAME_SOUP_HTTP_SRC);
+  if (!dlna_src->http_src) {
+    GST_ERROR_OBJECT (dlna_src,
+        "The http soup source element could not be created.");
+    return FALSE;
   }
 
-  if (!dlna_src->passthru_mode) {
-    GST_INFO_OBJECT (dlna_src, "Setting up bin with souphttpsrc");
+  gst_bin_add (GST_BIN (&dlna_src->bin), dlna_src->http_src);
 
-    /* Setup souphttpsrc as source element for this bin */
-    dlna_src->http_src =
-        gst_element_factory_make ("souphttpsrc", ELEMENT_NAME_SOUP_HTTP_SRC);
-    if (!dlna_src->http_src) {
-      GST_ERROR_OBJECT (dlna_src,
-          "The http soup source element could not be created.");
-      return FALSE;
-    }
-
-    gst_bin_add (GST_BIN (&dlna_src->bin), dlna_src->http_src);
-
-    if (dlna_src->uri) {
-      GST_INFO_OBJECT (dlna_src, "Setting URI of souphttpsrc");
-      g_object_set (G_OBJECT (dlna_src->http_src), "location", dlna_src->uri,
-          NULL);
-    } else
-      GST_INFO_OBJECT (dlna_src, "Not setting URI of souphttpsrc");
-  }
+  if (dlna_src->uri) {
+    GST_INFO_OBJECT (dlna_src, "Setting URI of souphttpsrc");
+    g_object_set (G_OBJECT (dlna_src->http_src), "location", dlna_src->uri,
+        NULL);
+  } else
+    GST_INFO_OBJECT (dlna_src, "Not setting URI of souphttpsrc");
 
   /* Setup dtcp element regardless */
   if (!dlna_src_setup_dtcp (dlna_src)) {
@@ -1663,6 +1580,7 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
   }
 
   /* Create src ghost pad of dlna src so playbin will recognize element as a src */
+  GST_DEBUG_OBJECT (dlna_src, "Getting decrypter src pad");
   pad = gst_element_get_static_pad (dlna_src->dtcp_decrypter, "src");
   if (!pad) {
     GST_ERROR_OBJECT (dlna_src,
@@ -1670,6 +1588,7 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
     return FALSE;
   }
 
+  GST_DEBUG_OBJECT (dlna_src, "Got src pad to use for ghostpad of dlnasrc bin");
   dlna_src->src_pad = gst_ghost_pad_new ("src", pad);
   gst_pad_set_active (dlna_src->src_pad, TRUE);
 
@@ -1682,31 +1601,7 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
   gst_pad_set_query_function (dlna_src->src_pad,
       (GstPadQueryFunction) gst_dlna_src_query);
 
-  if (dlna_src->passthru_mode) {
-    GST_INFO_OBJECT (dlna_src, "Setting up sink pad to support passthru mode");
-
-    /* Create sink ghost pad of dlna src so it can be used as a passthru */
-    pad = gst_element_get_static_pad (dlna_src->dtcp_decrypter, "sink");
-    if (!pad) {
-      GST_ERROR_OBJECT (dlna_src,
-          "Could not get sink pad to ghost pad for dlnasrc. Exiting.");
-      return FALSE;
-    }
-
-    dlna_src->sink_pad = gst_ghost_pad_new ("sink", pad);
-    gst_pad_set_active (dlna_src->sink_pad, TRUE);
-
-    gst_element_add_pad (GST_ELEMENT (&dlna_src->bin), dlna_src->sink_pad);
-    gst_object_unref (pad);
-
-    gst_pad_set_event_function (dlna_src->sink_pad,
-        (GstPadEventFunction) gst_dlna_src_event);
-
-    gst_pad_set_query_function (dlna_src->sink_pad,
-        (GstPadQueryFunction) gst_dlna_src_query);
-  }
-
-  if (!dlna_src->passthru_mode && dlna_src->byte_total && dlna_src->http_src) {
+  if (dlna_src->byte_total && dlna_src->http_src) {
     content_size = dlna_src->byte_total;
 
     g_object_set (G_OBJECT (dlna_src->http_src), "content-size", content_size,
@@ -1714,6 +1609,7 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
     GST_INFO_OBJECT (dlna_src, "Set HTTP src content size: %" G_GUINT64_FORMAT,
         content_size);
   }
+
   return TRUE;
 }
 
@@ -1728,6 +1624,8 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
 static gboolean
 dlna_src_setup_dtcp (GstDlnaSrc * dlna_src)
 {
+  GST_INFO_OBJECT (dlna_src, "Setup for dtcp content");
+
   if (dlna_src->dtcp_decrypter) {
     GST_INFO_OBJECT (dlna_src, "Already setup for dtcp content");
     return TRUE;
@@ -1743,25 +1641,23 @@ dlna_src_setup_dtcp (GstDlnaSrc * dlna_src)
   }
 
   if (dlna_src->is_encrypted) {
-    g_object_set (G_OBJECT (dlna_src->dtcp_decrypter), "dtcp1host",
-        dlna_src->server_info->dtcp_host, NULL);
+  g_object_set (G_OBJECT (dlna_src->dtcp_decrypter), "dtcp1host",
+      dlna_src->server_info->dtcp_host, NULL);
 
-    g_object_set (G_OBJECT (dlna_src->dtcp_decrypter), "dtcp1port",
-        dlna_src->server_info->dtcp_port, NULL);
+  g_object_set (G_OBJECT (dlna_src->dtcp_decrypter), "dtcp1port",
+      dlna_src->server_info->dtcp_port, NULL);
   }
 
   gst_bin_add (GST_BIN (&dlna_src->bin), dlna_src->dtcp_decrypter);
 
-  if (!dlna_src->passthru_mode) {
-    if (!gst_element_link_many
-        (dlna_src->http_src, dlna_src->dtcp_decrypter, NULL)) {
-      GST_ERROR_OBJECT (dlna_src, "Problems linking elements in src. Exiting.");
-      return FALSE;
-    }
-    /* Setup the block size for dtcp */
-    g_object_set (dlna_src->http_src, "blocksize", dlna_src->dtcp_blocksize,
-        NULL);
+  if (!gst_element_link_many
+      (dlna_src->http_src, dlna_src->dtcp_decrypter, NULL)) {
+    GST_ERROR_OBJECT (dlna_src, "Problems linking elements in src. Exiting.");
+    return FALSE;
   }
+  /* Setup the block size for dtcp */
+  g_object_set (dlna_src->http_src, "blocksize", dlna_src->dtcp_blocksize,
+      NULL);
 
   /* Make sure passthru mode is either disabled or enabled depending on content encryption */
   g_object_set (dlna_src->dtcp_decrypter, "passthru-mode",
@@ -2091,7 +1987,7 @@ dlna_src_update_overall_info (GstDlnaSrc * dlna_src,
     dlna_src->byte_seek_supported = TRUE;
 
   /* Make sure content size has been set for souphttpsrc */
-  if (!dlna_src->passthru_mode && dlna_src->byte_total && dlna_src->http_src) {
+  if (dlna_src->byte_total && dlna_src->http_src) {
     content_size = dlna_src->byte_total;
 
     g_object_set (G_OBJECT (dlna_src->http_src), "content-size", content_size,
@@ -2511,8 +2407,8 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
       break;
 
     case HEADER_INDEX_CONTENT_RANGE:
-      if (!dlna_src_parse_byte_range (dlna_src, field_value,
-              HEADER_INDEX_BYTES, &head_response->content_range_start,
+      if (!dlna_src_parse_byte_range (dlna_src, field_value, HEADER_INDEX_BYTES,
+              &head_response->content_range_start,
               &head_response->content_range_end,
               &head_response->content_range_total))
         GST_WARNING_OBJECT (dlna_src,
@@ -2547,8 +2443,8 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
       break;
 
     case HEADER_INDEX_TIMESEEKRANGE:
-      if (!dlna_src_head_response_parse_time_seek (dlna_src, head_response,
-              idx, field_value))
+      if (!dlna_src_head_response_parse_time_seek (dlna_src, head_response, idx,
+              field_value))
         GST_WARNING_OBJECT (dlna_src,
             "Problems with HEAD response field header %s, value: %s",
             HEAD_RESPONSE_HEADERS[idx], field_value);
@@ -2560,16 +2456,11 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
         GST_WARNING_OBJECT (dlna_src,
             "Problems with HEAD response field header %s, value: %s",
             HEAD_RESPONSE_HEADERS[idx], field_value);
-      else {
-        GST_INFO_OBJECT (dlna_src,
-            "Content features supplied, considering content DLNA");
-        dlna_src->is_dlna = TRUE;
-      }
       break;
 
     case HEADER_INDEX_DTCP_RANGE:
-      if (!dlna_src_parse_byte_range (dlna_src, field_value,
-              HEADER_INDEX_BYTES, &head_response->dtcp_range_start,
+      if (!dlna_src_parse_byte_range (dlna_src, field_value, HEADER_INDEX_BYTES,
+              &head_response->dtcp_range_start,
               &head_response->dtcp_range_end, &head_response->dtcp_range_total))
         GST_WARNING_OBJECT (dlna_src,
             "Problems with HEAD response field header %s, value: %s",
@@ -2844,7 +2735,7 @@ dlna_src_parse_npt_range (GstDlnaSrc * dlna_src, const gchar * field_str,
 
     g_free (*total_str);
     *total_str = g_strdup (tmp3);
-    if (g_strcmp0 (*total_str, "*") != 0)
+    if (strcmp (*total_str, "*") != 0)
       if (!dlna_src_npt_to_nanos (dlna_src, *total_str, total))
         return FALSE;
   } else {
@@ -2957,17 +2848,17 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
     }
   }
   if (op_str != NULL) {
-    if (!dlna_src_head_response_parse_operations (dlna_src, head_response,
-            idx, op_str)) {
-      GST_WARNING_OBJECT (dlna_src,
-          "Problems parsing operations sub field: %s", op_str);
+    if (!dlna_src_head_response_parse_operations (dlna_src, head_response, idx,
+            op_str)) {
+      GST_WARNING_OBJECT (dlna_src, "Problems parsing operations sub field: %s",
+          op_str);
     }
   }
   if (ps_str != NULL) {
-    if (!dlna_src_head_response_parse_playspeeds (dlna_src, head_response,
-            idx, ps_str)) {
-      GST_WARNING_OBJECT (dlna_src,
-          "Problems parsing playspeeds sub field: %s", ps_str);
+    if (!dlna_src_head_response_parse_playspeeds (dlna_src, head_response, idx,
+            ps_str)) {
+      GST_WARNING_OBJECT (dlna_src, "Problems parsing playspeeds sub field: %s",
+          ps_str);
     }
   }
   if (flags_str != NULL) {
@@ -3132,8 +3023,9 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src,
                 "Problems converting playspeed %s into numeric value", *ptr);
             return FALSE;
           } else {
-            head_response->content_features->playspeeds[head_response->
-                content_features->playspeeds_cnt] = rate;
+            head_response->content_features->
+                playspeeds[head_response->content_features->playspeeds_cnt] =
+                rate;
           }
         } else {
           /* Handle conversion of fractional string into float, needed when specifying rate */
@@ -3145,8 +3037,9 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src,
           } else {
             rate = (gfloat) n / (gfloat) d;
 
-            head_response->content_features->playspeeds[head_response->
-                content_features->playspeeds_cnt] = rate;
+            head_response->content_features->
+                playspeeds[head_response->content_features->playspeeds_cnt] =
+                rate;
           }
         }
         head_response->content_features->playspeeds_cnt++;
@@ -3782,8 +3675,8 @@ dlna_src_convert_bytes_to_npt_nanos (GstDlnaSrc * dlna_src, guint64 bytes,
  * @return  TRUE if conversion was successful, false otherwise
  */
 static gboolean
-dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src,
-    guint64 npt_nanos, guint64 * bytes)
+dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
+    guint64 * bytes)
 {
   /* Issue head to get conversion info */
   GstDlnaSrcHeadResponse *head_response = NULL;
