@@ -1549,7 +1549,7 @@ dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri, GError ** error)
   if (uri == NULL)
     return FALSE;
 
-  if (g_strcmp0 (dlna_src->uri, uri) == 0)
+  if (dlna_src->uri && (g_strcmp0 (dlna_src->uri, uri) == 0))
     return TRUE;
 
   if (dlna_src->uri) {
