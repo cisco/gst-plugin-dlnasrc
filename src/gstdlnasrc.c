@@ -51,8 +51,7 @@ enum
   PROP_DTCP_HOST,
   PROP_DTCP_PORT,
   PROP_DURATION_BYTES,
-  PROP_DURATION_TIME,
-  PROP_IS_SEEKABLE
+  PROP_DURATION_TIME
 };
 
 #define DEFAULT_DTCP_BLOCKSIZE       524288
@@ -451,11 +450,6 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
           "Total size in bytes of content duration", 0,
           G_MAXUINT64, 0, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
-  g_object_class_install_property (gobject_klass, PROP_IS_SEEKABLE,
-      g_param_spec_boolean ("is-seekable", "Seeking supported by server",
-          "Seeking, either time or byte based, is supported by server",
-          FALSE, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
-
   gobject_klass->finalize = GST_DEBUG_FUNCPTR (gst_dlna_src_finalize);
   gstelement_klass->change_state = gst_dlna_src_change_state;
 }
@@ -659,11 +653,6 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
 
     case PROP_DURATION_BYTES:
       g_value_set_uint64 (value, dlna_src->byte_total);
-      break;
-
-    case PROP_IS_SEEKABLE:
-      g_value_set_boolean (value, (dlna_src->byte_seek_supported
-              || dlna_src->time_seek_supported) ? TRUE : FALSE);
       break;
 
     default:
