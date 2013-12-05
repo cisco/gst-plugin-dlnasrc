@@ -430,7 +430,8 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
   dlna_src->dtcp_blocksize = DEFAULT_DTCP_BLOCKSIZE;
   dlna_src->src_pad = NULL;
   dlna_src->dtcp_key_storage = NULL;
-  dlna_src->uri = NULL;
+  dlna_src->dlna_uri = NULL;
+  dlna_src->http_uri = NULL;
   dlna_src->soup_session = NULL;
   dlna_src->soup_msg = NULL;
 
@@ -483,7 +484,8 @@ gst_dlna_src_finalize (GObject * object)
   dlna_src_head_response_free_struct (dlna_src, dlna_src->server_info);
 
   g_free (dlna_src->dtcp_key_storage);
-  g_free (dlna_src->uri);
+  g_free (dlna_src->dlna_uri);
+  g_free (dlna_src->http_uri);
   if (dlna_src->soup_msg)
     g_object_unref (dlna_src->soup_msg);
 
@@ -551,8 +553,8 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
 
     case PROP_URI:
       GST_LOG_OBJECT (dlna_src, "Getting property: uri");
-      if (dlna_src->uri != NULL) {
-        g_value_set_string (value, dlna_src->uri);
+      if (dlna_src->dlna_uri != NULL) {
+        g_value_set_string (value, dlna_src->dlna_uri);
         GST_LOG_OBJECT (dlna_src, "Get property returning: %s",
             g_value_get_string (value));
       }
@@ -713,7 +715,7 @@ gst_dlna_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
 
     case GST_QUERY_URI:
       GST_INFO_OBJECT (dlna_src, "query uri");
-      gst_query_set_uri (query, dlna_src->uri);
+      gst_query_set_uri (query, dlna_src->dlna_uri);
       ret = TRUE;
       break;
 
@@ -762,7 +764,7 @@ dlna_src_handle_query_duration (GstDlnaSrc * dlna_src, GstQuery * query)
 
   GST_LOG_OBJECT (dlna_src, "Called");
 
-  if ((dlna_src->uri == NULL) || (dlna_src->server_info == NULL)) {
+  if ((dlna_src->dlna_uri == NULL) || (dlna_src->server_info == NULL)) {
     GST_INFO_OBJECT (dlna_src,
         "No URI and/or HEAD response info, unable to handle query");
     return FALSE;
@@ -820,7 +822,7 @@ dlna_src_handle_query_seeking (GstDlnaSrc * dlna_src, GstQuery * query)
 
   GST_DEBUG_OBJECT (dlna_src, "Called");
 
-  if ((dlna_src->uri == NULL) || (dlna_src->server_info == NULL)) {
+  if ((dlna_src->dlna_uri == NULL) || (dlna_src->server_info == NULL)) {
     GST_INFO_OBJECT (dlna_src,
         "No URI and/or HEAD response info, unable to handle query");
     return FALSE;
@@ -885,7 +887,7 @@ dlna_src_handle_query_segment (GstDlnaSrc * dlna_src, GstQuery * query)
 
   GST_LOG_OBJECT (dlna_src, "Called");
 
-  if ((dlna_src->uri == NULL) || (dlna_src->server_info == NULL)) {
+  if ((dlna_src->dlna_uri == NULL) || (dlna_src->server_info == NULL)) {
     GST_INFO_OBJECT (dlna_src,
         "No URI and/or HEAD response info, unable to handle query");
     return FALSE;
@@ -951,7 +953,7 @@ dlna_src_handle_query_convert (GstDlnaSrc * dlna_src, GstQuery * query)
 
   GST_LOG_OBJECT (dlna_src, "Called");
 
-  if (dlna_src->uri == NULL || !dlna_src->time_seek_supported) {
+  if (dlna_src->dlna_uri == NULL || !dlna_src->time_seek_supported) {
     GST_INFO_OBJECT (dlna_src, "Not enough info to handle conversion query");
     return FALSE;
   }
@@ -1023,7 +1025,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
   guint32 new_seqnum;
   gboolean convert_start = FALSE;
 
-  if ((dlna_src->uri == NULL) || (dlna_src->server_info == NULL)) {
+  if ((dlna_src->dlna_uri == NULL) || (dlna_src->server_info == NULL)) {
     GST_INFO_OBJECT (dlna_src,
         "No URI and/or HEAD response info, event handled");
     return TRUE;
@@ -1097,7 +1099,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
         G_GUINT64_FORMAT, dlna_src->requested_stop);
   }
 
-  if ((dlna_src->uri) && (dlna_src->server_info) &&
+  if ((dlna_src->dlna_uri) && (dlna_src->server_info) &&
       (dlna_src->server_info->content_features != NULL)) {
     if (!dlna_src_adjust_http_src_headers (dlna_src, dlna_src->requested_rate,
             dlna_src->requested_format, dlna_src->requested_start,
@@ -1450,7 +1452,7 @@ gst_dlna_src_uri_get_type (GType type)
 static const gchar *const *
 gst_dlna_src_uri_get_protocols (GType type)
 {
-  static const gchar *protocols[] = { "http", "https", NULL };
+  static const gchar *protocols[] = { "dlna+http", "dlna+https", NULL };
   return protocols;
 }
 
@@ -1458,7 +1460,7 @@ static gchar *
 gst_dlna_src_uri_get_uri (GstURIHandler * handler)
 {
   GstDlnaSrc *dlna_src = GST_DLNA_SRC (handler);
-  return g_strdup (dlna_src->uri);
+  return g_strdup (dlna_src->dlna_uri);
 }
 
 static gboolean
@@ -1468,7 +1470,7 @@ gst_dlna_src_uri_set_uri (GstURIHandler * handler, const gchar * uri,
   GstDlnaSrc *dlna_src = GST_DLNA_SRC (handler);
 
   GST_INFO_OBJECT (dlna_src, "uri handler called to set uri: %s, current: %s",
-      uri, dlna_src->uri);
+      uri, dlna_src->dlna_uri);
 
   return dlna_src_uri_assign (dlna_src, uri, error);
 }
@@ -1495,16 +1497,33 @@ gst_dlna_src_uri_handler_init (gpointer g_iface, gpointer iface_data)
 static gboolean
 dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri, GError ** error)
 {
+  gchar *dlna_prefix = "dlna+";
+  GString *dlna_uri;
+
   if (uri == NULL)
     return FALSE;
 
-  if (dlna_src->uri) {
+  if (dlna_src->dlna_uri) {
     dlna_src_head_response_free_struct (dlna_src, dlna_src->server_info);
-    g_free (dlna_src->uri);
-    dlna_src->uri = NULL;
+    g_free (dlna_src->dlna_uri);
+    dlna_src->dlna_uri = NULL;
+    g_free (dlna_src->http_uri);
+    dlna_src->http_uri = NULL;
   }
 
-  dlna_src->uri = g_strdup (uri);
+  dlna_src->dlna_uri = g_strdup (uri);
+  if (g_ascii_strncasecmp (dlna_src->dlna_uri, dlna_prefix,
+          strlen (dlna_prefix)) == 0) {
+    dlna_uri = g_string_new (dlna_src->dlna_uri);
+    dlna_uri = g_string_erase (dlna_uri, 0, strlen (dlna_prefix));
+    dlna_src->http_uri = g_string_free (dlna_uri, FALSE);
+    GST_INFO_OBJECT (dlna_src, "Set http URI: %s, based on dlna URI: %s",
+        dlna_src->http_uri, dlna_src->dlna_uri);
+  } else {
+    dlna_src->http_uri = g_strdup (uri);
+    GST_INFO_OBJECT (dlna_src, "URI did not have dlna prepended: %s",
+        dlna_src->http_uri);
+  }
 
   return dlna_src_uri_init (dlna_src);
 }
@@ -1566,9 +1585,9 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
 
   gst_bin_add (GST_BIN (&dlna_src->bin), dlna_src->http_src);
 
-  if (dlna_src->uri) {
+  if (dlna_src->http_uri) {
     GST_INFO_OBJECT (dlna_src, "Setting URI of souphttpsrc");
-    g_object_set (G_OBJECT (dlna_src->http_src), "location", dlna_src->uri,
+    g_object_set (G_OBJECT (dlna_src->http_src), "location", dlna_src->http_uri,
         NULL);
   } else
     GST_INFO_OBJECT (dlna_src, "Not setting URI of souphttpsrc");
@@ -1641,11 +1660,11 @@ dlna_src_setup_dtcp (GstDlnaSrc * dlna_src)
   }
 
   if (dlna_src->is_encrypted) {
-  g_object_set (G_OBJECT (dlna_src->dtcp_decrypter), "dtcp1host",
-      dlna_src->server_info->dtcp_host, NULL);
+    g_object_set (G_OBJECT (dlna_src->dtcp_decrypter), "dtcp1host",
+        dlna_src->server_info->dtcp_host, NULL);
 
-  g_object_set (G_OBJECT (dlna_src->dtcp_decrypter), "dtcp1port",
-      dlna_src->server_info->dtcp_port, NULL);
+    g_object_set (G_OBJECT (dlna_src->dtcp_decrypter), "dtcp1port",
+        dlna_src->server_info->dtcp_port, NULL);
   }
 
   gst_bin_add (GST_BIN (&dlna_src->bin), dlna_src->dtcp_decrypter);
@@ -1706,7 +1725,7 @@ dlna_src_uri_gather_info (GstDlnaSrc * dlna_src)
 
   GST_DEBUG_OBJECT (dlna_src, "Gathering info about URI");
 
-  if (!dlna_src->uri) {
+  if (!dlna_src->dlna_uri) {
     GST_DEBUG_OBJECT (dlna_src, "No URI set yet");
     return TRUE;
   }
@@ -1807,7 +1826,7 @@ dlna_src_soup_issue_head (GstDlnaSrc * dlna_src, gsize header_array_size,
     g_object_unref (dlna_src->soup_msg);
   }
   GST_DEBUG_OBJECT (dlna_src, "Creating soup message");
-  dlna_src->soup_msg = soup_message_new (SOUP_METHOD_HEAD, dlna_src->uri);
+  dlna_src->soup_msg = soup_message_new (SOUP_METHOD_HEAD, dlna_src->http_uri);
   if (!dlna_src->soup_msg) {
     GST_WARNING_OBJECT (dlna_src,
         "Unable to create soup message for HEAD request");
@@ -3023,9 +3042,8 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src,
                 "Problems converting playspeed %s into numeric value", *ptr);
             return FALSE;
           } else {
-            head_response->content_features->
-                playspeeds[head_response->content_features->playspeeds_cnt] =
-                rate;
+            head_response->content_features->playspeeds[head_response->
+                content_features->playspeeds_cnt] = rate;
           }
         } else {
           /* Handle conversion of fractional string into float, needed when specifying rate */
@@ -3037,9 +3055,8 @@ dlna_src_head_response_parse_playspeeds (GstDlnaSrc * dlna_src,
           } else {
             rate = (gfloat) n / (gfloat) d;
 
-            head_response->content_features->
-                playspeeds[head_response->content_features->playspeeds_cnt] =
-                rate;
+            head_response->content_features->playspeeds[head_response->
+                content_features->playspeeds_cnt] = rate;
           }
         }
         head_response->content_features->playspeeds_cnt++;
@@ -3830,11 +3847,8 @@ dlna_src_init (GstPlugin * dlna_src)
   GST_DEBUG_CATEGORY_INIT (gst_dlna_src_debug, "dlnasrc", 0,
       "MPEG+DLNA Player");
 
-  /* *TODO* - setting  + 1 forces this element to get selected as src by playsrc2 */
   return gst_element_register ((GstPlugin *) dlna_src, "dlnasrc",
-      GST_RANK_PRIMARY + 101,
-      /*                  GST_RANK_PRIMARY-1, */
-      GST_TYPE_DLNA_SRC);
+      GST_RANK_PRIMARY - 1, GST_TYPE_DLNA_SRC);
 }
 
 /* gstreamer looks for this structure to register eisss

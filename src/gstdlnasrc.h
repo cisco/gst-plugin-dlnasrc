@@ -61,7 +61,8 @@ struct _GstDlnaSrc
     guint dtcp_blocksize;
     gchar* dtcp_key_storage;
 
-    gchar *uri;
+    gchar *dlna_uri;
+    gchar *http_uri;
 
     SoupSession *soup_session;
     SoupMessage *soup_msg;
