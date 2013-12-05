@@ -49,8 +49,15 @@ enum
 
 #define DEFAULT_DTCP_BLOCKSIZE       524288
 
-#define ELEMENT_NAME_SOUP_HTTP_SRC "soup-http-source"
+#define ELEMENT_NAME_HTTP_SRC "http-source"
 #define ELEMENT_NAME_DTCP_DECRYPTER "dtcp-decrypter"
+
+enum
+{
+  SOURCE_UNKNOWN,
+  SOURCE_SOUP_HTTP,
+  SOURCE_WEBKIT
+};
 
 #define MAX_HTTP_BUF_SIZE 2048
 static const gchar CRLF[] = "\r\n";
@@ -424,6 +431,7 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
   GST_INFO_OBJECT (dlna_src, "Initializing");
 
   dlna_src->http_src = NULL;
+  dlna_src->http_src_type = SOURCE_UNKNOWN;
   dlna_src->dtcp_decrypter = NULL;
   dlna_src->src_pad = NULL;
 
@@ -1113,7 +1121,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
         "No header adjustments since server only supports Range requests");
 
   GST_DEBUG_OBJECT (dlna_src,
-      "returning false to make sure souphttpsrc gets chance to process");
+      "returning false to make sure src gets chance to process");
   return FALSE;
 }
 
@@ -1189,11 +1197,15 @@ dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
           return FALSE;
         }
 
-        g_object_set (G_OBJECT (dlna_src->http_src), "content-size",
-            dlna_src->byte_total, NULL);
-        GST_INFO_OBJECT (dlna_src,
-            "Set HTTP src content size: %" G_GUINT64_FORMAT,
-            dlna_src->byte_total);
+        if (dlna_src->http_src_type == SOURCE_SOUP_HTTP) {
+          g_object_set (G_OBJECT (dlna_src->http_src), "content-size",
+              dlna_src->byte_total, NULL);
+          GST_INFO_OBJECT (dlna_src,
+              "Set HTTP src content size: %" G_GUINT64_FORMAT,
+              dlna_src->byte_total);
+        } else
+          GST_WARNING_OBJECT (dlna_src,
+              "Unable to set content size of unknown source type");
       }
 
       if (start < dlna_src->npt_start_nanos || start > dlna_src->npt_end_nanos) {
@@ -1254,7 +1266,7 @@ dlna_src_is_rate_supported (GstDlnaSrc * dlna_src, gfloat rate)
 
 /**
  * Create extra headers to supply to soup http src based on requested starting
- * postion and rate.  Instruct souphttpsrc to exclude range header if it conflicts
+ * postion and rate.  Instruct src to exclude range header if it conflicts
  * with any of the extra headers which have been added.
  *
  * @param	dlna_src 	this element
@@ -1296,8 +1308,13 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
   GValue boolean_value = G_VALUE_INIT;
   g_value_init (&boolean_value, G_TYPE_BOOLEAN);
   g_value_set_boolean (&boolean_value, FALSE);
-  g_object_set_property (G_OBJECT (dlna_src->http_src), "exclude-range-header",
-      &boolean_value);
+  if (dlna_src->http_src_type == SOURCE_SOUP_HTTP)
+    g_object_set_property (G_OBJECT (dlna_src->http_src),
+        "exclude-range-header", &boolean_value);
+  else {
+    GST_WARNING_OBJECT (dlna_src, "Problems creating extra headers structure");
+    return FALSE;
+  }
 
   /* Create header structure with dlna transfer mode header */
   extra_headers_struct = gst_structure_new ("extraHeadersStruct",
@@ -1391,7 +1408,7 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
         "Adjust headers by including TimeSeekRange header value: %s",
         time_seek_range_field_value);
 
-    /* Set flag so range header is not included by souphttpsrc */
+    /* Set flag so range header is not included by src */
     disable_range_header = TRUE;
 
     /* Record seqnum since have handled this event as time based seek */
@@ -1419,25 +1436,32 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
         "Adjust headers by including Range.dtcp.com header value: %s",
         range_dtcp_field_value);
 
-    /* Set flag so range header is not included by souphttpsrc */
+    /* Set flag so range header is not included by src */
     disable_range_header = TRUE;
   } else
     GST_INFO_OBJECT (dlna_src, "Not adjusting with range.dtcp.com");
 
   g_value_init (&struct_value, GST_TYPE_STRUCTURE);
   gst_value_set_structure (&struct_value, extra_headers_struct);
-  g_object_set_property (G_OBJECT (dlna_src->http_src), "extra-headers",
-      &struct_value);
+  if (dlna_src->http_src_type == SOURCE_SOUP_HTTP)
+    g_object_set_property (G_OBJECT (dlna_src->http_src), "extra-headers",
+        &struct_value);
+  else
+    GST_INFO_OBJECT (dlna_src, "Unable to add extra headers to unknown source");
   gst_structure_free (extra_headers_struct);
 
   /* Disable range header if necessary */
   if (disable_range_header || !dlna_src->byte_seek_supported) {
     g_value_set_boolean (&boolean_value, TRUE);
-    g_object_set_property (G_OBJECT (dlna_src->http_src),
-        "exclude-range-header", &boolean_value);
-    GST_INFO_OBJECT (dlna_src,
-        "Adjust headers by excluding range header, flag: %d, supported: %d",
-        disable_range_header, dlna_src->byte_seek_supported);
+    if (dlna_src->http_src_type == SOURCE_SOUP_HTTP) {
+      g_object_set_property (G_OBJECT (dlna_src->http_src),
+          "exclude-range-header", &boolean_value);
+      GST_INFO_OBJECT (dlna_src,
+          "Adjust headers by excluding range header, flag: %d, supported: %d",
+          disable_range_header, dlna_src->byte_seek_supported);
+    } else
+      GST_INFO_OBJECT (dlna_src,
+          "Unable to exclude range header for unknown source");
   }
 
   return TRUE;
@@ -1489,7 +1513,7 @@ gst_dlna_src_uri_handler_init (gpointer g_iface, gpointer iface_data)
 /**
  * Sets the URI property to the supplied value.  It is called either via the URI
  * handler interface set method or via setting the element's property.  The
- * additional setup (issuing HEAD and setting up souphttpsrc for GET) for the URI
+ * additional setup (issuing HEAD and setting up src for GET) for the URI
  * is suppose to be performed when state changes from READY->PAUSED but it seems
  * that it must be performed here otherwise we get an error and playback fails due
  * to unlinked.
@@ -1574,23 +1598,35 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
 
   GST_INFO_OBJECT (dlna_src, "called");
 
-  /* Setup souphttpsrc as source element for this bin */
+  /* Setup a source element for this bin */
   dlna_src->http_src =
-      gst_element_factory_make ("souphttpsrc", ELEMENT_NAME_SOUP_HTTP_SRC);
+      gst_element_make_from_uri (GST_URI_SRC, dlna_src->http_uri,
+      ELEMENT_NAME_HTTP_SRC, NULL);
   if (!dlna_src->http_src) {
-    GST_ERROR_OBJECT (dlna_src,
-        "The http soup source element could not be created.");
+    GST_ERROR_OBJECT (dlna_src, "The source element could not be created.");
     return FALSE;
   }
+
+  if (g_strcmp0 (g_type_name (G_OBJECT_TYPE (dlna_src->http_src)),
+          "GstSoupHTTPSrc") == 0) {
+    dlna_src->http_src_type = SOURCE_SOUP_HTTP;
+    GST_INFO_OBJECT (dlna_src, "Set type of source to SOUP HTTP");
+  } else
+    GST_WARNING_OBJECT (dlna_src, "Type of source is unknown");
 
   gst_bin_add (GST_BIN (&dlna_src->bin), dlna_src->http_src);
 
   if (dlna_src->http_uri) {
-    GST_INFO_OBJECT (dlna_src, "Setting URI of souphttpsrc");
-    g_object_set (G_OBJECT (dlna_src->http_src), "location", dlna_src->http_uri,
-        NULL);
+    if (dlna_src->http_src_type == SOURCE_SOUP_HTTP) {
+      GST_INFO_OBJECT (dlna_src, "Setting URI of souphttpsrc");
+      g_object_set (G_OBJECT (dlna_src->http_src), "location",
+          dlna_src->http_uri, NULL);
+    } else
+      GST_WARNING_OBJECT (dlna_src,
+          "Not setting URI of unknown source type: %s",
+          g_type_name (G_OBJECT_TYPE (dlna_src->http_src)));
   } else
-    GST_INFO_OBJECT (dlna_src, "Not setting URI of souphttpsrc");
+    GST_INFO_OBJECT (dlna_src, "Not setting URI of source");
 
   /* Setup dtcp element regardless */
   if (!dlna_src_setup_dtcp (dlna_src)) {
@@ -1623,10 +1659,15 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
   if (dlna_src->byte_total && dlna_src->http_src) {
     content_size = dlna_src->byte_total;
 
-    g_object_set (G_OBJECT (dlna_src->http_src), "content-size", content_size,
-        NULL);
-    GST_INFO_OBJECT (dlna_src, "Set HTTP src content size: %" G_GUINT64_FORMAT,
-        content_size);
+    if (dlna_src->http_src_type == SOURCE_SOUP_HTTP) {
+      g_object_set (G_OBJECT (dlna_src->http_src), "content-size", content_size,
+          NULL);
+      GST_INFO_OBJECT (dlna_src,
+          "Set HTTP src content size: %" G_GUINT64_FORMAT, content_size);
+    } else
+      GST_WARNING_OBJECT (dlna_src,
+          "Not setting content size of unknown source type: %s",
+          g_type_name (G_OBJECT_TYPE (dlna_src->http_src)));
   }
 
   return TRUE;
@@ -1675,8 +1716,12 @@ dlna_src_setup_dtcp (GstDlnaSrc * dlna_src)
     return FALSE;
   }
   /* Setup the block size for dtcp */
-  g_object_set (dlna_src->http_src, "blocksize", dlna_src->dtcp_blocksize,
-      NULL);
+  if (dlna_src->http_src_type == SOURCE_SOUP_HTTP)
+    g_object_set (dlna_src->http_src, "blocksize", dlna_src->dtcp_blocksize,
+        NULL);
+  else
+    GST_WARNING_OBJECT (dlna_src,
+        "Unable to set block size for unknown source");
 
   /* Make sure passthru mode is either disabled or enabled depending on content encryption */
   g_object_set (dlna_src->dtcp_decrypter, "passthru-mode",
@@ -2005,17 +2050,21 @@ dlna_src_update_overall_info (GstDlnaSrc * dlna_src,
       head_response->accept_byte_ranges)
     dlna_src->byte_seek_supported = TRUE;
 
-  /* Make sure content size has been set for souphttpsrc */
+  /* Make sure content size has been set for src */
   if (dlna_src->byte_total && dlna_src->http_src) {
     content_size = dlna_src->byte_total;
 
-    g_object_set (G_OBJECT (dlna_src->http_src), "content-size", content_size,
-        NULL);
-    GST_INFO_OBJECT (dlna_src, "Set HTTP src content size: %" G_GUINT64_FORMAT,
-        content_size);
+    if (dlna_src->http_src_type == SOURCE_SOUP_HTTP) {
+      g_object_set (G_OBJECT (dlna_src->http_src), "content-size", content_size,
+          NULL);
+      GST_INFO_OBJECT (dlna_src,
+          "Set HTTP src content size: %" G_GUINT64_FORMAT, content_size);
+    } else
+      GST_WARNING_OBJECT (dlna_src,
+          "Unable to set content size due to unknown source type");
   } else
     GST_INFO_OBJECT (dlna_src,
-        "Unable set content size of souphttpsrc due to either null souphttpsrc or total == 0");
+        "Unable set content size of src due to either null src or total == 0");
 
   g_string_free (npt_str, TRUE);
 
