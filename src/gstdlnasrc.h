@@ -54,7 +54,6 @@ struct _GstDlnaSrc
 {
     GstBin bin;
     GstElement* http_src;
-    guint http_src_type;
     GstElement* dtcp_decrypter;
 
     GstPad* src_pad;
