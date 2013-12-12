@@ -395,18 +395,18 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
 
   g_object_class_install_property (gobject_klass, PROP_URI,
       g_param_spec_string ("uri", "Stream URI",
-          "Sets URI A/V stream", NULL, G_PARAM_READWRITE));
+          "Sets URI A/V stream", NULL, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   g_object_class_install_property (gobject_klass, PROP_SUPPORTED_RATES,
-      g_param_spec_boxed ("supported_rates",
+      g_param_spec_boxed ("supported-rates",
           "Supported Playspeed rates",
           "List of supported playspeed rates of DLNA server content",
-          G_TYPE_ARRAY, G_PARAM_READABLE));
+          G_TYPE_ARRAY, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
   g_object_class_install_property (gobject_klass, PROP_DTCP_BLOCKSIZE,
-      g_param_spec_uint ("dtcp_blocksize", "DTCP Block size",
+      g_param_spec_uint ("dtcp-blocksize", "DTCP Block size",
           "Size in bytes to read per buffer when content is dtcp encrypted (-1 = default)",
-          0, G_MAXUINT, DEFAULT_DTCP_BLOCKSIZE, G_PARAM_READWRITE));
+          0, G_MAXUINT, DEFAULT_DTCP_BLOCKSIZE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   gobject_klass->finalize = GST_DEBUG_FUNCPTR (gst_dlna_src_finalize);
   gstelement_klass->change_state = gst_dlna_src_change_state;
