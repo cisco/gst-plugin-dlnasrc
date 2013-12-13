@@ -450,7 +450,7 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
   dlna_src->is_live = FALSE;
   dlna_src->is_encrypted = FALSE;
 
-  dlna_src->byte_seek_supported = FALSE;
+  dlna_src->byte_seek_supported = TRUE;
   dlna_src->byte_start = 0;
   dlna_src->byte_end = 0;
   dlna_src->byte_total = 0;
