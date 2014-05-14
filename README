@@ -1,0 +1,45 @@
+WHAT IT IS
+----------
+
+gstdlnasrc is a source which utilizes souphttpsrc to perform an HTTP GET to retrieve content from a DLNA (Digital Living Network Allicance) DMS (Digital Media Server).
+
+The dlnasrc is derived from a GStreamer bin component and contains two elements - GStreamer souphttpsrc and CableLabs developed GStreamer filter element called dtcpip.  The dlnasrc initiates transfer of media content from dlna compliant Digital Media Servers (DMS). It also supports transfers from non-dlna DMS.  To initiate transfers, it issues an HTTP HEAD request to discover information about the content item associated with the supplied URI. The dlnasrc will utilize the souphttpsrc to perform the actual HTTP get to retrieve the media content.  If necessary, the dlnasrc will hook up the dtcpip element if the media content is encrypted.   
+
+Dlnasrc vs Web Kit Source
+There is a GStreamer source element within WebKit called webkitwebsrc - WebKitWebSourceGStreamer.cpp.  It is given a rank of PRIMARY + 100 so that it will be selected as the GStreamer source element within WebKit.  When installed, the dlnasrc is given a rank of PRIMARY + 101 so the dlnasrc is selected over webkitwebsrc.
+
+This plugin is an URI handler.  When URI is initialized, it will issue an HTTP HEAD request to retrieve information about the content using various DLNA defined HTTP headers supplied in the HEAD request.
+Based on the response from the DMS, this plugin may include the dtcpip element in order to perform DTCP/IP decryption.
+
+
+HOW TO BUILD IT
+---------------
+Issue the following commands from the dlnasrc directory:
+./autogen.sh
+
+This will produce a Makefile, initiate the make via:
+make
+
+Install the plugin via:
+sudo make install
+
+This plugin will be built when entering the same commands from gst-plugins-cl (parent directory)
+
+
+TESTING
+-------
+Media Server Support for Testing:
+
+The Tru2Way OCAP RI Server is the dlna compliant DMS that is currently used for testing since it supports server side trick modes and dtcp/ip encryption.   The Tru2Way OCAP RI Server is open source and available for download.   See < https://community.cablelabs.com/wiki/display/OCORI/OCAP-RI+Public>.  Other HTTP servers can be used, but functionality will be limited if they are not dlna compliant.  Such functionality includes, trick modes (fast fwd, rewind) and positioning within stream using scroll bar and dtcp/ip encryption.
+
+Testing within Webkit 
+If the dlnasrc is installed, it will be selected by playbin over the WebKit..Source.  If using a dlna compliant DMS, this will allow testing of fast forward rate changes and positioning.  
+
+Testing outside of Webkit
+There are two test programs checked into RUIH BitBucket.
+
+The first test program is in dlnasrc bit bucket repository in a the dlnasrc/test directory.  This test program builds as part of make target and has an associated script to run the test program.  The test programs has a bunch of options to test many different scenarios.  It can be used to test GStreamer playbin pipeline or a manually built pipeline.  See help for complete listing of options. 
+
+The second test program is in gst-test bit bucket.  This is a test program from a GStreamer tutorial modified to support GStreamer 1.0 and to take command line args for URI.  It also is built via the make target and has a script to run the program.
+
+
