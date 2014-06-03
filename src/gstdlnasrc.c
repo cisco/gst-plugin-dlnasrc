@@ -202,11 +202,17 @@ static void gst_dlna_src_set_property (GObject * object, guint prop_id,
 static void gst_dlna_src_get_property (GObject * object, guint prop_id,
     GValue * value, GParamSpec * spec);
 
+#if GST_CHECK_VERSION(1,0,0)
 static gboolean gst_dlna_src_event (GstPad * pad, GstObject * parent,
     GstEvent * event);
 
 static gboolean gst_dlna_src_query (GstPad * pad, GstObject * parent,
     GstQuery * query);
+#else
+static gboolean gst_dlna_src_event (GstPad * pad, GstEvent * event);
+
+static gboolean gst_dlna_src_query (GstPad * pad, GstQuery * query);
+#endif
 
 static GstStateChangeReturn gst_dlna_src_change_state (GstElement * element,
     GstStateChange transition);
@@ -356,7 +362,6 @@ dlna_src_nanos_to_npt (GstDlnaSrc * dlna_src, guint64 npt_nanos,
     GString * npt_str);
 
 #define gst_dlna_src_parent_class parent_class
-
 G_DEFINE_TYPE_WITH_CODE (GstDlnaSrc, gst_dlna_src, GST_TYPE_BIN,
     G_IMPLEMENT_INTERFACE (GST_TYPE_URI_HANDLER,
         gst_dlna_src_uri_handler_init));
@@ -364,22 +369,23 @@ G_DEFINE_TYPE_WITH_CODE (GstDlnaSrc, gst_dlna_src, GST_TYPE_BIN,
 GST_DEBUG_CATEGORY_STATIC (gst_dlna_src_debug);
 #define GST_CAT_DEFAULT gst_dlna_src_debug
 
-
+#if !GST_CHECK_VERSION(1,0,0)
 static void
 gst_dlna_src_base_init (gpointer gclass)
 {
-	GstElementClass *element_class = GST_ELEMENT_CLASS (gclass);
+  GstElementClass *element_class = GST_ELEMENT_CLASS (gclass);
 
-	gst_element_class_set_details_simple(element_class,
-		"HTTP/DLNA client source 2/20/13 7:37 AM",
-		"Source/Network",
-		"Receive data as a client via HTTP with DLNA extensions",
-		"Eric Winkelman <e.winkelman@cablelabs.com>");
+  gst_element_class_set_details_simple(element_class,
+    "HTTP/DLNA client source 2/20/13 7:37 AM",
+    "Source/Network",
+    "Receive data as a client via HTTP with DLNA extensions",
+    "Eric Winkelman <e.winkelman@cablelabs.com>");
 
 
-	gst_element_class_add_pad_template (element_class,
-			gst_static_pad_template_get (&gst_dlna_src_pad_template));
+  gst_element_class_add_pad_template (element_class,
+      gst_static_pad_template_get (&gst_dlna_src_pad_template));
 }
+#endif
 
 /*
  * Initializes (only called once) the class associated with this element from within
@@ -400,22 +406,16 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
   GstElementClass *gstelement_klass;
   gstelement_klass = (GstElementClass *) klass;
 
-  /*
-   * **********************************
-   * Move to _base_init
-   */
-//  gst_element_class_set_static_metadata (gstelement_klass,
-//      "HTTP/DLNA client source 2/20/13 7:37 AM",
-//      "Source/Network",
-//      "Receive data as a client via HTTP with DLNA extensions",
-//      "Eric Winkelman <e.winkelman@cablelabs.com>");
+#if GST_CHECK_VERSION(1,0,0)
+  gst_element_class_set_static_metadata (gstelement_klass,
+      "HTTP/DLNA client source 2/20/13 7:37 AM",
+      "Source/Network",
+      "Receive data as a client via HTTP with DLNA extensions",
+      "Eric Winkelman <e.winkelman@cablelabs.com>");
 
-//  gst_element_class_add_pad_template (gstelement_klass,
-//      gst_static_pad_template_get (&gst_dlna_src_pad_template));
-
-  /*
-   * ***********************************
-   */
+  gst_element_class_add_pad_template (gstelement_klass,
+      gst_static_pad_template_get (&gst_dlna_src_pad_template));
+#endif
 
   gobject_klass->set_property = gst_dlna_src_set_property;
   gobject_klass->get_property = gst_dlna_src_get_property;
@@ -662,13 +662,17 @@ gst_dlna_src_change_state (GstElement * element, GstStateChange transition)
  *
  * @return	true if event was handled, false otherwise
  */
+#if GST_CHECK_VERSION(1,0,0)
 static gboolean
 gst_dlna_src_event (GstPad * pad, GstObject * parent, GstEvent * event)
+#else
+static gboolean
+gst_dlna_src_event (GstPad * pad, GstEvent * event)
+#endif
 {
   gboolean ret = FALSE;
   GstDlnaSrc *dlna_src = GST_DLNA_SRC (gst_pad_get_parent (pad));
 
-   if (event == NULL){GST_DEBUG_OBJECT(dlna_src,"Event passed in was NULL, dropping\n"); return TRUE;}
   switch (GST_EVENT_TYPE (event)) {
     case GST_EVENT_SEEK:
       GST_INFO_OBJECT (dlna_src, "Got src event: %s",
@@ -689,31 +693,28 @@ gst_dlna_src_event (GstPad * pad, GstObject * parent, GstEvent * event)
     case GST_EVENT_QOS:
     case GST_EVENT_LATENCY:
     case GST_EVENT_NAVIGATION:
-//    case GST_EVENT_RECONFIGURE:
+#if GST_CHECK_VERSION(1,0,0)
+    case GST_EVENT_RECONFIGURE:
+#endif
       /* Just call default handler to handle */
-      break;
-
-    case GST_EVENT_UNKNOWN:
-      // THE TSDEMUX on the PC sends weird events that are unknown type.
-      // Just dropping them here.
-	 // ret = gst_pad_event_default (pad, event);				//--GST0.10.x
-     return TRUE;
-      break;
-      
+      break;     
 
     default:
-      GST_DEBUG_OBJECT (dlna_src, "Unsupported event: %s, from SRC object %p ",
-          GST_EVENT_TYPE_NAME (event),GST_EVENT_SRC(event));
+      GST_DEBUG_OBJECT (dlna_src, "Unsupported event: %s",
+          GST_EVENT_TYPE_NAME (event));
       break;
   }
 
   /* If not handled, pass on to default pad handler */
-  if (!ret) 
-  {
-//    ret = gst_pad_event_default (pad, parent, event);		//--GST1.0
-     GST_DEBUG_OBJECT(dlna_src,"forwarding event that was unhandled\n");
-	  ret = gst_pad_event_default (pad, event);				//--GST0.10.x
+  if (!ret) {
+#if GST_CHECK_VERSION(1,0,0)
+    ret = gst_pad_event_default (pad, parent, event);
+#else    
+    ret = gst_pad_event_default (pad, event);
+#endif
   }
+
+  gst_object_unref (dlna_src);
 
   return ret;
 }
@@ -727,13 +728,17 @@ gst_dlna_src_event (GstPad * pad, GstObject * parent, GstEvent * event)
  *
  * @return true if query could be performed, false otherwise
  */
+#if GST_CHECK_VERSION(1,0,0)
 static gboolean
 gst_dlna_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
+#else
+static gboolean
+gst_dlna_src_query (GstPad * pad, GstQuery * query)
+#endif
 {
   gboolean ret = FALSE;
   GstDlnaSrc *dlna_src = GST_DLNA_SRC (gst_pad_get_parent (pad));
 
-  if (query == NULL){return FALSE;}
   GST_LOG_OBJECT (dlna_src, "Got src query: %s", GST_QUERY_TYPE_NAME (query));
 
   switch (GST_QUERY_TYPE (query)) {
@@ -781,9 +786,14 @@ gst_dlna_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
   }
 
   if (!ret) {
-//    ret = gst_pad_query_default (pad, parent, query);			//--RDK1.0
-	  ret = gst_pad_query_default (pad, query);					//--RDK0.10.x
+#if GST_CHECK_VERSION(1,0,0)
+    ret = gst_pad_query_default (pad, parent, query);
+#else
+    ret = gst_pad_query_default (pad, query);
+#endif
   }
+
+  gst_object_unref (dlna_src);
 
   return ret;
 }
@@ -1484,75 +1494,77 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
   return TRUE;
 }
 
-//--GST1.0
-//static guint
-//gst_dlna_src_uri_get_type (GType type)
-//{
-//  return GST_URI_SRC;
-//}
 
-//--GST0.10.x
+#if GST_CHECK_VERSION(1,0,0)
+static guint
+gst_dlna_src_uri_get_type (GType type)
+{
+  return GST_URI_SRC;
+}
+#else
 static GstURIType
 gst_dlna_src_uri_get_type(void)
 {
-	return GST_URI_SRC;
+  return GST_URI_SRC;
 }
+#endif
 
-//--GST1.0
-//static const gchar *const *
-//gst_dlna_src_uri_get_protocols (GType type)
-//{
-//  static const gchar *protocols[] = { "http", "https", NULL };
-//  return protocols;
-//}
-
+#if GST_CHECK_VERSION(1,0,0)
+static const gchar *const *
+gst_dlna_src_uri_get_protocols (GType type)
+{
+  static const gchar *protocols[] = { "dlna+http", "dlna+https", NULL };
+  return protocols;
+}
+#else
 static gchar **
 gst_dlna_src_uri_get_protocols (void)
 {
   static gchar *protocols[] = { "dlna+http", "dlna+https", NULL };
   return protocols;
 }
+#endif
 
-//--GST1.0
-//static gchar *
-//gst_dlna_src_uri_get_uri (GstURIHandler * handler)
-//{
-//  GstDlnaSrc *dlna_src = GST_DLNA_SRC (handler);
-//  return g_strdup (dlna_src->uri);
-//}
-
+#if GST_CHECK_VERSION(1,0,0)
+static gchar *
+gst_dlna_src_uri_get_uri (GstURIHandler * handler)
+{
+  GstDlnaSrc *dlna_src = GST_DLNA_SRC (handler);
+  return g_strdup (dlna_src->dlna_uri);
+}
+#else
 G_CONST_RETURN gchar *
 gst_dlna_src_uri_get_uri(GstURIHandler * handler)
 {
   GstDlnaSrc *dlna_src = GST_DLNA_SRC (handler);
   return g_strdup (dlna_src->dlna_uri);
 }
+#endif
 
-//GST1.0
-//static gboolean
-//gst_dlna_src_uri_set_uri (GstURIHandler * handler, const gchar * uri,
-//    GError ** error)
-//{
-//  GstDlnaSrc *dlna_src = GST_DLNA_SRC (handler);
-//
-//  GST_INFO_OBJECT (dlna_src, "uri handler called to set uri: %s, current: %s",
-//      uri, dlna_src->uri);
-//
-//  return dlna_src_uri_assign (dlna_src, uri, error);
-//}
-
-gboolean
-gst_dlna_src_uri_set_uri(GstURIHandler * handler,
-						 const gchar *	 uri)
+#if GST_CHECK_VERSION(1,0,0)
+static gboolean
+gst_dlna_src_uri_set_uri (GstURIHandler * handler, const gchar * uri,
+    GError ** error)
 {
-	GstDlnaSrc *dlna_src = GST_DLNA_SRC (handler);
+  GstDlnaSrc *dlna_src = GST_DLNA_SRC (handler);
 
-	GST_INFO_OBJECT (dlna_src, "uri handler called to set uri: %s, current: %s",
+  GST_INFO_OBJECT (dlna_src, "uri handler called to set uri: %s, current: %s",
       uri, dlna_src->dlna_uri);
 
-	return dlna_src_uri_assign (dlna_src, uri, NULL);
+  return dlna_src_uri_assign (dlna_src, uri, error);
 }
+#else
+static gboolean
+gst_dlna_src_uri_set_uri(GstURIHandler * handler, const gchar * uri)
+{
+  GstDlnaSrc *dlna_src = GST_DLNA_SRC (handler);
 
+  GST_INFO_OBJECT (dlna_src, "uri handler called to set uri: %s, current: %s",
+      uri, dlna_src->dlna_uri);
+
+  return dlna_src_uri_assign (dlna_src, uri, NULL);
+}
+#endif
 
 static void
 gst_dlna_src_uri_handler_init (gpointer g_iface, gpointer iface_data)
@@ -1652,7 +1664,6 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
   GstPad *pad = NULL;
 
   GST_INFO_OBJECT (dlna_src, "called");
-/* May need to do some porting here*/
   /* Setup souphttpsrc as source element for this bin */
   dlna_src->http_src =
       gst_element_factory_make ("souphttpsrc", ELEMENT_NAME_SOUP_HTTP_SRC);
@@ -3943,8 +3954,16 @@ dlna_src_init (GstPlugin * dlna_src)
  *
  * exchange the string 'Template eiss' with your eiss description
  */
+#if GST_CHECK_VERSION(1,0,0)
+GST_PLUGIN_DEFINE (GST_VERSION_MAJOR,
+    GST_VERSION_MINOR,
+    dlnasrc,
+    "DLNA HTTP Source",
+    (GstPluginInitFunc) dlna_src_init,
+    VERSION, "BSD", "gst-cablelabs_ri", "http://gstreamer.net/")
+#else
 GST_PLUGIN_DEFINE (
-	GST_VERSION_MAJOR,
+  GST_VERSION_MAJOR,
     GST_VERSION_MINOR,
     "dlnasrc",
     "DLNA HTTP SRC",
@@ -3954,5 +3973,5 @@ GST_PLUGIN_DEFINE (
     "gst-cablelabs_ri",
     "http://gstreamer.net/"
 )
-
+#endif
 

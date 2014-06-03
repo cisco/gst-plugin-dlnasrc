@@ -17,9 +17,40 @@ AC_DEFINE_UNQUOTED(OS, "${host}", [cpu-machine-OS])
 # This must be done early in the configuration steps.
 AC_USE_SYSTEM_EXTENSIONS
 
+AC_ARG_WITH([gstreamer-api],
+    AC_HELP_STRING([--with-gstreamer-api=VERSION],
+                   [build against the specified GStreamer API version
+                    @<:@default=0.10@:>@]),
+    [GST_API_VERSION="$with_gstreamer_api"], [GST_API_VERSION=0.10])
+
+case $GST_API_VERSION in
+0.10)
+    AC_MSG_NOTICE(Using Gstreamer API 0.10)
+    ;;
+1.0)
+    AC_MSG_NOTICE(Using Gstreamer API 1.0)
+    ;;
+*)
+    AC_MSG_ERROR([Unsupported GStreamer API, use 0.10 or 1.0])
+    ;;
+esac
+
+AC_SUBST(GST_API_VERSION)
+AC_DEFINE_UNQUOTED(GST_API_VERSION, "$GST_API_VERSION",
+  [GStreamer API Version])
+
 dnl required versions of gstreamer and plugins-base
-GST_REQUIRED=0.10.16
-GSTPB_REQUIRED=0.10.16
+AS_VERSION_COMPARE([$GST_API_VERSION], [0.10],
+                   [],
+                   [
+                    GST_REQUIRED=0.10.16
+                    GSTPB_REQUIRED=0.10.16
+	           ],
+                   [
+                    GST_REQUIRED=1.2.0
+                    GSTPB_REQUIRED=1.2.0
+                   ])
+
 
 AC_CONFIG_SRCDIR([src/gstdlnasrc.c])
 AC_CONFIG_HEADERS([config.h])
@@ -57,40 +88,44 @@ dnl for libgstinterfaces-1.0: gstreamer-interfaces-1.0 >= $GST_REQUIRED
 dnl for libgstrtp-1.0: gstreamer-rtp-1.0 >= $GST_REQUIRED
 dnl for libgstrtsp-1.0: gstreamer-rtsp-1.0 >= $GST_REQUIRED
 dnl etc.
-#PKG_CHECK_MODULES(GST, [
-#  gstreamer-1.0 >= $GST_REQUIRED
-#  gstreamer-base-1.0 >= $GST_REQUIRED
-#  gstreamer-controller-1.0 >= $GST_REQUIRED
-#], [
-#  AC_SUBST(GST_CFLAGS)
-#  AC_SUBST(GST_LIBS)
-#], [
-#  AC_MSG_ERROR([
-#      You need to install or upgrade the GStreamer development
-#      packages on your system. On debian-based systems these are
-#      libgstreamer1.0-dev and libgstreamer-plugins-base1.0-dev.
-#      on RPM-based systems gstreamer1.0-devel, libgstreamer1.0-devel
-#      or similar. The minimum version required is $GST_REQUIRED.
-#  ])
-#])
 
-PKG_CHECK_MODULES(GST, [
-  gstreamer-0.10 >= $GST_REQUIRED
-  gstreamer-base-0.10 >= $GST_REQUIRED
-  gstreamer-controller-0.10 >= $GST_REQUIRED
-], [
-  AC_SUBST(GST_CFLAGS)
-  AC_SUBST(GST_LIBS)
-], [
-  AC_MSG_ERROR([
-      You need to install or upgrade the GStreamer development
-      packages on your system. On debian-based systems these are
-      libgstreamer0.10-dev and libgstreamer-plugins-base0.10-dev.
-      on RPM-based systems gstreamer0.10-devel, libgstreamer0.10-devel
-      or similar. The minimum version required is $GST_REQUIRED.
-  ])
-])
 
+AS_IF([test "x$GST_API_VERSION" = x0.10],
+      [
+        PKG_CHECK_MODULES(GST, [
+          gstreamer-0.10 >= $GST_REQUIRED
+          gstreamer-base-0.10 >= $GST_REQUIRED
+          gstreamer-controller-0.10 >= $GST_REQUIRED
+        ], [
+          AC_SUBST(GST_CFLAGS)
+          AC_SUBST(GST_LIBS)
+        ], [
+          AC_MSG_ERROR([
+            You need to install or upgrade the GStreamer development
+            packages on your system. On debian-based systems these are
+            libgstreamer0.10-dev and libgstreamer-plugins-base0.10-dev.
+            on RPM-based systems gstreamer0.10-devel, libgstreamer0.10-devel
+            or similar. The minimum version required is $GST_REQUIRED.
+          ])
+        ])
+      ], [
+        PKG_CHECK_MODULES(GST, [
+          gstreamer-1.0 >= $GST_REQUIRED
+          gstreamer-base-1.0 >= $GST_REQUIRED
+          gstreamer-controller-1.0 >= $GST_REQUIRED
+        ], [
+          AC_SUBST(GST_CFLAGS)
+          AC_SUBST(GST_LIBS)
+        ], [
+          AC_MSG_ERROR([
+            You need to install or upgrade the GStreamer development
+            packages on your system. On debian-based systems these are
+            libgstreamer1.0-dev and libgstreamer-plugins-base1.0-dev.
+            on RPM-based systems gstreamer0.10-devel, libgstreamer1.0-devel
+            or similar. The minimum version required is $GST_REQUIRED.
+          ])
+        ])
+      ])
 
 dnl *** soup ***
 PKG_CHECK_MODULES([SOUP], [ libsoup-2.4 >= 2.3.2 ], [
@@ -117,9 +152,15 @@ AC_COMPILE_IFELSE([AC_LANG_PROGRAM([ ], [ ])], [
 
 dnl set the plugindir where plugins should be installed (for src/Makefile.am)
 if test "x${prefix}" = "x$HOME"; then
-  plugindir="$HOME/.gstreamer-0.10/plugins"
+  AS_VERSION_COMPARE([$GST_API_VERSION], [0.10],
+                     [],
+                     [plugindir="$HOME/.gstreamer-0.10/plugins"],
+                     [plugindir="$HOME/.gstreamer-1.0/plugins"])                     
 else
-  plugindir="\$(libdir)/gstreamer-0.10"
+  AS_VERSION_COMPARE([$GST_API_VERSION], [0.10],
+                     [],
+                     [plugindir="\$(libdir)/gstreamer-0.10"],
+                     [plugindir="\$(libdir)/gstreamer-1.0"])
 fi
 AC_SUBST(plugindir)
 
