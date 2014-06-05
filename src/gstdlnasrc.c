@@ -1682,6 +1682,10 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
   } else
     GST_INFO_OBJECT (dlna_src, "Not setting URI of souphttpsrc");
 
+  /* Setup the block default block size */
+  g_print("Setting blocksize in libsoup to %u\n",(4096*32));
+  g_object_set (dlna_src->http_src, "blocksize",(4096*32), NULL);
+
   /* Setup dtcp element regardless */
   /*
    * Need to make this dependant on whether DTCP markers are present in uri
