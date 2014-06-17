@@ -1163,6 +1163,12 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
     GST_INFO_OBJECT (dlna_src,
         "No header adjustments since server only supports Range requests");
 
+  /* Souphttpsrc does not handle time based seeks, so return TRUE */
+  if(GST_FORMAT_TIME == format)
+  {
+     return TRUE;
+  }
+  
   GST_DEBUG_OBJECT (dlna_src,
       "returning false to make sure souphttpsrc gets chance to process");
   return FALSE;
@@ -1480,6 +1486,16 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
   g_object_set_property (G_OBJECT (dlna_src->http_src), "extra-headers",
       &struct_value);
   gst_structure_free (extra_headers_struct);
+
+  /* If the format is time, we have to explicitly notify souphttpsrc to rebuild the HTTP header.
+   * If the format is bytes, souphttpsrc will rebuild the HTTP header when it 
+   * receives the seek event */
+  if(GST_FORMAT_TIME == format)
+  {
+     g_value_set_boolean (&boolean_value, TRUE);
+     g_object_set_property (G_OBJECT (dlna_src->http_src),
+           "rebuild-header", &boolean_value);
+  }
 
   /* Disable range header if necessary */
   if (disable_range_header || !dlna_src->byte_seek_supported) {
