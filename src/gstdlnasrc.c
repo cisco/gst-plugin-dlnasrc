@@ -2149,9 +2149,6 @@ dlna_src_head_response_free_struct (GstDlnaSrc * dlna_src,
   g_free (dlna_src->npt_start_str);
   g_free (dlna_src->npt_end_str);
   g_free (dlna_src->npt_duration_str);
-  g_free (dlna_src->npt_start_str);
-  g_free (dlna_src->npt_end_str);
-  g_free (dlna_src->npt_duration_str);
 
   int i = 0;
   if (head_response) {
@@ -2179,9 +2176,6 @@ dlna_src_head_response_free_struct (GstDlnaSrc * dlna_src,
     g_free (head_response->dtcp_host);
     g_free (head_response->available_seek_npt_start_str);
     g_free (head_response->available_seek_npt_end_str);
-    g_free (head_response->time_seek_npt_start_str);
-    g_free (head_response->time_seek_npt_end_str);
-    g_free (head_response->time_seek_npt_duration_str);
 
     g_slice_free (GstDlnaSrcHeadResponse, head_response);
   }
