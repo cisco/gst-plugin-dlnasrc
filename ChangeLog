@@ -1,0 +1,5 @@
+July 2014
+Fixed a few small memory leaks, and enabled virtual http protocol by default.  Also disabled DTCP/IP.
+The DTCP/IP will be enabled after we get the key store from the STB hardware.  
+Made numerous changes to the libsouphttpsrc as well so that seek events will work when the GST FORMAT 
+is time.  The default format of Bytes will work by default.

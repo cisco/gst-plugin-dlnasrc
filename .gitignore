@@ -1,35 +1,41 @@
+# Binaries
 *.o
-*.la
 *.lo
-*.so
-*.Plo
-*~
-.deps
-.dirstamp
-.libs
-.cproject
-.project
-aclocal.m4
-autom4te.cache
-config.*
-configure
-configure.in
-depcomp
-INSTALL
-install-sh
-libtool
-ltmain.sh
+*.la
+
+# Automake 
 Makefile
 Makefile.in
-missing
-stamp-h1
-test/test
-test/*.mkv
-test/*.ogv
-test/*.mpg
-test/*.txt
-test/*.log
-test/*.out
-test/tmp
-bug
+.libs
+.deps
 
+# Autoconf
+/config.*
+/configure
+/aclocal.m4
+/autom4te.cache
+/compile
+/libtool
+/missing
+/ltmain.sh
+/install-sh
+/stamp-h1
+/depcomp
+/ar-lib
+
+# Docs
+Doxyfile
+/doc/latex
+/doc/html
+/doc/doxyfile.stamp
+
+# Project specific
+/source/ipc/*/*generated.*
+/source/ipc/client/cgmi_cli-1.0
+/source/ipc/client/cgmi-client-test-1.0
+/source/ipc/daemon/cgmi-daemon-1.0
+/source/ipc/client/cgmi_cli-0.10
+/source/ipc/client/cgmi-client-test-0.10
+/source/ipc/daemon/cgmi-daemon-0.10
+cscope.out
+tags
