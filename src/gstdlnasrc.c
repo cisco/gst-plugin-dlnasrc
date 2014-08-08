@@ -1166,6 +1166,9 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
   /* Souphttpsrc does not handle time based seeks, so return TRUE */
   if(GST_FORMAT_TIME == format)
   {
+     /* Send a dummy bytes based request to restart the gst_pad_task in 
+      * basesrc(base class of souphttpsrc) */
+     gst_element_seek_simple(dlna_src->http_src, GST_FORMAT_BYTES, GST_SEEK_FLAG_FLUSH, 0);
      return TRUE;
   }
   
@@ -1487,14 +1490,11 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
       &struct_value);
   gst_structure_free (extra_headers_struct);
 
-  /* If the format is time, we have to explicitly notify souphttpsrc to rebuild the HTTP header.
-   * If the format is bytes, souphttpsrc will rebuild the HTTP header when it 
-   * receives the seek event */
   if(GST_FORMAT_TIME == format)
   {
      g_value_set_boolean (&boolean_value, TRUE);
      g_object_set_property (G_OBJECT (dlna_src->http_src),
-           "rebuild-header", &boolean_value);
+           "dlna-time-seek", &boolean_value);
   }
 
   /* Disable range header if necessary */
@@ -2081,7 +2081,17 @@ dlna_src_update_overall_info (GstDlnaSrc * dlna_src,
       dlna_src->npt_end_nanos = head_response->time_seek_npt_end;
       g_free (dlna_src->npt_end_str);
       dlna_src->npt_end_str = g_strdup (head_response->time_seek_npt_end_str);
-      dlna_src->npt_duration_nanos = head_response->time_seek_npt_duration;
+      if((NULL != head_response->time_seek_npt_duration_str) && 
+         ('*' == head_response->time_seek_npt_duration_str[0]) &&
+         (0 == head_response->time_seek_npt_duration))
+      {
+         dlna_src->npt_duration_nanos = head_response->time_seek_npt_end -
+                                        head_response->time_seek_npt_start;
+      }
+      else
+      {
+         dlna_src->npt_duration_nanos = head_response->time_seek_npt_duration;
+      }
       g_free (dlna_src->npt_duration_str);
       dlna_src->npt_duration_str =
           g_strdup (head_response->time_seek_npt_duration_str);
