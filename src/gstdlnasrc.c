@@ -1604,11 +1604,16 @@ gst_dlna_src_uri_handler_init (gpointer g_iface, gpointer iface_data)
 static gboolean
 dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri, GError ** error)
 {
+  gboolean ret = FALSE;
   gchar *dlna_prefix = "dlna+";
   GString *http_uri;
 
+
   if (uri == NULL)
+  {
+    g_set_error (error, GST_URI_ERROR, GST_URI_ERROR_BAD_URI, "Bad URI passed");
     return FALSE;
+  }
 
   if (dlna_src->dlna_uri) {
     dlna_src_head_response_free_struct (dlna_src, dlna_src->server_info);
@@ -1632,7 +1637,11 @@ dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri, GError ** error)
         dlna_src->http_uri);
   }
 
-  return dlna_src_uri_init (dlna_src);
+  ret = dlna_src_uri_init (dlna_src);
+  if (ret != TRUE)
+     g_set_error (error, GST_URI_ERROR, GST_URI_ERROR_UNSUPPORTED_PROTOCOL,
+                  "Source doesn't support the requested protocol");
+  return ret;
 }
 
 /**
