@@ -1688,6 +1688,7 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
 {
   guint64 content_size;
   GstPad *pad = NULL;
+  GValue boolean_value = G_VALUE_INIT;
 
   GST_INFO_OBJECT (dlna_src, "called");
   /* Setup souphttpsrc as source element for this bin */
@@ -1711,6 +1712,11 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
   /* Setup the block default block size */
   g_print("Setting blocksize in libsoup to %u\n", SOUPHTTPSRC_BLOCKSIZE);
   g_object_set (dlna_src->http_src, "blocksize", SOUPHTTPSRC_BLOCKSIZE, NULL);
+  
+  g_value_init (&boolean_value, G_TYPE_BOOLEAN);
+  g_value_set_boolean (&boolean_value, FALSE);
+  g_object_set_property (G_OBJECT (dlna_src->http_src), "reconnect",
+      &boolean_value);
 
   /* Setup dtcp element regardless */
   /*
