@@ -49,6 +49,7 @@ enum
 };
 
 #define DEFAULT_DTCP_BLOCKSIZE       524288
+#define SOUPHTTPSRC_BLOCKSIZE        (65536)
 
 #define ELEMENT_NAME_SOUP_HTTP_SRC "soup-http-source"
 #define ELEMENT_NAME_DTCP_DECRYPTER "dtcp-decrypter"
@@ -1708,8 +1709,8 @@ dlna_src_setup_bin (GstDlnaSrc * dlna_src)
     GST_INFO_OBJECT (dlna_src, "Not setting URI of souphttpsrc");
 
   /* Setup the block default block size */
-  g_print("Setting blocksize in libsoup to %u\n",(4096*32));
-  g_object_set (dlna_src->http_src, "blocksize",(4096*32), NULL);
+  g_print("Setting blocksize in libsoup to %u\n", SOUPHTTPSRC_BLOCKSIZE);
+  g_object_set (dlna_src->http_src, "blocksize", SOUPHTTPSRC_BLOCKSIZE, NULL);
 
   /* Setup dtcp element regardless */
   /*
