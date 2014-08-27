@@ -492,6 +492,8 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
   dlna_src->npt_end_str = NULL;
   dlna_src->npt_duration_str = NULL;
 
+  dlna_src->forward_event = TRUE;
+
   GST_LOG_OBJECT (dlna_src, "Initialization complete");
 }
 
@@ -706,13 +708,20 @@ gst_dlna_src_event (GstPad * pad, GstEvent * event)
       break;
   }
 
-  /* If not handled, pass on to default pad handler */
-  if (!ret) {
+  if((!ret) && (TRUE != dlna_src->forward_event))
+  {
+     dlna_src->forward_event = TRUE;
+  }
+  else
+  {
+     /* If not handled, pass on to default pad handler */
+     if (!ret) {
 #if GST_CHECK_VERSION(1,0,0)
-    ret = gst_pad_event_default (pad, parent, event);
+        ret = gst_pad_event_default (pad, parent, event);
 #else    
-    ret = gst_pad_event_default (pad, event);
+        ret = gst_pad_event_default (pad, event);
 #endif
+     }
   }
 
   gst_object_unref (dlna_src);
@@ -1193,7 +1202,9 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
       (dlna_src, rate, format, start, start_type, stop, stop_type)) {
     GST_WARNING_OBJECT (dlna_src, "Requested change is invalid, event handled");
 
-    return TRUE;
+    dlna_src->handled_time_seek_seqnum = TRUE;
+    dlna_src->forward_event = FALSE;
+    return FALSE;
   }
   /* *TODO* - is this needed here??? Assign play rate to supplied rate */
   dlna_src->rate = rate;

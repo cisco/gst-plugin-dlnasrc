@@ -95,6 +95,8 @@ struct _GstDlnaSrc
     guint64 npt_start_nanos;
     guint64 npt_end_nanos;
     guint64 npt_duration_nanos;
+
+    gboolean forward_event;
 };
 
 struct _GstDlnaSrcHeadResponse
