@@ -778,6 +778,61 @@ gst_dlna_src_query (GstPad * pad, GstQuery * query)
     case GST_QUERY_POSITION:
       /* Don't know current position in stream, let some other element handle this */
       break;
+      
+    case GST_QUERY_CUSTOM:
+    {
+       ret = FALSE;
+       GST_DEBUG_OBJECT(dlna_src, "Custom query");
+       GstStructure *pStruct = (GstStructure *)gst_query_get_structure(query);
+       if(gst_structure_has_name(pStruct, "getTrickSpeeds"))
+       {
+          GST_DEBUG_OBJECT(dlna_src, "getTrickSpeeds query");
+          int ii = 0;
+
+          if((NULL == dlna_src) || (NULL == dlna_src->server_info) || (NULL == dlna_src->server_info->content_features))
+          {
+             GST_WARNING_OBJECT(dlna_src, "Invalid ptr to playspeeds");
+             break;
+          }
+
+          if(dlna_src->server_info->content_features->playspeeds_cnt <= 0)
+          {
+             GST_WARNING_OBJECT(dlna_src, "playspeeds count is <=0");
+             break;
+          }
+          
+          GString *speeds = g_string_sized_new(256);
+          if(NULL == speeds)
+          {
+             GST_WARNING_OBJECT(dlna_src, "Failed to alloc trickspeeds str");
+             break;
+          }
+          
+          GST_DEBUG_OBJECT(dlna_src, "playspeed count = %u\n", 
+                           dlna_src->server_info->content_features->playspeeds_cnt);
+         
+          if(dlna_src->server_info->content_features->playspeeds_cnt > 0)
+          {
+             for (ii = 0; ii < (gint)(dlna_src->server_info->content_features->playspeeds_cnt - 1); ii++) 
+             {
+                g_string_append_printf(speeds, "%.2f,", dlna_src->server_info->content_features->playspeeds[ii]);
+                GST_LOG_OBJECT(dlna_src, "playspeed[%d] = %f", ii, 
+                      dlna_src->server_info->content_features->playspeeds[ii]);
+             }
+             g_string_append_printf(speeds, "%.2f,", dlna_src->server_info->content_features->playspeeds[ii]);
+          }
+
+          g_string_append_printf(speeds, "0,1");
+             
+          GST_INFO_OBJECT(dlna_src, "Trick Speeds str: %s\n", speeds->str);
+                
+          gst_structure_set(pStruct, "trickSpeedsStr", G_TYPE_STRING, speeds->str, NULL);
+          
+          g_string_free (speeds, TRUE);
+          ret = TRUE;
+       }
+       break;
+    }
 
     default:
       GST_LOG_OBJECT (dlna_src,
@@ -1127,6 +1182,12 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
       return TRUE;
     }
   }
+      
+  /* 2 second error margin to handle double rounding errors */
+  if((start > dlna_src->npt_end_nanos) && ((gint64)(start - dlna_src->npt_end_nanos) < (gint64)(2 * GST_SECOND)))
+  {
+     start = dlna_src->npt_end_nanos;
+  }
 
   if (!dlna_src_is_change_valid
       (dlna_src, rate, format, start, start_type, stop, stop_type)) {
@@ -1169,7 +1230,78 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
   {
      /* Send a dummy bytes based request to restart the gst_pad_task in 
       * basesrc(base class of souphttpsrc) */
-     gst_element_seek_simple(dlna_src->http_src, GST_FORMAT_BYTES, GST_SEEK_FLAG_FLUSH, 0);
+     if(TRUE == gst_element_seek_simple(dlna_src->http_src, GST_FORMAT_BYTES, GST_SEEK_FLAG_FLUSH, 0))
+     {
+        GstEvent     *event = NULL;
+        GstStructure *structure = NULL;
+        gboolean      enable = FALSE;
+        gchar         video_mask_str[16] = "";
+
+        /* TODO - Figure out whehter the DMS is pacing and sending I/IP/all frames during trick modes */
+        if((rate > 1.0) || (rate < -1.0))
+        {
+           enable = TRUE;
+        }
+       
+        do {
+        structure = gst_structure_new("serverside-pacing", 
+                                      "enable", G_TYPE_BOOLEAN, enable, 
+                                      "rate", G_TYPE_DOUBLE, rate, 
+                                      NULL);
+        if(NULL == structure)
+        {
+           GST_WARNING("Error creating serverside-pacing structure\n");
+           break;
+        }
+
+        event = gst_event_new_custom(GST_EVENT_CUSTOM_DOWNSTREAM, structure);
+        if(NULL == event)
+        {
+           GST_WARNING("Error creating custom downstream event\n");
+           break;
+        }
+
+        GST_DEBUG("Sending serverside_pacing custom downstream event\n");
+           
+        if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
+        {
+           GST_WARNING("Sending custom downstream event failed!");
+           break;
+        }
+        
+        if(TRUE == enable)
+        {
+           strncpy(video_mask_str, "i_only", sizeof(video_mask_str));
+        }
+        else
+        {
+           strncpy(video_mask_str, "all", sizeof(video_mask_str));
+        }
+   
+        structure = gst_structure_new("video-mask", "video-mask-str", G_TYPE_STRING, video_mask_str, NULL);
+        if(NULL == structure)
+        {
+           GST_ERROR("Error creating video-mask structure\n");
+           break;
+        }
+
+        event = gst_event_new_custom(GST_EVENT_CUSTOM_DOWNSTREAM, structure);
+        if(NULL == event)
+        {
+           GST_ERROR("Error creating video-mask event\n");
+           break;
+        }
+
+        GST_DEBUG("Sending video-mask custom downstream event\n");
+        
+        if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
+        {
+           GST_WARNING("Sending custom downstream event failed!");
+           break;
+        }
+
+        }while(0);
+     }
      return TRUE;
   }
   
