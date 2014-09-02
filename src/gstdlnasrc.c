@@ -831,7 +831,7 @@ gst_dlna_src_query (GstPad * pad, GstQuery * query)
              g_string_append_printf(speeds, "%.2f,", dlna_src->server_info->content_features->playspeeds[ii]);
           }
 
-          g_string_append_printf(speeds, "0,1");
+          g_string_append_printf(speeds, "0.0");
              
           GST_INFO_OBJECT(dlna_src, "Trick Speeds str: %s\n", speeds->str);
                 
