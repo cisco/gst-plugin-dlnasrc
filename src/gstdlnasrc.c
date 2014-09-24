@@ -828,11 +828,9 @@ gst_dlna_src_query (GstPad * pad, GstQuery * query)
                 GST_LOG_OBJECT(dlna_src, "playspeed[%d] = %f", ii, 
                       dlna_src->server_info->content_features->playspeeds[ii]);
              }
-             g_string_append_printf(speeds, "%.2f,", dlna_src->server_info->content_features->playspeeds[ii]);
+             g_string_append_printf(speeds, "%.2f", dlna_src->server_info->content_features->playspeeds[ii]);
           }
 
-          g_string_append_printf(speeds, "0.0");
-             
           GST_INFO_OBJECT(dlna_src, "Trick Speeds str: %s\n", speeds->str);
                 
           gst_structure_set(pStruct, "trickSpeedsStr", G_TYPE_STRING, speeds->str, NULL);
@@ -877,6 +875,12 @@ dlna_src_handle_query_duration (GstDlnaSrc * dlna_src, GstQuery * query)
   gboolean ret = FALSE;
   gint64 duration = 0;
   GstFormat format;
+  gchar *live_content_head_request_headers[][2] =
+      { {HEADER_GET_AVAILABLE_SEEK_RANGE_TITLE,
+      HEADER_GET_AVAILABLE_SEEK_RANGE_VALUE}
+  };
+
+  gsize live_content_head_request_headers_size = 1;
 
   GST_LOG_OBJECT (dlna_src, "Called");
 
@@ -899,6 +903,18 @@ dlna_src_handle_query_duration (GstDlnaSrc * dlna_src, GstQuery * query)
       GST_DEBUG_OBJECT (dlna_src,
           "Duration in bytes not available for content item");
   } else if (format == GST_FORMAT_TIME) {
+    if (dlna_src->is_live) {
+      GST_INFO_OBJECT (dlna_src, "Update live content range info");
+      if (!dlna_src_soup_issue_head (dlna_src,
+              live_content_head_request_headers_size,
+              live_content_head_request_headers, dlna_src->server_info,
+              TRUE)) {
+        GST_ERROR_OBJECT (dlna_src,
+            "Problems issuing HEAD request to get live content information");
+        return FALSE;
+      }
+    }
+
     if (dlna_src->npt_duration_nanos) {
       gst_query_set_duration (query, GST_FORMAT_TIME,
           dlna_src->npt_duration_nanos);
@@ -1216,12 +1232,19 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
   if (stop > -1)
     dlna_src->requested_stop = stop;
 
+  /* The commented code block below is not needed as we need to play all
+   * the data in the TSB to reach the live point.
+   * An EOS will be received when playback reaches the end of TSB.
+   * And setting the duration as stop for rewind request does not make sense.
+   */
+#if 0
   if (dlna_src->is_live && stop < 0) {
     dlna_src->requested_stop = dlna_src->npt_end_nanos;
     GST_INFO_OBJECT (dlna_src,
         "Set requested stop to end of range since content is live: %"
         G_GUINT64_FORMAT, dlna_src->requested_stop);
   }
+#endif
 
   if ((dlna_src->dlna_uri) && (dlna_src->server_info) &&
       (dlna_src->server_info->content_features != NULL)) {
@@ -2864,20 +2887,27 @@ dlna_src_head_response_parse_available_range (GstDlnaSrc * dlna_src,
           &head_response->available_seek_npt_end, NULL))
     /* Just return, errors which have been logged already */
     return FALSE;
-
-  /* Extract start and end bytes from availableSeekRange header using bytes */
+  
+  /* Extract start and end bytes from availableSeekRange header if present*/
+  if (strstr (g_ascii_strup (field_str, strlen (field_str)),
+          RANGE_HEADERS[HEADER_INDEX_BYTES])) {
   if (!dlna_src_parse_byte_range (dlna_src, field_str,
           HEADER_INDEX_BYTES, &head_response->available_seek_start,
           &head_response->available_seek_end, NULL))
     /* Just return, errors which have been logged already */
     return FALSE;
-  /* Extract start and end bytes from availableSeekRange header using clear text bytes */
+  }
+ 
+  /* Extract start and end bytes from availableSeekRange header using clear text bytes if present */
+  if (strstr (g_ascii_strup (field_str, strlen (field_str)),
+          RANGE_HEADERS[HEADER_INDEX_CLEAR_TEXT])) {
   if (!dlna_src_parse_byte_range (dlna_src, field_str,
           HEADER_INDEX_CLEAR_TEXT,
           &head_response->available_seek_cleartext_start,
           &head_response->available_seek_cleartext_end, NULL))
     /* Just return, errors which have been logged already */
     return FALSE;
+  }
 
   return TRUE;
 }
