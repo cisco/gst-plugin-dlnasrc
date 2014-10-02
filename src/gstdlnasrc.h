@@ -97,6 +97,11 @@ struct _GstDlnaSrc
     guint64 npt_duration_nanos;
 
     gboolean forward_event;
+
+    gint64   pause_pos;
+    gboolean in_tsb;
+    gboolean seek_to_play;
+
 };
 
 struct _GstDlnaSrcHeadResponse

@@ -493,6 +493,10 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
   dlna_src->npt_duration_str = NULL;
 
   dlna_src->forward_event = TRUE;
+  
+  dlna_src->pause_pos = 0;
+  dlna_src->in_tsb = FALSE;
+  dlna_src->seek_to_play = FALSE;
 
   GST_LOG_OBJECT (dlna_src, "Initialization complete");
 }
@@ -634,6 +638,31 @@ gst_dlna_src_change_state (GstElement * element, GstStateChange transition)
       break;
     case GST_STATE_CHANGE_READY_TO_PAUSED:
       break;
+    case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
+      {
+          if(TRUE != dlna_src->seek_to_play)
+          {
+             break;
+          }
+          
+          if(!dlna_src_adjust_http_src_headers(dlna_src, dlna_src->rate,
+                   GST_FORMAT_TIME, dlna_src->pause_pos, 
+                   GST_CLOCK_TIME_NONE, 0))
+          {
+             GST_ERROR_OBJECT (dlna_src, "Problems adjusting soup http src headers");
+             break;
+          }
+
+          if(!gst_element_seek_simple(dlna_src->http_src, GST_FORMAT_BYTES, 
+                   GST_SEEK_FLAG_FLUSH, 0))
+          {
+             GST_ERROR_OBJECT (dlna_src, "Failed to send seek to GstBaseSrc");
+             break;
+          }
+
+          dlna_src->seek_to_play = FALSE;
+      }
+      break;
     default:
       break;
   }
@@ -645,6 +674,40 @@ gst_dlna_src_change_state (GstElement * element, GstStateChange transition)
   }
 
   switch (transition) {
+    case GST_STATE_CHANGE_PLAYING_TO_PAUSED:
+       {
+          if((TRUE != dlna_src->is_live) || (TRUE == dlna_src->in_tsb))
+          {
+             break;
+          }
+
+          if(!gst_pad_query_position(gst_pad_get_peer(dlna_src->src_pad),
+                                     GST_FORMAT_TIME, &dlna_src->pause_pos))
+          {
+             GST_ERROR_OBJECT (dlna_src, "gst_pad_query_position() failed");
+             break;
+          }
+          
+          GST_DEBUG_OBJECT(dlna_src, "pause pos = %lld\n", dlna_src->pause_pos);
+
+          if(!dlna_src_adjust_http_src_headers(dlna_src, 0.0,
+                   GST_FORMAT_TIME, dlna_src->pause_pos, 
+                   GST_CLOCK_TIME_NONE, 0))
+          {
+             GST_ERROR_OBJECT (dlna_src, "Problems adjusting soup http src headers");
+             break;
+          }
+
+          if(!gst_element_seek_simple(dlna_src->http_src, GST_FORMAT_BYTES, 
+                   GST_SEEK_FLAG_FLUSH, 0))
+          {
+             GST_ERROR_OBJECT (dlna_src, "Pause: Failed to send seek to enter TSB");
+             break;
+          }
+          dlna_src->in_tsb = TRUE;
+          dlna_src->seek_to_play = TRUE;
+       }
+      break;
     case GST_STATE_CHANGE_PAUSED_TO_READY:
       break;
     case GST_STATE_CHANGE_READY_TO_NULL:
@@ -1275,6 +1338,10 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
         if((rate > 1.0) || (rate < -1.0))
         {
            enable = TRUE;
+           if(dlna_src->is_live)
+           {
+              dlna_src->in_tsb = TRUE;
+           }
         }
        
         do {
