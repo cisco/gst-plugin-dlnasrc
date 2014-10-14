@@ -98,7 +98,6 @@ struct _GstDlnaSrc
 
     gboolean forward_event;
 
-    gint64   pause_pos;
     gboolean in_tsb;
     gboolean seek_to_play;
 

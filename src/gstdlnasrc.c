@@ -49,7 +49,7 @@ enum
 };
 
 #define DEFAULT_DTCP_BLOCKSIZE       524288
-#define SOUPHTTPSRC_BLOCKSIZE        (65536)
+#define SOUPHTTPSRC_BLOCKSIZE        (32 * 1024)
 
 #define ELEMENT_NAME_SOUP_HTTP_SRC "soup-http-source"
 #define ELEMENT_NAME_DTCP_DECRYPTER "dtcp-decrypter"
@@ -494,7 +494,6 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
 
   dlna_src->forward_event = TRUE;
   
-  dlna_src->pause_pos = 0;
   dlna_src->in_tsb = FALSE;
   dlna_src->seek_to_play = FALSE;
 
@@ -628,6 +627,7 @@ gst_dlna_src_change_state (GstElement * element, GstStateChange transition)
 {
   GstStateChangeReturn ret = GST_STATE_CHANGE_SUCCESS;
   GstDlnaSrc *dlna_src = GST_DLNA_SRC (element);
+  gint64   pos = 0;
 
   GST_LOG_OBJECT (dlna_src, "Changing state from %s to %s",
       gst_element_state_get_name (GST_STATE_TRANSITION_CURRENT (transition)),
@@ -645,8 +645,15 @@ gst_dlna_src_change_state (GstElement * element, GstStateChange transition)
              break;
           }
           
+          if(!gst_pad_query_position(gst_pad_get_peer(dlna_src->src_pad),
+                                     GST_FORMAT_TIME, &pos))
+          {
+             GST_ERROR_OBJECT (dlna_src, "gst_pad_query_position() failed");
+             break;
+          }
+          
           if(!dlna_src_adjust_http_src_headers(dlna_src, dlna_src->rate,
-                   GST_FORMAT_TIME, dlna_src->pause_pos, 
+                   GST_FORMAT_TIME, pos, 
                    GST_CLOCK_TIME_NONE, 0))
           {
              GST_ERROR_OBJECT (dlna_src, "Problems adjusting soup http src headers");
@@ -682,24 +689,23 @@ gst_dlna_src_change_state (GstElement * element, GstStateChange transition)
           }
 
           if(!gst_pad_query_position(gst_pad_get_peer(dlna_src->src_pad),
-                                     GST_FORMAT_TIME, &dlna_src->pause_pos))
+                                     GST_FORMAT_TIME, &pos))
           {
              GST_ERROR_OBJECT (dlna_src, "gst_pad_query_position() failed");
              break;
           }
           
-          GST_DEBUG_OBJECT(dlna_src, "pause pos = %lld\n", dlna_src->pause_pos);
+          GST_DEBUG_OBJECT(dlna_src, "pause pos = %lld\n", pos);
 
           if(!dlna_src_adjust_http_src_headers(dlna_src, 0.0,
-                   GST_FORMAT_TIME, dlna_src->pause_pos, 
+                   GST_FORMAT_TIME, pos, 
                    GST_CLOCK_TIME_NONE, 0))
           {
              GST_ERROR_OBJECT (dlna_src, "Problems adjusting soup http src headers");
              break;
           }
 
-          if(!gst_element_seek_simple(dlna_src->http_src, GST_FORMAT_BYTES, 
-                   GST_SEEK_FLAG_FLUSH, 0))
+          if(!gst_element_seek_simple(dlna_src->http_src, GST_FORMAT_BYTES, 0, 0))
           {
              GST_ERROR_OBJECT (dlna_src, "Pause: Failed to send seek to enter TSB");
              break;
@@ -1358,6 +1364,8 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
         event = gst_event_new_custom(GST_EVENT_CUSTOM_DOWNSTREAM, structure);
         if(NULL == event)
         {
+           gst_structure_free(structure);
+           structure = NULL;
            GST_WARNING("Error creating custom downstream event\n");
            break;
         }
@@ -1366,6 +1374,8 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
            
         if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
         {
+           gst_event_unref(event);
+           event = NULL;
            GST_WARNING("Sending custom downstream event failed!");
            break;
         }
@@ -1389,6 +1399,8 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
         event = gst_event_new_custom(GST_EVENT_CUSTOM_DOWNSTREAM, structure);
         if(NULL == event)
         {
+           gst_structure_free(structure);
+           structure = NULL;
            GST_ERROR("Error creating video-mask event\n");
            break;
         }
@@ -1397,6 +1409,8 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
         
         if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
         {
+           gst_event_unref(event);
+           event = NULL;
            GST_WARNING("Sending custom downstream event failed!");
            break;
         }
