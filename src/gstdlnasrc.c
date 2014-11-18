@@ -75,7 +75,8 @@ static const gchar *HEAD_RESPONSE_HEADERS[] = {
   "CONTENT-LENGTH",             /* 12 */
   "ACCEPT-RANGES",              /* 13 */
   "CONTENT-RANGE",              /* 14 */
-  "AVAILABLESEEKRANGE.DLNA.ORG" /* 15 */
+  "AVAILABLESEEKRANGE.DLNA.ORG", /* 15 */
+  "PRESENTATIONTIMESTAMPS.OCHN.ORG" /* 16 */
 };
 
 /* Constants which represent indices in HEAD_RESPONSE_HEADERS string array
@@ -96,20 +97,25 @@ static const gchar *HEAD_RESPONSE_HEADERS[] = {
 #define HEADER_INDEX_ACCEPT_RANGES 13
 #define HEADER_INDEX_CONTENT_RANGE 14
 #define HEADER_INDEX_AVAILABLE_RANGE 15
+#define HEADER_INDEX_PRESENTATIONTIMESTAMPS 16
 
 /* Count in HEAD_RESPONSE_HEADERS and HEADER_INDEX_* constants */
-static const gint HEAD_RESPONSE_HEADERS_CNT = 16;
+static const gint HEAD_RESPONSE_HEADERS_CNT = 17;
 
 /* Subfield headers which specify ranges */
 static const gchar *RANGE_HEADERS[] = {
   "NPT",                        /* 0 */
   "BYTES",                      /* 1 */
   "CLEARTEXTBYTES",             /* 2 */
+  "STARTPTS",                   /* 3 */
+  "ENDPTS"                      /* 4 */
 };
 
 #define HEADER_INDEX_NPT 0
 #define HEADER_INDEX_BYTES 1
 #define HEADER_INDEX_CLEAR_TEXT 2
+#define HEADER_INDEX_START_PTS 3
+#define HEADER_INDEX_END_PTS 4
 
 /* Subfield headers within ACCEPT-RANGES */
 static const gchar *ACCEPT_RANGES_BYTES = "BYTES";
@@ -282,6 +288,9 @@ dlna_src_head_response_parse_conversion_indicator (GstDlnaSrc * dlna_src,
 static gboolean dlna_src_head_response_parse_content_type (GstDlnaSrc *
     dlna_src, GstDlnaSrcHeadResponse * head_response, gint idx,
     const gchar * field_str);
+
+static gboolean dlna_src_head_response_parse_presentation_timestamps (GstDlnaSrc * 
+    dlna_src, const gchar * field_str, guint32 * start_pts, guint32 * end_pts);
 
 static gboolean dlna_src_head_response_is_flag_set (GstDlnaSrc * dlna_src,
     const gchar * flags_str, gint flag);
@@ -496,6 +505,9 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
   
   dlna_src->in_tsb = FALSE;
   dlna_src->seek_to_play = FALSE;
+
+  dlna_src->start_pts = 0;
+  dlna_src->end_pts = 0;
 
   GST_LOG_OBJECT (dlna_src, "Initialization complete");
 }
@@ -1351,69 +1363,99 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
         }
        
         do {
-        structure = gst_structure_new("serverside-pacing", 
-                                      "enable", G_TYPE_BOOLEAN, enable, 
-                                      "rate", G_TYPE_DOUBLE, rate, 
-                                      NULL);
-        if(NULL == structure)
-        {
-           GST_WARNING("Error creating serverside-pacing structure\n");
-           break;
-        }
 
-        event = gst_event_new_custom(GST_EVENT_CUSTOM_DOWNSTREAM, structure);
-        if(NULL == event)
-        {
-           gst_structure_free(structure);
-           structure = NULL;
-           GST_WARNING("Error creating custom downstream event\n");
-           break;
-        }
+          structure = gst_structure_new("tsb-boundary",
+                                        "start-pts", G_TYPE_UINT, dlna_src->start_pts, 
+                                        "end-pts", G_TYPE_UINT, dlna_src->end_pts, 
+                                        NULL);
+          if(NULL == structure)
+          {
+             GST_WARNING("Error creating tsb-boundary structure\n");
+             break;
+          }
 
-        GST_DEBUG("Sending serverside_pacing custom downstream event\n");
-           
-        if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
-        {
-           gst_event_unref(event);
-           event = NULL;
-           GST_WARNING("Sending custom downstream event failed!");
-           break;
-        }
-        
-        if(TRUE == enable)
-        {
-           strncpy(video_mask_str, "i_only", sizeof(video_mask_str));
-        }
-        else
-        {
-           strncpy(video_mask_str, "all", sizeof(video_mask_str));
-        }
-   
-        structure = gst_structure_new("video-mask", "video-mask-str", G_TYPE_STRING, video_mask_str, NULL);
-        if(NULL == structure)
-        {
-           GST_ERROR("Error creating video-mask structure\n");
-           break;
-        }
+          event = gst_event_new_custom(GST_EVENT_CUSTOM_DOWNSTREAM, structure);
+          if(NULL == event)
+          {
+             gst_structure_free(structure);
+             structure = NULL;
+             GST_WARNING("Error creating custom downstream event\n");
+             break;
+          }
 
-        event = gst_event_new_custom(GST_EVENT_CUSTOM_DOWNSTREAM, structure);
-        if(NULL == event)
-        {
-           gst_structure_free(structure);
-           structure = NULL;
-           GST_ERROR("Error creating video-mask event\n");
-           break;
-        }
+          GST_DEBUG("Sending tsb-boundary custom downstream event\n");
 
-        GST_DEBUG("Sending video-mask custom downstream event\n");
-        
-        if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
-        {
-           gst_event_unref(event);
-           event = NULL;
-           GST_WARNING("Sending custom downstream event failed!");
-           break;
-        }
+          if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
+          {
+             gst_event_unref(event);
+             event = NULL;
+             GST_WARNING("Sending custom downstream event failed!");
+             break;
+          }
+
+          structure = gst_structure_new("serverside-pacing",
+                                        "enable", G_TYPE_BOOLEAN, enable,
+                                        "rate", G_TYPE_DOUBLE, rate,
+                                        NULL);
+          if(NULL == structure)
+          {
+             GST_WARNING("Error creating serverside-pacing structure\n");
+             break;
+          }
+
+          event = gst_event_new_custom(GST_EVENT_CUSTOM_DOWNSTREAM, structure);
+          if(NULL == event)
+          {
+             gst_structure_free(structure);
+             structure = NULL;
+             GST_WARNING("Error creating custom downstream event\n");
+             break;
+          }
+
+          GST_DEBUG("Sending serverside_pacing custom downstream event\n");
+
+          if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
+          {
+             gst_event_unref(event);
+             event = NULL;
+             GST_WARNING("Sending custom downstream event failed!");
+             break;
+          }
+
+          if(TRUE == enable)
+          {
+             strncpy(video_mask_str, "i_only", sizeof(video_mask_str));
+          }
+          else
+          {
+             strncpy(video_mask_str, "all", sizeof(video_mask_str));
+          }
+
+          structure = gst_structure_new("video-mask", "video-mask-str", G_TYPE_STRING, video_mask_str, NULL);
+          if(NULL == structure)
+          {
+             GST_ERROR("Error creating video-mask structure\n");
+             break;
+          }
+
+          event = gst_event_new_custom(GST_EVENT_CUSTOM_DOWNSTREAM, structure);
+          if(NULL == event)
+          {
+             gst_structure_free(structure);
+             structure = NULL;
+             GST_ERROR("Error creating video-mask event\n");
+             break;
+          }
+
+          GST_DEBUG("Sending video-mask custom downstream event\n");
+
+          if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
+          {
+             gst_event_unref(event);
+             event = NULL;
+             GST_WARNING("Sending custom downstream event failed!");
+             break;
+          }
 
         }while(0);
      }
@@ -2406,6 +2448,9 @@ dlna_src_update_overall_info (GstDlnaSrc * dlna_src,
 
   g_string_free (npt_str, TRUE);
 
+  dlna_src->start_pts = head_response->start_pts;
+  dlna_src->end_pts = head_response->end_pts;
+
   return TRUE;
 }
 
@@ -2709,6 +2754,10 @@ dlna_src_head_response_init_struct (GstDlnaSrc * dlna_src,
   head_response->content_features->conversion_idx = HEADER_INDEX_CI;
   head_response->content_features->is_converted = FALSE;
 
+  /* PRESENTATIONTIMESTAMPS.OCHN.ORG */
+  head_response->start_pts = 0;
+  head_response->end_pts = 0;
+
   *head_response_ptr = head_response;
   return TRUE;
 }
@@ -2879,6 +2928,13 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
     case HEADER_INDEX_PRAGMA:
     case HEADER_INDEX_CACHE_CONTROL:
       /* Ignore field values */
+      break;
+    case HEADER_INDEX_PRESENTATIONTIMESTAMPS:
+      if (!dlna_src_head_response_parse_presentation_timestamps (dlna_src, field_value,
+              &head_response->start_pts, &head_response->end_pts))
+        GST_WARNING_OBJECT (dlna_src,
+            "Problems with HEAD response field header %s, value: %s",
+            HEAD_RESPONSE_HEADERS[idx], field_value);
       break;
 
     default:
@@ -3647,6 +3703,76 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
       }
     }
     g_strfreev (tokens);
+  }
+
+  return TRUE;
+}
+
+/**
+ * Parse the presentation timestamp range which may be contained in the following header:
+ *
+ * PresentationTimeStamps.ochn.org : startPTS=232d5fb9 endPTS=2335415d
+ *
+ *
+ * @param   dlna_src        this element instance
+ * @param   field_str       string containing HEAD response field header and value
+ * @param   start_pts_str   start PTS in string form read from header response field
+ * @param   stop_pts_str    end PTS in string form read from header response field
+ * @param   start_pts       start PTS converted from string representation
+ * @param   stop_pts        end PTS converted from string representation
+ *
+ * @return  returns TRUE
+ */
+static gboolean
+dlna_src_head_response_parse_presentation_timestamps (GstDlnaSrc * dlna_src, const gchar * field_str,    
+    guint32 * start_pts, guint32 * end_pts)
+{
+  gchar *header = NULL;
+  gchar *header_value = NULL;
+  gint ret_code = 0;
+
+  /* Extract start PTS portion of header value */
+  header =
+      strstr (g_ascii_strup (field_str, strlen (field_str)),
+      RANGE_HEADERS[HEADER_INDEX_START_PTS]);
+  if (header)
+    header_value = strstr (header, "=");
+  if (header_value)
+    header_value++;
+  else {
+    GST_WARNING_OBJECT (dlna_src,
+        "Problems parsing start PTS from HEAD response field header value: %s",
+        field_str);
+    return FALSE;
+  }
+
+  if ((ret_code = sscanf (header_value, "%X", start_pts)) != 1) {
+    GST_WARNING_OBJECT (dlna_src,
+        "Problems parsing start PTS from HEAD response field header %s, value: %s, retcode: %d",
+        field_str, header_value, ret_code);
+    return FALSE;
+  }
+
+  /* Extract end PTS portion of header value */
+  header =
+      strstr (g_ascii_strup (header_value, strlen (header_value)),
+      RANGE_HEADERS[HEADER_INDEX_END_PTS]);
+  if (header)
+    header_value = strstr (header, "=");
+  if (header_value)
+    header_value++;
+  else {
+    GST_WARNING_OBJECT (dlna_src,
+        "Problems parsing end PTS from HEAD response field header value: %s",
+        field_str);
+    return FALSE;
+  }
+
+  if ((ret_code = sscanf (header_value, "%X", end_pts)) != 1) {
+    GST_WARNING_OBJECT (dlna_src,
+        "Problems parsing end PTS from HEAD response field header %s, value: %s, retcode: %d",
+        field_str, header_value, ret_code);
+    return FALSE;
   }
 
   return TRUE;

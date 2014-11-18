@@ -101,6 +101,9 @@ struct _GstDlnaSrc
     gboolean in_tsb;
     gboolean seek_to_play;
 
+    guint32 start_pts;
+    guint32 end_pts;
+
 };
 
 struct _GstDlnaSrcHeadResponse
@@ -181,6 +184,9 @@ struct _GstDlnaSrcHeadResponse
 
     GstDlnaSrcHeadResponseContentFeatures* content_features;
     gint  content_features_idx;
+
+    guint32 start_pts;
+    guint32 end_pts;
 };
 
 struct _GstDlnaSrcHeadResponseContentFeatures
