@@ -2320,9 +2320,18 @@ dlna_src_update_overall_info (GstDlnaSrc * dlna_src,
 
     if (head_response->content_features->flag_so_increasing_set
         || head_response->content_features->flag_sn_increasing_set) {
-      dlna_src->is_live = TRUE;
-      GST_INFO_OBJECT (dlna_src,
-          "Content is live since s0 and/or sN is increasing");
+
+       //
+       // Additional check for tuner source before setting 'is_live' flag.
+       // 
+       // The use of these flags will sometimes incorrectly set 
+       // the 'is_live' flag to true for DVR playback, so check the URI.
+       // 
+       if ( strstr((const char *)dlna_src->dlna_uri, (const char *)"tuner") != NULL )
+       {
+          dlna_src->is_live = TRUE;
+          GST_INFO_OBJECT (dlna_src, "Content is live since s0 and/or sN is increasing");
+       }
     }
 
     if (head_response->content_features->flag_link_protected_set) {
