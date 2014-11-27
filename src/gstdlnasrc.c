@@ -1248,7 +1248,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
   if (new_seqnum == dlna_src->time_seek_seqnum) {
     if (dlna_src->handled_time_seek_seqnum) {
       GST_INFO_OBJECT (dlna_src, "Already processed seek event %d", new_seqnum);
-      return FALSE;
+      return TRUE;
     } else
       /* *TODO* - see dlnasrc issue #63
          Got same event now byte based since some element converted it to bytes
