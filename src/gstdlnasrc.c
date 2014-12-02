@@ -46,8 +46,11 @@ enum
   PROP_URI,
   PROP_SUPPORTED_RATES,
   PROP_DTCP_BLOCKSIZE,
+  PROP_IS_LIVE,
+  PROP_IN_TSB
 };
 
+#define  INVALID_PTS                 -1LL
 #define DEFAULT_DTCP_BLOCKSIZE       524288
 #define SOUPHTTPSRC_BLOCKSIZE        (32 * 1024)
 
@@ -322,6 +325,8 @@ static void dlna_src_struct_append_header_value_guint64 (GString * struct_str,
 static void dlna_src_struct_append_header_value_str_guint64 (GString *
     struct_str, gchar * title, gchar * value_str, guint64 value);
 
+static gboolean dlna_src_send_tsb_boundary_event(GstDlnaSrc *dlna_src);
+
 static gboolean dlna_src_handle_event_seek (GstDlnaSrc * dlna_src,
     GstPad * pad, GstEvent * event);
 
@@ -444,6 +449,14 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
       g_param_spec_uint ("dtcp-blocksize", "DTCP Block size",
           "Size in bytes to read per buffer when content is dtcp encrypted (-1 = default)",
           0, G_MAXUINT, DEFAULT_DTCP_BLOCKSIZE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+   
+  g_object_class_install_property (gobject_klass, PROP_IS_LIVE,
+      g_param_spec_boolean ("is-live", "is live", "Is the content live ?",
+      FALSE, G_PARAM_READABLE));
+   
+  g_object_class_install_property (gobject_klass, PROP_IN_TSB,
+      g_param_spec_boolean ("in-tsb", "in tsb", "Has the live playback switched to TSB ?",
+      FALSE, G_PARAM_READABLE));
 
   gobject_klass->finalize = GST_DEBUG_FUNCPTR (gst_dlna_src_finalize);
   gstelement_klass->change_state = gst_dlna_src_change_state;
@@ -506,8 +519,8 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
   dlna_src->in_tsb = FALSE;
   dlna_src->seek_to_play = FALSE;
 
-  dlna_src->start_pts = 0;
-  dlna_src->end_pts = 0;
+  dlna_src->start_pts = INVALID_PTS;
+  dlna_src->end_pts = INVALID_PTS;
 
   GST_LOG_OBJECT (dlna_src, "Initialization complete");
 }
@@ -628,6 +641,14 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
     case PROP_DTCP_BLOCKSIZE:
       g_value_set_uint (value, dlna_src->dtcp_blocksize);
       break;
+    
+    case PROP_IS_LIVE:
+      g_value_set_boolean (value, dlna_src->is_live);
+      break;
+    
+    case PROP_IN_TSB:
+      g_value_set_boolean (value, dlna_src->in_tsb);
+      break;
 
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -651,36 +672,6 @@ gst_dlna_src_change_state (GstElement * element, GstStateChange transition)
     case GST_STATE_CHANGE_READY_TO_PAUSED:
       break;
     case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
-      {
-          if(TRUE != dlna_src->seek_to_play)
-          {
-             break;
-          }
-          
-          if(!gst_pad_query_position(gst_pad_get_peer(dlna_src->src_pad),
-                                     GST_FORMAT_TIME, &pos))
-          {
-             GST_ERROR_OBJECT (dlna_src, "gst_pad_query_position() failed");
-             break;
-          }
-          
-          if(!dlna_src_adjust_http_src_headers(dlna_src, dlna_src->rate,
-                   GST_FORMAT_TIME, pos, 
-                   GST_CLOCK_TIME_NONE, 0))
-          {
-             GST_ERROR_OBJECT (dlna_src, "Problems adjusting soup http src headers");
-             break;
-          }
-
-          if(!gst_element_seek_simple(dlna_src->http_src, GST_FORMAT_BYTES, 
-                   GST_SEEK_FLAG_FLUSH, 0))
-          {
-             GST_ERROR_OBJECT (dlna_src, "Failed to send seek to GstBaseSrc");
-             break;
-          }
-
-          dlna_src->seek_to_play = FALSE;
-      }
       break;
     default:
       break;
@@ -694,37 +685,6 @@ gst_dlna_src_change_state (GstElement * element, GstStateChange transition)
 
   switch (transition) {
     case GST_STATE_CHANGE_PLAYING_TO_PAUSED:
-       {
-          if((TRUE != dlna_src->is_live) || (TRUE == dlna_src->in_tsb))
-          {
-             break;
-          }
-
-          if(!gst_pad_query_position(gst_pad_get_peer(dlna_src->src_pad),
-                                     GST_FORMAT_TIME, &pos))
-          {
-             GST_ERROR_OBJECT (dlna_src, "gst_pad_query_position() failed");
-             break;
-          }
-          
-          GST_DEBUG_OBJECT(dlna_src, "pause pos = %lld\n", pos);
-
-          if(!dlna_src_adjust_http_src_headers(dlna_src, 0.0,
-                   GST_FORMAT_TIME, pos, 
-                   GST_CLOCK_TIME_NONE, 0))
-          {
-             GST_ERROR_OBJECT (dlna_src, "Problems adjusting soup http src headers");
-             break;
-          }
-
-          if(!gst_element_seek_simple(dlna_src->http_src, GST_FORMAT_BYTES, 0, 0))
-          {
-             GST_ERROR_OBJECT (dlna_src, "Pause: Failed to send seek to enter TSB");
-             break;
-          }
-          dlna_src->in_tsb = TRUE;
-          dlna_src->seek_to_play = TRUE;
-       }
       break;
     case GST_STATE_CHANGE_PAUSED_TO_READY:
       break;
@@ -984,14 +944,14 @@ dlna_src_handle_query_duration (GstDlnaSrc * dlna_src, GstQuery * query)
       GST_DEBUG_OBJECT (dlna_src,
           "Duration in bytes not available for content item");
   } else if (format == GST_FORMAT_TIME) {
-    if (dlna_src->is_live) {
-      GST_INFO_OBJECT (dlna_src, "Update live content range info");
+    if ((dlna_src->is_live) || (dlna_src->is_recInProgress)) {
+      GST_INFO_OBJECT (dlna_src, "Update live/recInProgress content range info");
       if (!dlna_src_soup_issue_head (dlna_src,
               live_content_head_request_headers_size,
               live_content_head_request_headers, dlna_src->server_info,
               TRUE)) {
         GST_ERROR_OBJECT (dlna_src,
-            "Problems issuing HEAD request to get live content information");
+            "Problems issuing HEAD request to get live/recInProgress content information");
         return FALSE;
       }
     }
@@ -1213,6 +1173,56 @@ dlna_src_handle_query_convert (GstDlnaSrc * dlna_src, GstQuery * query)
   return ret;
 }
 
+static gboolean dlna_src_send_tsb_boundary_event(GstDlnaSrc *dlna_src)
+{
+  gboolean      ret = FALSE; 
+   GstEvent     *event = NULL;
+   GstStructure *structure = NULL;
+
+   do 
+   {
+      if(INVALID_PTS == dlna_src->start_pts)
+      {
+         GST_WARNING("Not sending tsb-boundary event because TSB start_pts is invalid\n");
+         ret = TRUE;
+         break;
+      }
+
+      structure = gst_structure_new("tsb-boundary",
+                                    "start-pts", G_TYPE_UINT, dlna_src->start_pts, 
+                                    "end-pts", G_TYPE_UINT, dlna_src->end_pts, 
+                                    NULL);
+      if(NULL == structure)
+      {
+         GST_WARNING("Error creating tsb-boundary structure\n");
+         break;
+      }
+
+      event = gst_event_new_custom(GST_EVENT_CUSTOM_DOWNSTREAM, structure);
+      if(NULL == event)
+      {
+         gst_structure_free(structure);
+         structure = NULL;
+         GST_WARNING("Error creating custom downstream event\n");
+         break;
+      }
+
+      GST_DEBUG("Sending tsb-boundary custom downstream event\n");
+
+      if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
+      {
+         gst_event_unref(event);
+         event = NULL;
+         GST_WARNING("Sending custom downstream event failed!");
+         break;
+      }
+
+      ret = TRUE;
+   
+   }while(0);
+
+   return ret;
+}
 
 /**
  * Perform action necessary when seek event is received
@@ -1228,6 +1238,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
 {
   GST_LOG_OBJECT (dlna_src, "Handle seek event");
 
+  gboolean ret = FALSE;
   gdouble rate;
   GstFormat format;
   GstSeekFlags flags;
@@ -1288,9 +1299,12 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
       return TRUE;
     }
   }
-      
-  /* 2 second error margin to handle double rounding errors */
-  if((start > dlna_src->npt_end_nanos) && ((gint64)(start - dlna_src->npt_end_nanos) < (gint64)(2 * GST_SECOND)))
+  
+  /* 2 second error margin to handle double rounding errors 
+   * npt_end_nanos might be 0 initially for live content.
+   */
+  if((dlna_src->npt_end_nanos > 0) && (start > dlna_src->npt_end_nanos) 
+     && ((gint64)(start - dlna_src->npt_end_nanos) < (gint64)(2 * GST_SECOND)))
   {
      start = dlna_src->npt_end_nanos;
   }
@@ -1343,123 +1357,112 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
   /* Souphttpsrc does not handle time based seeks, so return TRUE */
   if(GST_FORMAT_TIME == format)
   {
-     /* Send a dummy bytes based request to restart the gst_pad_task in 
-      * basesrc(base class of souphttpsrc) */
-     if(TRUE == gst_element_seek_simple(dlna_src->http_src, GST_FORMAT_BYTES, GST_SEEK_FLAG_FLUSH, 0))
+     do 
      {
+        /* Send a dummy bytes based request to restart the gst_pad_task in 
+         * basesrc(base class of souphttpsrc) */
+        if(TRUE != gst_element_seek_simple(dlna_src->http_src, GST_FORMAT_BYTES, GST_SEEK_FLAG_FLUSH, 0))
+        {
+           GST_WARNING("Sending seek to basesrc(souphttpsrc) failed\n");
+           break;
+        }
+        
         GstEvent     *event = NULL;
         GstStructure *structure = NULL;
         gboolean      enable = FALSE;
         gchar         video_mask_str[16] = "";
 
+        /* A seek will make the server stream from TSB */
+        if(dlna_src->is_live)
+        {
+           dlna_src->in_tsb = TRUE;
+        }
+        
         /* TODO - Figure out whehter the DMS is pacing and sending I/IP/all frames during trick modes */
         if((rate > 1.0) || (rate < -1.0))
         {
            enable = TRUE;
-           if(dlna_src->is_live)
+        }
+
+        /* TODO - enable after position calc for server side pacing is handled without tsb boundary event */
+#if 0
+        if(TRUE == dlna_src->live)
+#endif
+        {
+           if(TRUE != dlna_src_send_tsb_boundary_event(dlna_src))
            {
-              dlna_src->in_tsb = TRUE;
+              break;
            }
         }
-       
-        do {
 
-          structure = gst_structure_new("tsb-boundary",
-                                        "start-pts", G_TYPE_UINT, dlna_src->start_pts, 
-                                        "end-pts", G_TYPE_UINT, dlna_src->end_pts, 
-                                        NULL);
-          if(NULL == structure)
-          {
-             GST_WARNING("Error creating tsb-boundary structure\n");
-             break;
-          }
+        structure = gst_structure_new("serverside-pacing",
+                                      "enable", G_TYPE_BOOLEAN, enable,
+                                      "rate", G_TYPE_DOUBLE, rate,
+                                      NULL);
+        if(NULL == structure)
+        {
+           GST_WARNING("Error creating serverside-pacing structure\n");
+           break;
+        }
 
-          event = gst_event_new_custom(GST_EVENT_CUSTOM_DOWNSTREAM, structure);
-          if(NULL == event)
-          {
-             gst_structure_free(structure);
-             structure = NULL;
-             GST_WARNING("Error creating custom downstream event\n");
-             break;
-          }
+        event = gst_event_new_custom(GST_EVENT_CUSTOM_DOWNSTREAM, structure);
+        if(NULL == event)
+        {
+           gst_structure_free(structure);
+           structure = NULL;
+           GST_WARNING("Error creating custom downstream event\n");
+           break;
+        }
 
-          GST_DEBUG("Sending tsb-boundary custom downstream event\n");
+        GST_DEBUG("Sending serverside_pacing custom downstream event\n");
 
-          if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
-          {
-             gst_event_unref(event);
-             event = NULL;
-             GST_WARNING("Sending custom downstream event failed!");
-             break;
-          }
+        if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
+        {
+           gst_event_unref(event);
+           event = NULL;
+           GST_WARNING("Sending custom downstream event failed!");
+           break;
+        }
 
-          structure = gst_structure_new("serverside-pacing",
-                                        "enable", G_TYPE_BOOLEAN, enable,
-                                        "rate", G_TYPE_DOUBLE, rate,
-                                        NULL);
-          if(NULL == structure)
-          {
-             GST_WARNING("Error creating serverside-pacing structure\n");
-             break;
-          }
+        if(TRUE == enable)
+        {
+           strncpy(video_mask_str, "i_only", sizeof(video_mask_str));
+        }
+        else
+        {
+           strncpy(video_mask_str, "all", sizeof(video_mask_str));
+        }
 
-          event = gst_event_new_custom(GST_EVENT_CUSTOM_DOWNSTREAM, structure);
-          if(NULL == event)
-          {
-             gst_structure_free(structure);
-             structure = NULL;
-             GST_WARNING("Error creating custom downstream event\n");
-             break;
-          }
+        structure = gst_structure_new("video-mask", "video-mask-str", G_TYPE_STRING, video_mask_str, NULL);
+        if(NULL == structure)
+        {
+           GST_ERROR("Error creating video-mask structure\n");
+           break;
+        }
 
-          GST_DEBUG("Sending serverside_pacing custom downstream event\n");
+        event = gst_event_new_custom(GST_EVENT_CUSTOM_DOWNSTREAM, structure);
+        if(NULL == event)
+        {
+           gst_structure_free(structure);
+           structure = NULL;
+           GST_ERROR("Error creating video-mask event\n");
+           break;
+        }
 
-          if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
-          {
-             gst_event_unref(event);
-             event = NULL;
-             GST_WARNING("Sending custom downstream event failed!");
-             break;
-          }
+        GST_DEBUG("Sending video-mask custom downstream event\n");
 
-          if(TRUE == enable)
-          {
-             strncpy(video_mask_str, "i_only", sizeof(video_mask_str));
-          }
-          else
-          {
-             strncpy(video_mask_str, "all", sizeof(video_mask_str));
-          }
+        if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
+        {
+           gst_event_unref(event);
+           event = NULL;
+           GST_WARNING("Sending custom downstream event failed!");
+           break;
+        }
+        ret = TRUE;
 
-          structure = gst_structure_new("video-mask", "video-mask-str", G_TYPE_STRING, video_mask_str, NULL);
-          if(NULL == structure)
-          {
-             GST_ERROR("Error creating video-mask structure\n");
-             break;
-          }
-
-          event = gst_event_new_custom(GST_EVENT_CUSTOM_DOWNSTREAM, structure);
-          if(NULL == event)
-          {
-             gst_structure_free(structure);
-             structure = NULL;
-             GST_ERROR("Error creating video-mask event\n");
-             break;
-          }
-
-          GST_DEBUG("Sending video-mask custom downstream event\n");
-
-          if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
-          {
-             gst_event_unref(event);
-             event = NULL;
-             GST_WARNING("Sending custom downstream event failed!");
-             break;
-          }
-
-        }while(0);
-     }
-     return TRUE;
+     }while(0);
+     
+     return ret;
   }
   
   GST_DEBUG_OBJECT (dlna_src,
@@ -1528,7 +1531,7 @@ dlna_src_is_change_valid (GstDlnaSrc * dlna_src, gfloat rate,
   } else if (format == GST_FORMAT_TIME) {
     if (dlna_src->time_seek_supported) {
 
-      if (dlna_src->is_live) {
+      if ((dlna_src->is_live) || (dlna_src->is_recInProgress)) {
         GST_INFO_OBJECT (dlna_src, "Update live content range info");
         if (!dlna_src_soup_issue_head (dlna_src,
                 live_content_head_request_headers_size,
@@ -2176,15 +2179,15 @@ dlna_src_uri_gather_info (GstDlnaSrc * dlna_src)
   }
 
   /* Formulate second HEAD request to gather more info */
-  if (dlna_src->is_live) {
+  if ((dlna_src->is_live) || (dlna_src->is_recInProgress)) {
 
     GST_INFO_OBJECT (dlna_src,
-        "Issuing another HEAD request to get live content info");
+        "Issuing another HEAD request to get live/recInProgess content info");
     if (!dlna_src_soup_issue_head (dlna_src,
             live_content_head_request_headers_array_size,
             live_content_head_request_headers, dlna_src->server_info, TRUE)) {
       GST_ERROR_OBJECT (dlna_src,
-          "Problems issuing HEAD request to get live content information");
+          "Problems issuing HEAD request to get live/recInProgess content information");
       return FALSE;
     }
   } else if (dlna_src->time_seek_supported) {
@@ -2319,19 +2322,12 @@ dlna_src_update_overall_info (GstDlnaSrc * dlna_src,
   if (head_response->content_features) {
 
     if (head_response->content_features->flag_so_increasing_set
-        || head_response->content_features->flag_sn_increasing_set) {
-
-       //
-       // Additional check for tuner source before setting 'is_live' flag.
-       // 
-       // The use of these flags will sometimes incorrectly set 
-       // the 'is_live' flag to true for DVR playback, so check the URI.
-       // 
-       if ( strstr((const char *)dlna_src->dlna_uri, (const char *)"tuner") != NULL )
-       {
-          dlna_src->is_live = TRUE;
-          GST_INFO_OBJECT (dlna_src, "Content is live since s0 and/or sN is increasing");
-       }
+        && head_response->content_features->flag_sn_increasing_set) {
+      dlna_src->is_live = TRUE;
+      GST_INFO_OBJECT (dlna_src, "Content is live since s0 and sN is increasing");
+    } else if (!(head_response->content_features->flag_so_increasing_set)
+        && head_response->content_features->flag_sn_increasing_set) {
+      dlna_src->is_recInProgress = TRUE;
     }
 
     if (head_response->content_features->flag_link_protected_set) {

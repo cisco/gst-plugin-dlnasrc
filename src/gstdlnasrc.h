@@ -81,6 +81,7 @@ struct _GstDlnaSrc
 
     gboolean is_uri_initialized;
     gboolean is_live;
+    gboolean is_recInProgress;
     gboolean is_encrypted;
 
     gboolean byte_seek_supported;
