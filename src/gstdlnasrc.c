@@ -1384,10 +1384,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
            enable = TRUE;
         }
 
-        /* TODO - enable after position calc for server side pacing is handled without tsb boundary event */
-#if 0
-        if(TRUE == dlna_src->live)
-#endif
+        if(TRUE == dlna_src->is_live)
         {
            if(TRUE != dlna_src_send_tsb_boundary_event(dlna_src))
            {
