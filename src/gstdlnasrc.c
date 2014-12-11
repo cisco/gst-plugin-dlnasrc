@@ -58,6 +58,9 @@ enum
 #define ELEMENT_NAME_DTCP_DECRYPTER "dtcp-decrypter"
 
 #define MAX_HTTP_BUF_SIZE 2048
+
+#define BOUNDARY_EVENT_INTERVAL_SECS (2)
+
 static const gchar CRLF[] = "\r\n";
 
 static const gchar COLON[] = ":";
@@ -223,6 +226,8 @@ static gboolean gst_dlna_src_event (GstPad * pad, GstEvent * event);
 
 static gboolean gst_dlna_src_query (GstPad * pad, GstQuery * query);
 #endif
+
+static gpointer gst_dlna_src_update_boundary_thread(gpointer data);
 
 static GstStateChangeReturn gst_dlna_src_change_state (GstElement * element,
     GstStateChange transition);
@@ -522,6 +527,12 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
   dlna_src->start_pts = INVALID_PTS;
   dlna_src->end_pts = INVALID_PTS;
 
+  dlna_src->boundary_thread = NULL;
+  g_cond_init(&dlna_src->boundary_thread_cond);
+
+  dlna_src->kill_boundary_thread = FALSE;
+  g_mutex_init(&dlna_src->boundary_thread_mutex);
+
   GST_LOG_OBJECT (dlna_src, "Initialization complete");
 }
 
@@ -655,12 +666,70 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
   }
 }
 
+static gpointer gst_dlna_src_update_boundary_thread(gpointer data)
+{
+   GstDlnaSrc *dlna_src = (GstDlnaSrc *)data;
+   gint64     end_time = 0;
+   
+   gchar *live_content_head_request_headers[][2] =
+   { {HEADER_GET_AVAILABLE_SEEK_RANGE_TITLE,
+        HEADER_GET_AVAILABLE_SEEK_RANGE_VALUE}
+   };
+   gsize live_content_head_request_headers_size = 1;
+      
+   GST_WARNING_OBJECT(dlna_src, "boundary_thread created");
+      
+   if(NULL == dlna_src)
+   {
+      GST_ERROR_OBJECT(dlna_src, "invalid data parameter");
+      GST_INFO_OBJECT(dlna_src, "boundary_thread exiting due to error");
+      return NULL;
+   }
+
+   /* Reason for using kill_boundary_thread var.
+    * As with g_cond_wait() it is possible that a spurious or stolen wakeup could occur. 
+    * For that reason, waiting on a condition variable should always be in a loop, based on an explicitly-checked predicate.
+    */
+   while(TRUE != dlna_src->kill_boundary_thread) 
+   {
+      if (!dlna_src_soup_issue_head (dlna_src,
+               live_content_head_request_headers_size,
+               live_content_head_request_headers, dlna_src->server_info,
+               TRUE)) 
+      {
+         GST_ERROR_OBJECT (dlna_src,
+               "Problems issuing HEAD request to get live/recInProgress content information");
+      }
+
+      if(TRUE != dlna_src_send_tsb_boundary_event(dlna_src))
+      {
+         GST_WARNING_OBJECT(dlna_src, "Failed to send tsb_boundary event downstream");
+      }
+
+      g_mutex_lock(&dlna_src->boundary_thread_mutex);
+      
+      end_time = g_get_monotonic_time() + BOUNDARY_EVENT_INTERVAL_SECS * G_TIME_SPAN_SECOND;
+
+      if(TRUE == g_cond_wait_until(&dlna_src->boundary_thread_cond, 
+                                   &dlna_src->boundary_thread_mutex,
+                                   end_time))
+      {
+         GST_WARNING_OBJECT(dlna_src, "boundary_thread_cond signalled"); 
+      }
+      
+      g_mutex_unlock(&dlna_src->boundary_thread_mutex);
+   }
+
+   GST_WARNING_OBJECT(dlna_src, "boundary_thread exiting");
+
+   return NULL;
+}
+
 static GstStateChangeReturn
 gst_dlna_src_change_state (GstElement * element, GstStateChange transition)
 {
   GstStateChangeReturn ret = GST_STATE_CHANGE_SUCCESS;
   GstDlnaSrc *dlna_src = GST_DLNA_SRC (element);
-  gint64   pos = 0;
 
   GST_LOG_OBJECT (dlna_src, "Changing state from %s to %s",
       gst_element_state_get_name (GST_STATE_TRANSITION_CURRENT (transition)),
@@ -670,6 +739,19 @@ gst_dlna_src_change_state (GstElement * element, GstStateChange transition)
     case GST_STATE_CHANGE_NULL_TO_READY:
       break;
     case GST_STATE_CHANGE_READY_TO_PAUSED:
+      {
+         if((TRUE == dlna_src->is_live) && (NULL == dlna_src->boundary_thread))
+         {
+            dlna_src->boundary_thread = g_thread_new("boundary_thread",
+                                                     gst_dlna_src_update_boundary_thread, 
+                                                     dlna_src);
+            if(NULL == dlna_src->boundary_thread)
+            {
+               GST_ERROR_OBJECT(dlna_src, "Failed to create boundary_thread");
+               ret = GST_STATE_CHANGE_FAILURE;
+            }
+         }
+      }
       break;
     case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
       break;
@@ -687,6 +769,19 @@ gst_dlna_src_change_state (GstElement * element, GstStateChange transition)
     case GST_STATE_CHANGE_PLAYING_TO_PAUSED:
       break;
     case GST_STATE_CHANGE_PAUSED_TO_READY:
+      {
+         if(NULL != dlna_src->boundary_thread)
+         {
+            dlna_src->kill_boundary_thread = TRUE;
+
+            g_mutex_lock(&dlna_src->boundary_thread_mutex);
+            g_cond_signal(&dlna_src->boundary_thread_cond);
+            g_mutex_unlock(&dlna_src->boundary_thread_mutex);
+
+            g_thread_join(dlna_src->boundary_thread);
+            dlna_src->boundary_thread = NULL;
+         }
+      }
       break;
     case GST_STATE_CHANGE_READY_TO_NULL:
       break;
