@@ -65,7 +65,6 @@ struct _GstDlnaSrc
     gchar *http_uri;
 
     SoupSession *soup_session;
-    SoupMessage *soup_msg;
 
     GstDlnaSrcHeadResponse* server_info;
 

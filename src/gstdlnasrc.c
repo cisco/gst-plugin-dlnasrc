@@ -51,6 +51,7 @@ enum
 };
 
 #define  INVALID_PTS                 -1LL
+#define  MAX_PTS_45KHZ               (0xFFFFFFFFUL)
 #define DEFAULT_DTCP_BLOCKSIZE       524288
 #define SOUPHTTPSRC_BLOCKSIZE        (32 * 1024)
 
@@ -59,7 +60,7 @@ enum
 
 #define MAX_HTTP_BUF_SIZE 2048
 
-#define BOUNDARY_EVENT_INTERVAL_SECS (2)
+#define BOUNDARY_THREAD_SLEEP_SECS (2)
 
 static const gchar CRLF[] = "\r\n";
 
@@ -248,13 +249,15 @@ static gboolean dlna_src_setup_dtcp (GstDlnaSrc * dlna_src);
 
 static gboolean dlna_src_soup_session_open (GstDlnaSrc * dlna_src);
 static void dlna_src_soup_session_close (GstDlnaSrc * dlna_src);
-static void dlna_src_soup_log_msg (GstDlnaSrc * dlna_src);
+static void
+dlna_src_soup_log_msg (GstDlnaSrc * dlna_src, SoupMessage *soup_msg);
 static gboolean
 dlna_src_soup_issue_head (GstDlnaSrc * dlna_src, gsize header_array_size,
     gchar * headers[][2], GstDlnaSrcHeadResponse * head_response,
     gboolean do_update_overall_info);
 
-static gboolean dlna_src_head_response_parse (GstDlnaSrc * dlna_src,
+static gboolean
+dlna_src_head_response_parse (GstDlnaSrc * dlna_src, SoupMessage *soup_msg,
     GstDlnaSrcHeadResponse * head_response);
 
 static gint dlna_src_head_response_get_field_idx (GstDlnaSrc * dlna_src,
@@ -488,7 +491,6 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
   dlna_src->dlna_uri = NULL;
   dlna_src->http_uri = NULL;
   dlna_src->soup_session = NULL;
-  dlna_src->soup_msg = NULL;
 
   dlna_src->server_info = NULL;
 
@@ -555,8 +557,6 @@ gst_dlna_src_finalize (GObject * object)
   g_free (dlna_src->dtcp_key_storage);
   g_free (dlna_src->dlna_uri);
   g_free (dlna_src->http_uri);
-  if (dlna_src->soup_msg)
-    g_object_unref (dlna_src->soup_msg);
 
   G_OBJECT_CLASS (parent_class)->finalize (object);
 }
@@ -668,8 +668,17 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
 
 static gpointer gst_dlna_src_update_boundary_thread(gpointer data)
 {
-   GstDlnaSrc *dlna_src = (GstDlnaSrc *)data;
-   gint64     end_time = 0;
+   GstDlnaSrc    *dlna_src = (GstDlnaSrc *)data;
+   gint64        end_time = 0;
+   GstQuery      *query = NULL;
+   GstStructure  *structure = NULL;
+   const GValue  *val = NULL;
+   gpointer      *ptr = NULL;
+   gboolean      rc;
+   guint32       current_pts_45khz = 0;
+   guint32       pts_45khz_diff = 0;
+   guint32       tsb_start_pts = 0;
+   GstPad        *peer_pad = NULL;
    
    gchar *live_content_head_request_headers[][2] =
    { {HEADER_GET_AVAILABLE_SEEK_RANGE_TITLE,
@@ -692,6 +701,8 @@ static gpointer gst_dlna_src_update_boundary_thread(gpointer data)
     */
    while(TRUE != dlna_src->kill_boundary_thread) 
    {
+      tsb_start_pts = dlna_src->start_pts;
+
       if (!dlna_src_soup_issue_head (dlna_src,
                live_content_head_request_headers_size,
                live_content_head_request_headers, dlna_src->server_info,
@@ -700,15 +711,126 @@ static gpointer gst_dlna_src_update_boundary_thread(gpointer data)
          GST_ERROR_OBJECT (dlna_src,
                "Problems issuing HEAD request to get live/recInProgress content information");
       }
-
-      if(TRUE != dlna_src_send_tsb_boundary_event(dlna_src))
+    
+      /* TODO - Remove the following if condition when we are able to send downstream events 
+       *        in pause state
+       */        
+      if(GST_STATE_PLAYING == GST_STATE(dlna_src))
       {
-         GST_WARNING_OBJECT(dlna_src, "Failed to send tsb_boundary event downstream");
+         if(TRUE != dlna_src_send_tsb_boundary_event(dlna_src))
+         {
+            GST_WARNING_OBJECT(dlna_src, "Failed to send tsb_boundary event downstream");
+         }
+      }
+
+      if(GST_STATE_PAUSED == GST_STATE(dlna_src))
+      {
+         do
+         {
+            structure = gst_structure_new("get_current_pts", "current_pts", G_TYPE_UINT, 0, NULL);
+
+#if GST_CHECK_VERSION(1,0,0)
+            query = gst_query_new_custom(GST_QUERY_CUSTOM, structure);
+#else
+            query = gst_query_new_application(GST_QUERY_CUSTOM, structure);
+#endif
+            if(NULL == query)
+            {
+               GST_ERROR_OBJECT(dlna_src, "Unable to create get_current_pts query");
+               gst_structure_free(structure);
+               structure = NULL;
+               break;
+            }
+           
+            peer_pad = gst_pad_get_peer(dlna_src->src_pad);
+            if(NULL == peer_pad)
+            {
+               GST_ERROR_OBJECT(dlna_src, "Unable to get peer_pad");
+               break;
+            }
+
+            rc = gst_pad_query(peer_pad, query);
+            if (!rc)
+            {
+               GST_ERROR_OBJECT(dlna_src, "could not get pts");
+               break;
+            }
+
+            structure = (GstStructure *)gst_query_get_structure(query);
+            val = gst_structure_get_value(structure, "current_pts");
+            if (val == NULL)
+            {
+               GST_ERROR_OBJECT(dlna_src, "could not get pts query structure");
+               break;
+            }    
+
+            ptr = g_value_get_pointer(val);
+            if(NULL == ptr)
+            {
+               GST_ERROR_OBJECT(dlna_src, "pts ptr is NULL\n");
+               break;
+            }
+
+            memcpy((gchar *)&current_pts_45khz, (gchar *)&ptr, sizeof(current_pts_45khz));
+            GST_DEBUG_OBJECT(dlna_src, "Current 45khz based PTS %u, tsb_start_pts = %u\n", 
+                             current_pts_45khz, dlna_src->start_pts);
+            
+            /* Handle PTS Rollover */
+            if(dlna_src->start_pts > current_pts_45khz)
+            {
+               /* If the PTS difference is greater than .5 the entire PTS range, assume a roll over */
+               if((dlna_src->start_pts - current_pts_45khz) > (MAX_PTS_45KHZ / 2))
+               {
+                  pts_45khz_diff = current_pts_45khz + (MAX_PTS_45KHZ - dlna_src->start_pts);
+               }
+               else if(((dlna_src->start_pts - current_pts_45khz) / 45000) <= (2 * BOUNDARY_THREAD_SLEEP_SECS))
+               {
+                  GST_WARNING_OBJECT(dlna_src, "tsb_start_pts > current_pts - Did we miss the TSB slide start?");
+                  pts_45khz_diff = dlna_src->start_pts - current_pts_45khz;
+               }
+               else
+               {
+                  GST_WARNING_OBJECT(dlna_src, "(startPTS > currentPTS) and " 
+                        "(startPTS - currentPTS) < MAX_PTS_45KHZ / 2) and "
+                        "(StartPTS - currentPTS > (2 * BOUNDARY_THREAD_SLEEP_SECS)");
+                  break;
+               }
+            }
+            else
+            {
+               pts_45khz_diff = current_pts_45khz - dlna_src->start_pts;
+            }
+            
+            GST_DEBUG_OBJECT(dlna_src, "current_pts_45khz - tsb_start_pts_45khz / 45000 =  %u\n", 
+                             pts_45khz_diff / 45000);
+            
+            if((dlna_src->start_pts != tsb_start_pts) && 
+               (pts_45khz_diff / 45000) <= (2 * BOUNDARY_THREAD_SLEEP_SECS))
+            {
+               gst_element_post_message(GST_ELEMENT_CAST(dlna_src),
+                     gst_message_new_element(GST_OBJECT_CAST(dlna_src),
+                        gst_structure_new("extended_notification",
+                           "notification", G_TYPE_STRING, "tsb_start_near_pause_position",
+                           NULL)));
+            }
+         }while(0);
+
+         if(NULL != peer_pad)
+         {
+            gst_object_unref(peer_pad);
+            peer_pad = NULL;
+         }
+
+         if(NULL != query)
+         {
+            gst_query_unref(query);
+            query = NULL;
+         }
       }
 
       g_mutex_lock(&dlna_src->boundary_thread_mutex);
       
-      end_time = g_get_monotonic_time() + BOUNDARY_EVENT_INTERVAL_SECS * G_TIME_SPAN_SECOND;
+      end_time = g_get_monotonic_time() + BOUNDARY_THREAD_SLEEP_SECS * G_TIME_SPAN_SECOND;
 
       if(TRUE == g_cond_wait_until(&dlna_src->boundary_thread_cond, 
                                    &dlna_src->boundary_thread_mutex,
@@ -2334,58 +2456,66 @@ dlna_src_soup_issue_head (GstDlnaSrc * dlna_src, gsize header_array_size,
     gboolean do_update_overall_info)
 {
   gint i;
+  gboolean ret = FALSE;
+  SoupMessage *soup_msg = NULL;
 
-  if (dlna_src->soup_msg) {
+  do
+  {
+     GST_DEBUG_OBJECT (dlna_src, "Creating soup message");
+     soup_msg = soup_message_new (SOUP_METHOD_HEAD, dlna_src->http_uri);
+     if (!soup_msg) {
+        GST_WARNING_OBJECT (dlna_src,
+              "Unable to create soup message for HEAD request");
+        break;
+     }
+
+     GST_DEBUG_OBJECT (dlna_src, "Adding headers to soup message");
+     for (i = 0; i < header_array_size; i++)
+        soup_message_headers_append (soup_msg->request_headers,
+              headers[i][0], headers[i][1]);
+
+     GST_DEBUG_OBJECT (dlna_src, "Sending soup message");
+     head_response->ret_code =
+        soup_session_send_message (dlna_src->soup_session, soup_msg);
+
+     /* Print out HEAD request & response */
+     dlna_src_soup_log_msg (dlna_src, soup_msg);
+
+     /* Make sure return code from HEAD response is some form of success */
+     if (head_response->ret_code != HTTP_STATUS_OK &&
+           head_response->ret_code != HTTP_STATUS_CREATED &&
+           head_response->ret_code != HTTP_STATUS_PARTIAL) {
+
+        GST_WARNING_OBJECT (dlna_src,
+              "Error code received in HEAD response: %d %s",
+              head_response->ret_code, head_response->ret_msg);
+        break;
+     }
+     /* Parse HEAD response to gather info about URI content item */
+     if (!dlna_src_head_response_parse (dlna_src, soup_msg, head_response)) {
+        GST_WARNING_OBJECT (dlna_src, "Problems parsing HEAD response");
+        break;
+     }
+
+     if (do_update_overall_info) {
+        GST_INFO_OBJECT (dlna_src, "Updating overall info");
+        /* Update info based on response to HEAD info */
+        if (!dlna_src_update_overall_info (dlna_src, head_response))
+           GST_WARNING_OBJECT (dlna_src, "Problems initializing content info");
+     } else
+        GST_INFO_OBJECT (dlna_src, "Not updating overall info");
+
+     ret = TRUE;
+
+  }while(0);
+
+  if (soup_msg) {
     GST_DEBUG_OBJECT (dlna_src, "Freeing soup message");
-    g_object_unref (dlna_src->soup_msg);
-  }
-  GST_DEBUG_OBJECT (dlna_src, "Creating soup message");
-  dlna_src->soup_msg = soup_message_new (SOUP_METHOD_HEAD, dlna_src->http_uri);
-  if (!dlna_src->soup_msg) {
-    GST_WARNING_OBJECT (dlna_src,
-        "Unable to create soup message for HEAD request");
-    return FALSE;
+    g_object_unref (soup_msg);
+    soup_msg = NULL;
   }
 
-  GST_DEBUG_OBJECT (dlna_src, "Adding headers to soup message");
-  for (i = 0; i < header_array_size; i++)
-    soup_message_headers_append (dlna_src->soup_msg->request_headers,
-        headers[i][0], headers[i][1]);
-
-  GST_DEBUG_OBJECT (dlna_src, "Sending soup message");
-  head_response->ret_code =
-      soup_session_send_message (dlna_src->soup_session, dlna_src->soup_msg);
-
-  /* Print out HEAD request & response */
-  dlna_src_soup_log_msg (dlna_src);
-
-  /* Make sure return code from HEAD response is some form of success */
-  if (head_response->ret_code != HTTP_STATUS_OK &&
-      head_response->ret_code != HTTP_STATUS_CREATED &&
-      head_response->ret_code != HTTP_STATUS_PARTIAL) {
-
-    GST_WARNING_OBJECT (dlna_src,
-        "Error code received in HEAD response: %d %s",
-        head_response->ret_code, head_response->ret_msg);
-    return FALSE;
-  }
-  /* Parse HEAD response to gather info about URI content item */
-  if (!dlna_src_head_response_parse (dlna_src, head_response)) {
-    GST_WARNING_OBJECT (dlna_src, "Problems parsing HEAD response");
-    return FALSE;
-  }
-
-  if (do_update_overall_info) {
-    GST_INFO_OBJECT (dlna_src, "Updating overall info");
-    /* Update info based on response to HEAD info */
-    if (!dlna_src_update_overall_info (dlna_src, head_response))
-      GST_WARNING_OBJECT (dlna_src, "Problems initializing content info");
-  } else
-    GST_INFO_OBJECT (dlna_src, "Not updating overall info");
-
-  dlna_src->soup_msg = NULL;
-
-  return TRUE;
+  return ret;
 }
 
 /**
@@ -2623,35 +2753,34 @@ dlna_src_soup_session_close (GstDlnaSrc * dlna_src)
     soup_session_abort (dlna_src->soup_session);
     g_object_unref (dlna_src->soup_session);
     dlna_src->soup_session = NULL;
-    dlna_src->soup_msg = NULL;
   }
 }
 
 static void
-dlna_src_soup_log_msg (GstDlnaSrc * dlna_src)
+dlna_src_soup_log_msg (GstDlnaSrc * dlna_src, SoupMessage *soup_msg)
 {
   const gchar *header_name, *header_value;
   SoupMessageHeadersIter iter;
   GString *log_str = g_string_sized_new (256);
 
-  if (dlna_src->soup_msg) {
+  if (soup_msg) {
     g_string_append_printf (log_str, "\nREQUEST: %s %s HTTP/1.%d\n",
-        dlna_src->soup_msg->method,
-        soup_uri_to_string (soup_message_get_uri (dlna_src->soup_msg), TRUE),
-        soup_message_get_http_version (dlna_src->soup_msg));
+        soup_msg->method,
+        soup_uri_to_string (soup_message_get_uri (soup_msg), TRUE),
+        soup_message_get_http_version (soup_msg));
 
     log_str = g_string_append (log_str, "REQUEST HEADERS:\n");
-    soup_message_headers_iter_init (&iter, dlna_src->soup_msg->request_headers);
+    soup_message_headers_iter_init (&iter, soup_msg->request_headers);
     while (soup_message_headers_iter_next (&iter, &header_name, &header_value))
       g_string_append_printf (log_str, "%s: %s\n", header_name, header_value);
 
     g_string_append_printf (log_str, "RESPONSE: HTTP/1.%d %d %s\n",
-        soup_message_get_http_version (dlna_src->soup_msg),
-        dlna_src->soup_msg->status_code, dlna_src->soup_msg->reason_phrase);
+        soup_message_get_http_version (soup_msg),
+        soup_msg->status_code, soup_msg->reason_phrase);
 
     log_str = g_string_append (log_str, "RESPONSE HEADERS:\n");
     soup_message_headers_iter_init (&iter,
-        dlna_src->soup_msg->response_headers);
+        soup_msg->response_headers);
     while (soup_message_headers_iter_next (&iter, &header_name, &header_value))
       g_string_append_printf (log_str, "%s: %s\n", header_name, header_value);
 
@@ -2670,7 +2799,7 @@ dlna_src_soup_log_msg (GstDlnaSrc * dlna_src)
  * @return	returns TRUE if no problems are encountered, false otherwise
  */
 static gboolean
-dlna_src_head_response_parse (GstDlnaSrc * dlna_src,
+dlna_src_head_response_parse (GstDlnaSrc * dlna_src, SoupMessage *soup_msg,
     GstDlnaSrcHeadResponse * head_response)
 {
   int i = 0;
@@ -2682,7 +2811,7 @@ dlna_src_head_response_parse (GstDlnaSrc * dlna_src,
   for (i = 0; i < HEAD_RESPONSE_HEADERS_CNT; i++)
     field_values[i] = NULL;
 
-  soup_message_headers_iter_init (&iter, dlna_src->soup_msg->response_headers);
+  soup_message_headers_iter_init (&iter, soup_msg->response_headers);
   while (soup_message_headers_iter_next (&iter, &header_name, &header_value)) {
     GST_LOG_OBJECT (dlna_src, "%s: %s", header_name, header_value);
 
