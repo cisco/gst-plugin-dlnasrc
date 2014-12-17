@@ -712,15 +712,9 @@ static gpointer gst_dlna_src_update_boundary_thread(gpointer data)
                "Problems issuing HEAD request to get live/recInProgress content information");
       }
     
-      /* TODO - Remove the following if condition when we are able to send downstream events 
-       *        in pause state
-       */        
-      if(GST_STATE_PLAYING == GST_STATE(dlna_src))
+      if(TRUE != dlna_src_send_tsb_boundary_event(dlna_src))
       {
-         if(TRUE != dlna_src_send_tsb_boundary_event(dlna_src))
-         {
-            GST_WARNING_OBJECT(dlna_src, "Failed to send tsb_boundary event downstream");
-         }
+         GST_WARNING_OBJECT(dlna_src, "Failed to send tsb_boundary event downstream");
       }
 
       if(GST_STATE_PAUSED == GST_STATE(dlna_src))
@@ -1415,22 +1409,22 @@ static gboolean dlna_src_send_tsb_boundary_event(GstDlnaSrc *dlna_src)
          break;
       }
 
-      event = gst_event_new_custom(GST_EVENT_CUSTOM_DOWNSTREAM, structure);
+      event = gst_event_new_custom(GST_EVENT_CUSTOM_DOWNSTREAM_OOB, structure);
       if(NULL == event)
       {
          gst_structure_free(structure);
          structure = NULL;
-         GST_WARNING("Error creating custom downstream event\n");
+         GST_WARNING("Error creating custom downstream OOB event\n");
          break;
       }
 
-      GST_DEBUG("Sending tsb-boundary custom downstream event\n");
+      GST_DEBUG("Sending tsb-boundary custom downstream OOB event\n");
 
       if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
       {
          gst_event_unref(event);
          event = NULL;
-         GST_WARNING("Sending custom downstream event failed!");
+         GST_WARNING("Sending custom downstream OOB event failed!");
          break;
       }
 
