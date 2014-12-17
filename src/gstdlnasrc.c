@@ -62,6 +62,8 @@ enum
 
 #define BOUNDARY_THREAD_SLEEP_SECS (2)
 
+#define MIN_BUF_SECS_TSB_START_TO_PLAY_POS (16)
+
 static const gchar CRLF[] = "\r\n";
 
 static const gchar COLON[] = ":";
@@ -799,8 +801,9 @@ static gpointer gst_dlna_src_update_boundary_thread(gpointer data)
                              pts_45khz_diff / 45000);
             
             if((dlna_src->start_pts != tsb_start_pts) && 
-               (pts_45khz_diff / 45000) <= (2 * BOUNDARY_THREAD_SLEEP_SECS))
+               (pts_45khz_diff / 45000) <= MIN_BUF_SECS_TSB_START_TO_PLAY_POS)
             {
+               GST_WARNING_OBJECT(dlna_src, "TSB start near play/pause pos");
                gst_element_post_message(GST_ELEMENT_CAST(dlna_src),
                      gst_message_new_element(GST_OBJECT_CAST(dlna_src),
                         gst_structure_new("extended_notification",
