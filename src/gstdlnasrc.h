@@ -108,6 +108,8 @@ struct _GstDlnaSrc
     GCond boundary_thread_cond;
     GMutex boundary_thread_mutex;
     gboolean kill_boundary_thread;
+
+    guint32 max_tsb_duration;
 };
 
 struct _GstDlnaSrcHeadResponse

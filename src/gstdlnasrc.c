@@ -62,7 +62,12 @@ enum
 
 #define BOUNDARY_THREAD_SLEEP_SECS (2)
 
-#define MIN_BUF_SECS_TSB_START_TO_PLAY_POS (16)
+#define MIN_BUF_SECS_TSB_START_TO_PLAY_POS (8 + BOUNDARY_THREAD_SLEEP_SECS)
+
+/* TODO - MAX_TSB_DURATION will be removed when the max_duration is passed
+ * to the DLNA server in the URL.
+ */
+#define MAX_TSB_DURATION (7200)
 
 static const gchar CRLF[] = "\r\n";
 
@@ -482,6 +487,8 @@ static void
 gst_dlna_src_init (GstDlnaSrc * dlna_src)
 {
   GST_INFO_OBJECT (dlna_src, "Initializing");
+  gchar *max_tsb_duration_env_val = NULL;
+  guint32 max_tsb_duration = 0; 
 
   dlna_src->http_src = NULL;
   dlna_src->dtcp_decrypter = NULL;
@@ -536,6 +543,36 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
 
   dlna_src->kill_boundary_thread = FALSE;
   g_mutex_init(&dlna_src->boundary_thread_mutex);
+
+  /* TODO - remove getting the max_tsb_duration from the env var
+   * when the max_tsb_duration is part of the URL
+   */
+  dlna_src->max_tsb_duration = MAX_TSB_DURATION;
+  max_tsb_duration_env_val = getenv("DLNA_MAX_TSB_DURATION");
+  if(NULL != max_tsb_duration_env_val)
+  {
+     GST_WARNING_OBJECT(dlna_src, "DLNA_MAX_TSB_DURATION env value str: %s", 
+           max_tsb_duration_env_val);
+     max_tsb_duration = strtoul(max_tsb_duration_env_val, NULL, 10);
+     if(max_tsb_duration > 0)
+     {
+        GST_WARNING_OBJECT(dlna_src, "DLNA_MAX_TSB_DURATION env value: %lu", 
+              max_tsb_duration);
+        dlna_src->max_tsb_duration = max_tsb_duration;
+     }
+     else
+     {
+        GST_ERROR_OBJECT(dlna_src, 
+              "Invalid max_tsb_duration in DLNA_MAX_TSB_DURATION env var."
+              "Using %d as max_tsb_duration", MAX_TSB_DURATION);
+     }
+  }
+  else
+  {
+     GST_WARNING_OBJECT(dlna_src, 
+           "DLNA_MAX_TSB_DURATION env var not defined. using %d as max_tsb_duration",
+           MAX_TSB_DURATION);
+  }
 
   GST_LOG_OBJECT (dlna_src, "Initialization complete");
 }
@@ -768,6 +805,13 @@ static gpointer gst_dlna_src_update_boundary_thread(gpointer data)
             }
 
             memcpy((gchar *)&current_pts_45khz, (gchar *)&ptr, sizeof(current_pts_45khz));
+
+            if(INVALID_PTS == current_pts_45khz)
+            {
+               GST_ERROR_OBJECT(dlna_src, "Invalid current PTS\n");
+               break;
+            }
+
             GST_DEBUG_OBJECT(dlna_src, "Current 45khz based PTS %u, tsb_start_pts = %u\n", 
                              current_pts_45khz, dlna_src->start_pts);
             
@@ -800,8 +844,8 @@ static gpointer gst_dlna_src_update_boundary_thread(gpointer data)
             GST_DEBUG_OBJECT(dlna_src, "current_pts_45khz - tsb_start_pts_45khz / 45000 =  %u\n", 
                              pts_45khz_diff / 45000);
             
-            if((dlna_src->start_pts != tsb_start_pts) && 
-               (pts_45khz_diff / 45000) <= MIN_BUF_SECS_TSB_START_TO_PLAY_POS)
+            if(((pts_45khz_diff / 45000) + dlna_src->max_tsb_duration - (dlna_src->npt_duration_nanos / GST_SECOND)) 
+               <= MIN_BUF_SECS_TSB_START_TO_PLAY_POS)
             {
                GST_WARNING_OBJECT(dlna_src, "TSB start near play/pause pos");
                gst_element_post_message(GST_ELEMENT_CAST(dlna_src),
