@@ -101,6 +101,7 @@ struct _GstDlnaSrc
     gboolean in_tsb;
     gboolean seek_to_play;
 
+    guint32 tune_start_pts;
     guint32 start_pts;
     guint32 end_pts;
 
@@ -110,6 +111,7 @@ struct _GstDlnaSrc
     gboolean kill_boundary_thread;
 
     guint32 max_tsb_duration;
+    guint32 last_tsb_slide;
 };
 
 struct _GstDlnaSrcHeadResponse

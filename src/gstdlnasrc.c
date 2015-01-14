@@ -47,11 +47,11 @@ enum
   PROP_SUPPORTED_RATES,
   PROP_DTCP_BLOCKSIZE,
   PROP_IS_LIVE,
-  PROP_IN_TSB
+  PROP_IN_TSB,
+  PROP_TSB_SLIDE
 };
 
-#define  INVALID_PTS                 -1LL
-#define  MAX_PTS_45KHZ               (0xFFFFFFFFUL)
+#define MAX_PTS_45KHZ                (0xFFFFFFFFUL)
 #define DEFAULT_DTCP_BLOCKSIZE       524288
 #define SOUPHTTPSRC_BLOCKSIZE        (32 * 1024)
 
@@ -472,6 +472,10 @@ gst_dlna_src_class_init (GstDlnaSrcClass * klass)
   g_object_class_install_property (gobject_klass, PROP_IN_TSB,
       g_param_spec_boolean ("in-tsb", "in tsb", "Has the live playback switched to TSB ?",
       FALSE, G_PARAM_READABLE));
+  
+  g_object_class_install_property (gobject_klass, PROP_TSB_SLIDE,
+      g_param_spec_uint ("tsb-slide", "tsb slide", "TSB slide since tune in secs(current_tsb_start - tune_start)",
+          0, G_MAXUINT, 0, G_PARAM_READABLE));
 
   gobject_klass->finalize = GST_DEBUG_FUNCPTR (gst_dlna_src_finalize);
   gstelement_klass->change_state = gst_dlna_src_change_state;
@@ -535,14 +539,17 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
   dlna_src->in_tsb = FALSE;
   dlna_src->seek_to_play = FALSE;
 
-  dlna_src->start_pts = INVALID_PTS;
-  dlna_src->end_pts = INVALID_PTS;
+  dlna_src->tune_start_pts = MAX_PTS_45KHZ;
+  dlna_src->start_pts = MAX_PTS_45KHZ;
+  dlna_src->end_pts = MAX_PTS_45KHZ;
 
   dlna_src->boundary_thread = NULL;
   g_cond_init(&dlna_src->boundary_thread_cond);
 
   dlna_src->kill_boundary_thread = FALSE;
   g_mutex_init(&dlna_src->boundary_thread_mutex);
+
+  dlna_src->last_tsb_slide = 0;
 
   /* TODO - remove getting the max_tsb_duration from the env var
    * when the max_tsb_duration is part of the URL
@@ -656,6 +663,7 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
   GArray *garray = NULL;
   gfloat rate = 0;
   int psCnt = 0;
+  guint32 tsb_slide = 0;
 
   switch (prop_id) {
 
@@ -698,6 +706,36 @@ gst_dlna_src_get_property (GObject * object, guint prop_id, GValue * value,
     
     case PROP_IN_TSB:
       g_value_set_boolean (value, dlna_src->in_tsb);
+      break;
+
+    case PROP_TSB_SLIDE:
+      GST_INFO_OBJECT(dlna_src, "tune_start_pts: 0x%x", dlna_src->tune_start_pts);
+      GST_INFO_OBJECT(dlna_src, "start_pts: 0x%x", dlna_src->start_pts);
+      if(MAX_PTS_45KHZ != dlna_src->tune_start_pts)
+      {
+         if(dlna_src->start_pts >= dlna_src->tune_start_pts)
+         {
+            tsb_slide = (dlna_src->start_pts - dlna_src->tune_start_pts) / 45000;
+            dlna_src->last_tsb_slide = tsb_slide;
+         }
+         else if((dlna_src->tune_start_pts - dlna_src->start_pts) > (MAX_PTS_45KHZ / 2))
+         {
+            tsb_slide = (dlna_src->start_pts + (MAX_PTS_45KHZ - dlna_src->tune_start_pts)) / 45000;
+            dlna_src->last_tsb_slide = tsb_slide;
+         }
+         else
+         {
+            GST_ERROR_OBJECT(dlna_src, "Invalid TSB current start PTS: 0x%lx > tune tsb start pts: 0x%lx\n",
+                  dlna_src->start_pts, dlna_src->tune_start_pts);
+            GST_WARNING_OBJECT(dlna_src, "Returning old TSBSlide value\n");
+            tsb_slide = dlna_src->last_tsb_slide;
+         }
+      }
+      else
+      {
+         tsb_slide = 0;
+      }
+      g_value_set_uint (value, tsb_slide);
       break;
 
     default:
@@ -806,7 +844,7 @@ static gpointer gst_dlna_src_update_boundary_thread(gpointer data)
 
             memcpy((gchar *)&current_pts_45khz, (gchar *)&ptr, sizeof(current_pts_45khz));
 
-            if(INVALID_PTS == current_pts_45khz)
+            if(MAX_PTS_45KHZ == current_pts_45khz)
             {
                GST_ERROR_OBJECT(dlna_src, "Invalid current PTS\n");
                break;
@@ -1439,7 +1477,7 @@ static gboolean dlna_src_send_tsb_boundary_event(GstDlnaSrc *dlna_src)
 
    do 
    {
-      if(INVALID_PTS == dlna_src->start_pts)
+      if(MAX_PTS_45KHZ == dlna_src->start_pts)
       {
          GST_WARNING("Not sending tsb-boundary event because TSB start_pts is invalid\n");
          ret = TRUE;
@@ -2718,6 +2756,11 @@ dlna_src_update_overall_info (GstDlnaSrc * dlna_src,
 
   dlna_src->start_pts = head_response->start_pts;
   dlna_src->end_pts = head_response->end_pts;
+  GST_DEBUG_OBJECT(dlna_src, "start_pts: 0x%x, end_pts: 0x%x", dlna_src->start_pts, dlna_src->end_pts);
+  if((MAX_PTS_45KHZ == dlna_src->tune_start_pts) && (dlna_src->start_pts != dlna_src->end_pts))
+  {
+     dlna_src->tune_start_pts = head_response->start_pts;
+  }
 
   return TRUE;
 }
