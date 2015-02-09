@@ -3087,18 +3087,19 @@ dlna_src_head_response_get_field_idx (GstDlnaSrc * dlna_src,
 {
   gint idx = -1;
   int i = 0;
-
+  gchar * tmp_ascii=g_ascii_strup (field_str, strlen (field_str));
+  
   GST_LOG_OBJECT (dlna_src, "Determine associated HEAD response field: %s",
       field_str);
 
   for (i = 0; i < HEAD_RESPONSE_HEADERS_CNT; i++) {
-    if (strstr (g_ascii_strup (field_str, strlen (field_str)),
+    if (strstr (tmp_ascii,
             HEAD_RESPONSE_HEADERS[i]) != NULL) {
       idx = i;
       break;
     }
   }
-
+  g_free(tmp_ascii);
   return idx;
 }
 
@@ -3121,6 +3122,7 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
   gint int_value = 0;
   gint ret_code = 0;
   guint64 guint64_value = 0;
+  gchar * tmp_ascii=NULL;
 
   GST_LOG_OBJECT (dlna_src,
       "Store value received in HEAD response field for field %d - %s, value: %s",
@@ -3160,9 +3162,10 @@ dlna_src_head_response_assign_field_value (GstDlnaSrc * dlna_src,
     case HEADER_INDEX_ACCEPT_RANGES:
       g_free (head_response->accept_ranges);
       head_response->accept_ranges = g_strdup (field_value);
-      if (strstr (g_ascii_strup (head_response->accept_ranges,
-                  strlen (head_response->accept_ranges)), ACCEPT_RANGES_BYTES))
+      tmp_ascii=g_ascii_strup (head_response->accept_ranges,strlen (head_response->accept_ranges));
+      if (strstr (tmp_ascii, ACCEPT_RANGES_BYTES))
         head_response->accept_byte_ranges = TRUE;
+      g_free(tmp_ascii);
       break;
 
     case HEADER_INDEX_CONTENT_RANGE:
@@ -3278,6 +3281,8 @@ static gboolean
 dlna_src_head_response_parse_time_seek (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, gint idx, const gchar * field_str)
 {
+   gboolean ret=TRUE;
+   gchar * tmp_ascii=NULL;
   /* Extract start and end NPT from TimeSeekRange header */
   if (!dlna_src_parse_npt_range (dlna_src, field_str,
           &head_response->time_seek_npt_start_str,
@@ -3288,18 +3293,18 @@ dlna_src_head_response_parse_time_seek (GstDlnaSrc * dlna_src,
           &head_response->time_seek_npt_duration))
     /* Just return, errors which have been logged already */
     return FALSE;
-
+    tmp_ascii=g_ascii_strup (field_str, strlen (field_str));
   /* Extract start and end bytes from TimeSeekRange header if present */
-  if (strstr (g_ascii_strup (field_str, strlen (field_str)),
+  if (strstr (tmp_ascii,
           RANGE_HEADERS[HEADER_INDEX_BYTES])) {
     if (!dlna_src_parse_byte_range (dlna_src, field_str, HEADER_INDEX_BYTES,
             &head_response->time_byte_seek_start,
             &head_response->time_byte_seek_end,
             &head_response->time_byte_seek_total))
-      return FALSE;
+      ret= FALSE;
   }
-
-  return TRUE;
+  g_free(tmp_ascii);
+  return ret;
 }
 
 /**
@@ -3324,7 +3329,9 @@ dlna_src_head_response_parse_time_seek (GstDlnaSrc * dlna_src,
 static gboolean
 dlna_src_head_response_parse_available_range (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response, gint idx, const gchar * field_str)
-{
+{  
+   gboolean ret=TRUE;
+   gchar * tmp_ascii=NULL;
   /* Extract start and end NPT from availableSeekRange header */
   if (!dlna_src_parse_npt_range (dlna_src, field_str,
           &head_response->available_seek_npt_start_str,
@@ -3334,29 +3341,33 @@ dlna_src_head_response_parse_available_range (GstDlnaSrc * dlna_src,
           &head_response->available_seek_npt_end, NULL))
     /* Just return, errors which have been logged already */
     return FALSE;
-  
+    
+  tmp_ascii=g_ascii_strup (field_str, strlen (field_str));
   /* Extract start and end bytes from availableSeekRange header if present*/
-  if (strstr (g_ascii_strup (field_str, strlen (field_str)),
+  if (strstr (tmp_ascii,
           RANGE_HEADERS[HEADER_INDEX_BYTES])) {
   if (!dlna_src_parse_byte_range (dlna_src, field_str,
           HEADER_INDEX_BYTES, &head_response->available_seek_start,
           &head_response->available_seek_end, NULL))
     /* Just return, errors which have been logged already */
-    return FALSE;
+    ret=FALSE;
   }
- 
-  /* Extract start and end bytes from availableSeekRange header using clear text bytes if present */
-  if (strstr (g_ascii_strup (field_str, strlen (field_str)),
-          RANGE_HEADERS[HEADER_INDEX_CLEAR_TEXT])) {
-  if (!dlna_src_parse_byte_range (dlna_src, field_str,
-          HEADER_INDEX_CLEAR_TEXT,
-          &head_response->available_seek_cleartext_start,
-          &head_response->available_seek_cleartext_end, NULL))
-    /* Just return, errors which have been logged already */
-    return FALSE;
+  
+  if (ret==TRUE)
+  {
+      /* Extract start and end bytes from availableSeekRange header using clear text bytes if present */
+      if (strstr (tmp_ascii,
+              RANGE_HEADERS[HEADER_INDEX_CLEAR_TEXT])) {
+      if (!dlna_src_parse_byte_range (dlna_src, field_str,
+              HEADER_INDEX_CLEAR_TEXT,
+              &head_response->available_seek_cleartext_start,
+              &head_response->available_seek_cleartext_end, NULL))
+        /* Just return, errors which have been logged already */
+        ret=FALSE;
+      }
   }
-
-  return TRUE;
+  g_free(tmp_ascii);
+  return ret;
 }
 
 /**
@@ -3391,10 +3402,11 @@ dlna_src_parse_byte_range (GstDlnaSrc * dlna_src,
   guint64 ullong1 = 0;
   guint64 ullong2 = 0;
   guint64 ullong3 = 0;
-
+  gboolean ret=TRUE;
+  gchar * tmp_ascii=g_ascii_strup (field_str, strlen (field_str));
   /* Extract BYTES portion of header value */
   header =
-      strstr (g_ascii_strup (field_str, strlen (field_str)),
+      strstr (tmp_ascii,
       RANGE_HEADERS[header_index]);
 
   if (header)
@@ -3407,45 +3419,50 @@ dlna_src_parse_byte_range (GstDlnaSrc * dlna_src,
     GST_WARNING_OBJECT (dlna_src,
         "Bytes not included in header from HEAD response field header value: %s",
         field_str);
-    return FALSE;
+    ret=FALSE;
   }
-
-  /* Determine if byte string includes total which is not an * */
-  if (strstr (header_value, "/") && !strstr (header_value, "*")) {
-    /* Extract start and end and total BYTES */
-    if ((ret_code =
-            sscanf (header_value,
-                "%" G_GUINT64_FORMAT "-%" G_GUINT64_FORMAT "/%"
-                G_GUINT64_FORMAT, &ullong1, &ullong2, &ullong3)) != 3) {
-      GST_WARNING_OBJECT (dlna_src,
-          "Problems parsing BYTES from HEAD response field header %s, value: %s, retcode: %d, ullong: %"
-          G_GUINT64_FORMAT ", %" G_GUINT64_FORMAT
-          ", %" G_GUINT64_FORMAT,
-          field_str, header_value, ret_code, ullong1, ullong2, ullong3);
-      return FALSE;
-    }
-  } else {
-    /* Extract start and end (there is no total) BYTES */
-    if ((ret_code =
-            sscanf (header_value,
-                "%" G_GUINT64_FORMAT "-%" G_GUINT64_FORMAT, &ullong1,
-                &ullong2)) != 2) {
-      GST_WARNING_OBJECT (dlna_src,
-          "Problems parsing BYTES from HEAD response field header %s, value: %s, retcode: %d, ullong: %"
-          G_GUINT64_FORMAT ", %" G_GUINT64_FORMAT, field_str, header_value,
-          ret_code, ullong1, ullong2);
-      return FALSE;
-    }
+  if (ret==TRUE)
+  {
+      /* Determine if byte string includes total which is not an * */
+      if (strstr (header_value, "/") && !strstr (header_value, "*")) {
+        /* Extract start and end and total BYTES */
+        if ((ret_code =
+                sscanf (header_value,
+                    "%" G_GUINT64_FORMAT "-%" G_GUINT64_FORMAT "/%"
+                    G_GUINT64_FORMAT, &ullong1, &ullong2, &ullong3)) != 3) {
+          GST_WARNING_OBJECT (dlna_src,
+              "Problems parsing BYTES from HEAD response field header %s, value: %s, retcode: %d, ullong: %"
+              G_GUINT64_FORMAT ", %" G_GUINT64_FORMAT
+              ", %" G_GUINT64_FORMAT,
+              field_str, header_value, ret_code, ullong1, ullong2, ullong3);
+          ret=FALSE;
+        }
+      } else {
+        /* Extract start and end (there is no total) BYTES */
+        if ((ret_code =
+                sscanf (header_value,
+                    "%" G_GUINT64_FORMAT "-%" G_GUINT64_FORMAT, &ullong1,
+                    &ullong2)) != 2) {
+          GST_WARNING_OBJECT (dlna_src,
+              "Problems parsing BYTES from HEAD response field header %s, value: %s, retcode: %d, ullong: %"
+              G_GUINT64_FORMAT ", %" G_GUINT64_FORMAT, field_str, header_value,
+              ret_code, ullong1, ullong2);
+          ret=FALSE;
+        }
+      }
+      
+      if (ret==TRUE)
+      {
+          if (start_byte)
+            *start_byte = ullong1;
+          if (end_byte)
+            *end_byte = ullong2;
+          if (total_bytes)
+            *total_bytes = ullong3;
+      }
   }
-
-  if (start_byte)
-    *start_byte = ullong1;
-  if (end_byte)
-    *end_byte = ullong2;
-  if (total_bytes)
-    *total_bytes = ullong3;
-
-  return TRUE;
+  g_free(tmp_ascii);
+  return ret;
 }
 
 /**
@@ -3471,17 +3488,19 @@ dlna_src_parse_npt_range (GstDlnaSrc * dlna_src, const gchar * field_str,
     gchar ** start_str, gchar ** stop_str, gchar ** total_str,
     guint64 * start, guint64 * stop, guint64 * total)
 {
-  gchar *header = NULL;
+   gchar *header = NULL;
   gchar *header_value = NULL;
 
   gint ret_code = 0;
   gchar tmp1[32] = { 0 };
   gchar tmp2[32] = { 0 };
   gchar tmp3[32] = { 0 };
+  gboolean ret=TRUE;
+  gchar * tmp_ascii=g_ascii_strup (field_str, strlen (field_str));
 
   /* Extract NPT portion of header value */
   header =
-      strstr (g_ascii_strup (field_str, strlen (field_str)),
+      strstr (tmp_ascii,
       RANGE_HEADERS[HEADER_INDEX_NPT]);
   if (header)
     header_value = strstr (header, "=");
@@ -3491,46 +3510,55 @@ dlna_src_parse_npt_range (GstDlnaSrc * dlna_src, const gchar * field_str,
     GST_WARNING_OBJECT (dlna_src,
         "Problems parsing npt from HEAD response field header value: %s",
         field_str);
-    return FALSE;
+    ret=FALSE;
   }
-
-  /* Determine if npt string includes total */
-  if (strstr (header_value, "/")) {
-    /* Extract start and end and total NPT */
-    if ((ret_code =
-            sscanf (header_value, "%31[^-]-%31[^/]/%31s %*s", tmp1, tmp2,
-                tmp3)) != 3) {
-      GST_WARNING_OBJECT (dlna_src,
-          "Problems parsing NPT from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s, %s",
-          field_str, header_value, ret_code, tmp1, tmp2, tmp3);
-      return FALSE;
-    }
-
-    g_free (*total_str);
-    *total_str = g_strdup (tmp3);
-    if (strcmp (*total_str, "*") != 0)
-      if (!dlna_src_npt_to_nanos (dlna_src, *total_str, total))
-        return FALSE;
-  } else {
-    /* Extract start and end (there is no total) NPT */
-    if ((ret_code = sscanf (header_value, "%31[^-]-%31s %*s", tmp1, tmp2)) != 2) {
-      GST_WARNING_OBJECT (dlna_src,
-          "Problems parsing NPT from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s",
-          field_str, header_value, ret_code, tmp1, tmp2);
-      return FALSE;
-    }
+  if (ret==TRUE)
+  {
+      /* Determine if npt string includes total */
+      if (strstr (header_value, "/")) {
+        /* Extract start and end and total NPT */
+        if ((ret_code =
+                sscanf (header_value, "%31[^-]-%31[^/]/%31s %*s", tmp1, tmp2,
+                    tmp3)) != 3) {
+          GST_WARNING_OBJECT (dlna_src,
+              "Problems parsing NPT from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s, %s",
+              field_str, header_value, ret_code, tmp1, tmp2, tmp3);
+          ret=FALSE;
+        }
+        else
+        {
+            g_free (*total_str);
+            *total_str = g_strdup (tmp3);
+            if (strcmp (*total_str, "*") != 0)
+              if (!dlna_src_npt_to_nanos (dlna_src, *total_str, total))
+                ret=FALSE;
+        }
+      } else {
+        /* Extract start and end (there is no total) NPT */
+        if ((ret_code = sscanf (header_value, "%31[^-]-%31s %*s", tmp1, tmp2)) != 2) {
+          GST_WARNING_OBJECT (dlna_src,
+              "Problems parsing NPT from HEAD response field header %s, value: %s, retcode: %d, tmp: %s, %s",
+              field_str, header_value, ret_code, tmp1, tmp2);
+          ret=FALSE;
+        }
+      }
+      if (ret==TRUE)
+      {
+          g_free (*start_str);
+          *start_str = g_strdup (tmp1);
+          if (!dlna_src_npt_to_nanos (dlna_src, *start_str, start))
+            ret=FALSE;
+      }
+      if (ret==TRUE)
+      {
+          g_free (*stop_str);
+          *stop_str = g_strdup (tmp2);
+          if (!dlna_src_npt_to_nanos (dlna_src, *stop_str, stop))
+            ret=FALSE;
+      }
   }
-  g_free (*start_str);
-  *start_str = g_strdup (tmp1);
-  if (!dlna_src_npt_to_nanos (dlna_src, *start_str, start))
-    return FALSE;
-
-  g_free (*stop_str);
-  *stop_str = g_strdup (tmp2);
-  if (!dlna_src_npt_to_nanos (dlna_src, *stop_str, stop))
-    return FALSE;
-
-  return TRUE;
+  g_free(tmp_ascii);
+  return ret;
 }
 
 /**
@@ -3562,15 +3590,15 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
   gchar *ci_str = NULL;
   gchar **tokens = NULL;
   gchar *tmp_str = NULL;
-
+  gchar *tmp_ascii = NULL;
   tokens = g_strsplit (field_value, ";", 0);
   gchar **ptr;
   for (ptr = tokens; *ptr; ptr++) {
     if (strlen (*ptr) > 0) {
-
+          tmp_ascii=g_ascii_strup (*ptr, strlen (*ptr));
       /* DLNA.ORG_PN */
       if ((tmp_str =
-              strstr (g_ascii_strup (*ptr, strlen (*ptr)),
+              strstr (tmp_ascii,
                   CONTENT_FEATURES_HEADERS[HEADER_INDEX_PN])) != NULL) {
         GST_LOG_OBJECT (dlna_src, "Found field: %s",
             CONTENT_FEATURES_HEADERS[HEADER_INDEX_PN]);
@@ -3578,7 +3606,7 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
       }
       /* DLNA.ORG_OP */
       else if ((tmp_str =
-              strstr (g_ascii_strup (*ptr, strlen (*ptr)),
+              strstr (tmp_ascii,
                   CONTENT_FEATURES_HEADERS[HEADER_INDEX_OP])) != NULL) {
         GST_LOG_OBJECT (dlna_src, "Found field: %s",
             CONTENT_FEATURES_HEADERS[HEADER_INDEX_OP]);
@@ -3586,7 +3614,7 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
       }
       /* DLNA.ORG_PS */
       else if ((tmp_str =
-              strstr (g_ascii_strup (*ptr, strlen (*ptr)),
+              strstr (tmp_ascii,
                   CONTENT_FEATURES_HEADERS[HEADER_INDEX_PS])) != NULL) {
         GST_LOG_OBJECT (dlna_src, "Found field: %s",
             CONTENT_FEATURES_HEADERS[HEADER_INDEX_PS]);
@@ -3594,7 +3622,7 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
       }
       /* DLNA.ORG_FLAGS */
       else if ((tmp_str =
-              strstr (g_ascii_strup (*ptr, strlen (*ptr)),
+              strstr (tmp_ascii,
                   CONTENT_FEATURES_HEADERS[HEADER_INDEX_FLAGS])) != NULL) {
         GST_LOG_OBJECT (dlna_src, "Found field: %s",
             CONTENT_FEATURES_HEADERS[HEADER_INDEX_FLAGS]);
@@ -3602,7 +3630,7 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
       }
       /* DLNA.ORG_CI */
       else if ((tmp_str =
-              strstr (g_ascii_strup (*ptr, strlen (*ptr)),
+              strstr (tmp_ascii,
                   CONTENT_FEATURES_HEADERS[HEADER_INDEX_CI])) != NULL) {
         GST_LOG_OBJECT (dlna_src, "Found field: %s",
             CONTENT_FEATURES_HEADERS[HEADER_INDEX_CI]);
@@ -3610,6 +3638,8 @@ dlna_src_head_response_parse_content_features (GstDlnaSrc * dlna_src,
       } else {
         GST_WARNING_OBJECT (dlna_src, "Unrecognized sub field:%s", *ptr);
       }
+      g_free(tmp_ascii);
+      tmp_ascii=NULL;
     }
   }
 
@@ -3942,11 +3972,14 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
   gchar **tokens = NULL;
   gchar *tmp_str;
   gchar **ptr;
-
+  gchar * tmp_ascii=NULL;
+  
   GST_LOG_OBJECT (dlna_src, "Found Content Type Field: %s", field_value);
-
+  
+  tmp_ascii=g_ascii_strup (field_value, strlen (field_value));
+  
   /* If not DTCP content, this field is mime-type */
-  if (strstr (g_ascii_strup (field_value, strlen (field_value)),
+  if (strstr (tmp_ascii,
           "DTCP") == NULL) {
     g_free (head_response->content_type);
     head_response->content_type = g_strdup (field_value);
@@ -3958,12 +3991,15 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
        DTCP1PORT
        CONTENTFORMAT
      */
+    
     tokens = g_strsplit (field_value, ";", 0);
     for (ptr = tokens; *ptr; ptr++) {
       if (strlen (*ptr) > 0) {
         /* DTCP1HOST */
+        g_free(tmp_ascii); 
+        tmp_ascii=g_ascii_strup (*ptr, strlen (*ptr));
         if ((tmp_str =
-                strstr (g_ascii_strup (*ptr, strlen (*ptr)),
+                strstr (tmp_ascii,
                     CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_HOST])) != NULL) {
           GST_LOG_OBJECT (dlna_src, "Found field: %s",
               CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_HOST]);
@@ -3972,7 +4008,7 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
         }
         /* DTCP1PORT */
         else if ((tmp_str =
-                strstr (g_ascii_strup (*ptr, strlen (*ptr)),
+                strstr (tmp_ascii,
                     CONTENT_TYPE_HEADERS[HEADER_INDEX_DTCP_PORT])) != NULL) {
           if ((ret_code = sscanf (tmp_str, "%31[^=]=%d", tmp1,
                       &head_response->dtcp_port)) != 2) {
@@ -3986,7 +4022,7 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
         }
         /* CONTENTFORMAT */
         else if ((tmp_str =
-                strstr (g_ascii_strup (*ptr, strlen (*ptr)),
+                strstr (tmp_ascii,
                     CONTENT_TYPE_HEADERS[HEADER_INDEX_CONTENT_FORMAT])) !=
             NULL) {
 
@@ -4004,7 +4040,7 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
         }
         /*  APPLICATION/X-DTCP1a */
         else if ((tmp_str =
-                strstr (g_ascii_strup (*ptr, strlen (*ptr)),
+                strstr (tmp_ascii,
                     CONTENT_TYPE_HEADERS[HEADER_INDEX_APP_DTCP])) != NULL) {
           /* Ignoring this field */
         } else {
@@ -4014,7 +4050,7 @@ dlna_src_head_response_parse_content_type (GstDlnaSrc * dlna_src,
     }
     g_strfreev (tokens);
   }
-
+  g_free(tmp_ascii);
   return TRUE;
 }
 
@@ -4040,10 +4076,11 @@ dlna_src_head_response_parse_presentation_timestamps (GstDlnaSrc * dlna_src, con
   gchar *header = NULL;
   gchar *header_value = NULL;
   gint ret_code = 0;
-
+  gboolean ret=TRUE;
+  gchar * tmp_ascii=g_ascii_strup (field_str, strlen (field_str));
   /* Extract start PTS portion of header value */
   header =
-      strstr (g_ascii_strup (field_str, strlen (field_str)),
+      strstr (tmp_ascii,
       RANGE_HEADERS[HEADER_INDEX_START_PTS]);
   if (header)
     header_value = strstr (header, "=");
@@ -4053,39 +4090,45 @@ dlna_src_head_response_parse_presentation_timestamps (GstDlnaSrc * dlna_src, con
     GST_WARNING_OBJECT (dlna_src,
         "Problems parsing start PTS from HEAD response field header value: %s",
         field_str);
-    return FALSE;
+    ret=FALSE;
   }
-
-  if ((ret_code = sscanf (header_value, "%X", start_pts)) != 1) {
-    GST_WARNING_OBJECT (dlna_src,
-        "Problems parsing start PTS from HEAD response field header %s, value: %s, retcode: %d",
-        field_str, header_value, ret_code);
-    return FALSE;
+  if (ret==TRUE)
+  {
+      if ((ret_code = sscanf (header_value, "%X", start_pts)) != 1) {
+        GST_WARNING_OBJECT (dlna_src,
+            "Problems parsing start PTS from HEAD response field header %s, value: %s, retcode: %d",
+            field_str, header_value, ret_code);
+        ret=FALSE;
+      }
+      if (ret==TRUE)
+      {
+          /* Extract end PTS portion of header value */
+          header =
+              strstr (header_value,
+              RANGE_HEADERS[HEADER_INDEX_END_PTS]);
+          if (header)
+            header_value = strstr (header, "=");
+          if (header_value)
+            header_value++;
+          else {
+            GST_WARNING_OBJECT (dlna_src,
+                "Problems parsing end PTS from HEAD response field header value: %s",
+                field_str);
+            ret=FALSE;
+          }
+          if (ret==TRUE)
+          {
+              if ((ret_code = sscanf (header_value, "%X", end_pts)) != 1) {
+                GST_WARNING_OBJECT (dlna_src,
+                    "Problems parsing end PTS from HEAD response field header %s, value: %s, retcode: %d",
+                    field_str, header_value, ret_code);
+                ret=FALSE;
+              }
+          }
+      }
   }
-
-  /* Extract end PTS portion of header value */
-  header =
-      strstr (g_ascii_strup (header_value, strlen (header_value)),
-      RANGE_HEADERS[HEADER_INDEX_END_PTS]);
-  if (header)
-    header_value = strstr (header, "=");
-  if (header_value)
-    header_value++;
-  else {
-    GST_WARNING_OBJECT (dlna_src,
-        "Problems parsing end PTS from HEAD response field header value: %s",
-        field_str);
-    return FALSE;
-  }
-
-  if ((ret_code = sscanf (header_value, "%X", end_pts)) != 1) {
-    GST_WARNING_OBJECT (dlna_src,
-        "Problems parsing end PTS from HEAD response field header %s, value: %s, retcode: %d",
-        field_str, header_value, ret_code);
-    return FALSE;
-  }
-
-  return TRUE;
+  g_free(tmp_ascii);
+  return ret;
 }
 
 /**
