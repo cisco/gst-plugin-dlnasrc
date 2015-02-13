@@ -137,6 +137,7 @@ PKG_CHECK_MODULES([SOUP], [ libsoup-2.4 >= 2.3.2 ], [
       The minimum version required is 2.3.2.
   ])
 ])
+PKG_CHECK_MODULES([URI_PARSER], [liburiparser >= 0.8.0])
 
 dnl check if compiler understands -Wall (if yes, add -Wall to GST_CFLAGS)
 AC_MSG_CHECKING([to see if compiler understands -Wall])

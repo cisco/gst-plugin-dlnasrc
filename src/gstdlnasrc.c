@@ -37,6 +37,7 @@
 #include <gst/gst.h>
 #include <glib-object.h>
 #include <libsoup/soup.h>
+#include <uriparser/Uri.h>
 
 #include "gstdlnasrc.h"
 
@@ -50,6 +51,13 @@ enum
   PROP_IN_TSB,
   PROP_TSB_SLIDE
 };
+
+typedef enum
+{
+   URI_PARSER_SUCCESS,
+   URI_PARSER_ERROR,
+   URI_PARSER_KEY_NOT_FOUND
+}uri_parser_retcode;
 
 #define MAX_PTS_45KHZ                (0xFFFFFFFFUL)
 #define DEFAULT_DTCP_BLOCKSIZE       524288
@@ -239,6 +247,12 @@ static gpointer gst_dlna_src_update_boundary_thread(gpointer data);
 
 static GstStateChangeReturn gst_dlna_src_change_state (GstElement * element,
     GstStateChange transition);
+
+static uri_parser_retcode dlna_src_parse_uri_get_key_val(GstDlnaSrc *dlna_src,
+                                                         gchar *uri,
+                                                         gchar *key,
+                                                         gchar *value,
+                                                         guint32 value_size);
 
 static void gst_dlna_src_uri_handler_init (gpointer g_iface,
     gpointer iface_data);
@@ -2096,6 +2110,101 @@ dlna_src_adjust_http_src_headers (GstDlnaSrc * dlna_src, gfloat rate,
   return TRUE;
 }
 
+static uri_parser_retcode dlna_src_parse_uri_get_key_val(GstDlnaSrc *dlna_src,
+                                                         gchar *uri,
+                                                         gchar *key,
+                                                         gchar *value,
+                                                         guint32 value_size)
+{
+   uri_parser_retcode ret = URI_PARSER_ERROR;
+   gint32         	 uri_parse_ret;
+   gint32         	 uri_dissect_ret;
+   UriUriA            uriParserUri;
+   UriQueryListA      *pOptionsList = NULL;
+   gint32             numOptions;
+   UriParserStateA 	 uriParserState;
+   UriQueryListA   	 *pOption = NULL;
+   gboolean           bKeyFound = FALSE;
+
+   do
+   {
+      if(NULL == dlna_src)
+      {
+         GST_ERROR_OBJECT(dlna_src, "Param dlna_src is NULL\n");
+         break;
+      }
+      if(NULL == uri)
+      {
+         GST_ERROR_OBJECT(dlna_src, "Param uri is NULL\n");
+         break;
+      }
+      if(NULL == key)
+      {
+         GST_ERROR_OBJECT(dlna_src, "Param key is NULL\n");
+         break;
+      }
+      if(NULL == value)
+      {
+         GST_ERROR_OBJECT(dlna_src, "Param value is NULL\n");
+         break;
+      }
+
+      uriParserState.uri = &uriParserUri;
+      uri_parse_ret = uriParseUriA(&uriParserState, uri);
+      if(URI_SUCCESS != uri_parse_ret)
+      {
+         GST_ERROR_OBJECT(dlna_src, "uriParseUriA(%s) failed - errcode: %d\n",
+               uri, uriParserState.errorCode);
+         if(URI_ERROR_SYNTAX == uriParserState.errorCode)
+         {
+            GST_ERROR_OBJECT(dlna_src, "URI syntax error\n");
+         }
+         break; 
+      }
+
+      uri_dissect_ret = uriDissectQueryMallocA(&pOptionsList, 
+            &numOptions, 
+            uriParserUri.query.first,
+            uriParserUri.query.afterLast); 
+      if(URI_SUCCESS != uri_dissect_ret)
+      {
+         GST_ERROR_OBJECT(dlna_src, "Error %d parsing uri (%s) into key/value pairs\n",
+               uri_dissect_ret, uri);
+         break;
+      }
+
+      GST_INFO_OBJECT(dlna_src, "Total number of URI key value pairs = %d\n", numOptions);
+
+      for (pOption = pOptionsList; pOption ;pOption = pOption->next) 
+      {
+         GST_INFO_OBJECT(dlna_src, "%s : %s\n", pOption->key, pOption->value);
+
+         if(!strcmp(pOption->key, key))
+         {
+            bKeyFound = TRUE;
+            if(strlen(pOption->value) >= value_size)
+            {
+               GST_ERROR_OBJECT(dlna_src, "size of value param is less than "
+                     "the value string for key: %s\n", key);
+               break;
+            }
+            g_strlcpy(value, pOption->value, value_size);
+            ret = URI_PARSER_SUCCESS;
+            break;
+         }
+      }
+
+      if(TRUE != bKeyFound)
+      {
+         ret = URI_PARSER_KEY_NOT_FOUND;
+      }
+   }while(0);
+
+   uriFreeQueryListA(pOptionsList);
+   uriFreeUriMembersA(&uriParserUri);
+
+   return ret;
+}
 
 #if GST_CHECK_VERSION(1,0,0)
 static guint
@@ -2237,6 +2346,10 @@ dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri, GError ** error)
 static gboolean
 dlna_src_uri_init (GstDlnaSrc * dlna_src)
 {
+  gchar              max_tsb_duration_str[8] = "1";
+  uri_parser_retcode ret = URI_PARSER_ERROR;
+  guint32            tmp_max_tsb_duration = 0;
+
   GST_DEBUG_OBJECT (dlna_src, "Initializing URI");
 
   if (dlna_src->is_uri_initialized) {
@@ -2247,6 +2360,39 @@ dlna_src_uri_init (GstDlnaSrc * dlna_src)
   if (!dlna_src_uri_gather_info (dlna_src)) {
     GST_ERROR_OBJECT (dlna_src, "Problems gathering URI info");
     return FALSE;
+  }
+ 
+  if(TRUE == dlna_src->is_live)
+  {
+     ret = dlna_src_parse_uri_get_key_val(dlna_src, 
+                                          dlna_src->http_uri, 
+                                          "tsb", 
+                                          max_tsb_duration_str,
+                                          8);
+     if(URI_PARSER_SUCCESS == ret)
+     {
+        GST_DEBUG_OBJECT(dlna_src, "max_tsb_duration_str : %s\n", max_tsb_duration_str);
+        tmp_max_tsb_duration = strtoul(max_tsb_duration_str, NULL, 10);
+        GST_WARNING_OBJECT(dlna_src, "max_tsb_duration from URI in secs: %u\n", 
+              tmp_max_tsb_duration * 60);
+        
+        /* TODO - Remove this check when tsb=1 URI means 1 minute long TSB.
+         * i.e when the TSB duration is not read from rmconfig.ini */
+        if(1 != tmp_max_tsb_duration)
+        {
+           /* convert to seconds */
+           dlna_src->max_tsb_duration = tmp_max_tsb_duration * 60;
+        }
+     }
+     else if(URI_PARSER_KEY_NOT_FOUND == ret)
+     {
+        GST_WARNING_OBJECT(dlna_src, "URI does not have the tsb max duration value\n");
+     }
+     else
+     {
+        GST_ERROR_OBJECT(dlna_src, "Unable to get the TSB max duration value from the URI\n");
+        return FALSE;
+     }
   }
 
   if (!dlna_src_setup_bin (dlna_src)) {
@@ -3488,7 +3634,7 @@ dlna_src_parse_npt_range (GstDlnaSrc * dlna_src, const gchar * field_str,
     gchar ** start_str, gchar ** stop_str, gchar ** total_str,
     guint64 * start, guint64 * stop, guint64 * total)
 {
-   gchar *header = NULL;
+  gchar *header = NULL;
   gchar *header_value = NULL;
 
   gint ret_code = 0;
