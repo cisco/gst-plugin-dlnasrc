@@ -1521,7 +1521,6 @@ static gboolean dlna_src_send_tsb_boundary_event(GstDlnaSrc *dlna_src)
 
       if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
       {
-         gst_event_unref(event);
          event = NULL;
          GST_WARNING("Sending custom downstream OOB event failed!");
          break;
@@ -1724,8 +1723,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
         GST_DEBUG("Sending serverside_pacing custom downstream event\n");
 
         if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
-        {
-           gst_event_unref(event);
+        {           
            event = NULL;
            GST_WARNING("Sending custom downstream event failed!");
            break;
@@ -1759,8 +1757,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
         GST_DEBUG("Sending video-mask custom downstream event\n");
 
         if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
-        {
-           gst_event_unref(event);
+        {           
            event = NULL;
            GST_WARNING("Sending custom downstream event failed!");
            break;
