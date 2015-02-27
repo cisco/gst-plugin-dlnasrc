@@ -257,8 +257,12 @@ static uri_parser_retcode dlna_src_parse_uri_get_key_val(GstDlnaSrc *dlna_src,
 static void gst_dlna_src_uri_handler_init (gpointer g_iface,
     gpointer iface_data);
 
+#if GST_CHECK_VERSION(1,0,0)
 static gboolean dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri,
     GError ** error);
+#else
+static gboolean dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri);
+#endif
 
 static gboolean dlna_src_uri_init (GstDlnaSrc * dlna_src);
 
@@ -641,7 +645,11 @@ gst_dlna_src_set_property (GObject * object, guint prop_id,
 
     case PROP_URI:
     {
+#if GST_CHECK_VERSION(1,0,0)
       if (!dlna_src_uri_assign (dlna_src, g_value_get_string (value), NULL)) {
+#else
+      if (!dlna_src_uri_assign (dlna_src, g_value_get_string (value))) {
+#endif
         GST_ELEMENT_ERROR (dlna_src, RESOURCE, READ,
             ("%s() - unable to set URI: %s",
                 __FUNCTION__, g_value_get_string (value)), NULL);
@@ -2270,7 +2278,7 @@ gst_dlna_src_uri_set_uri(GstURIHandler * handler, const gchar * uri)
   GST_INFO_OBJECT (dlna_src, "uri handler called to set uri: %s, current: %s",
       uri, dlna_src->dlna_uri);
 
-  return dlna_src_uri_assign (dlna_src, uri, NULL);
+  return dlna_src_uri_assign (dlna_src, uri);
 }
 #endif
 
@@ -2294,7 +2302,11 @@ gst_dlna_src_uri_handler_init (gpointer g_iface, gpointer iface_data)
  * to unlinked.
  */
 static gboolean
+#if GST_CHECK_VERSION(1,0,0)
 dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri, GError ** error)
+#else
+dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri)
+#endif
 {
   gboolean ret = FALSE;
   gchar *dlna_prefix = "dlna+";
@@ -2303,7 +2315,9 @@ dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri, GError ** error)
 
   if (uri == NULL)
   {
+#if GST_CHECK_VERSION(1,0,0)
     g_set_error (error, GST_URI_ERROR, GST_URI_ERROR_BAD_URI, "Bad URI passed");
+#endif
     return FALSE;
   }
 
@@ -2330,9 +2344,13 @@ dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri, GError ** error)
   }
 
   ret = dlna_src_uri_init (dlna_src);
+#if GST_CHECK_VERSION(1,0,0)
   if (ret != TRUE)
+  {
      g_set_error (error, GST_URI_ERROR, GST_URI_ERROR_UNSUPPORTED_PROTOCOL,
                   "Source doesn't support the requested protocol");
+  }
+#endif
   return ret;
 }
 
