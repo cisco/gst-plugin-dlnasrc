@@ -616,11 +616,22 @@ gst_dlna_src_finalize (GObject * object)
 
   dlna_src_soup_session_close (dlna_src);
 
+  g_free (dlna_src->npt_start_str);
+  dlna_src->npt_start_str = NULL;
+  g_free (dlna_src->npt_end_str);
+  dlna_src->npt_end_str = NULL;
+  g_free (dlna_src->npt_duration_str);
+  dlna_src->npt_duration_str = NULL;
+  
   dlna_src_head_response_free_struct (dlna_src, dlna_src->server_info);
-
+  dlna_src->server_info = NULL;
+  
   g_free (dlna_src->dtcp_key_storage);
+  dlna_src->dtcp_key_storage = NULL;
   g_free (dlna_src->dlna_uri);
+  dlna_src->dlna_uri = NULL;
   g_free (dlna_src->http_uri);
+  dlna_src->http_uri = NULL;
 
   G_OBJECT_CLASS (parent_class)->finalize (object);
 }
@@ -1731,7 +1742,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
         GST_DEBUG("Sending serverside_pacing custom downstream event\n");
 
         if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
-        {           
+        {
            event = NULL;
            GST_WARNING("Sending custom downstream event failed!");
            break;
@@ -1765,7 +1776,7 @@ dlna_src_handle_event_seek (GstDlnaSrc * dlna_src, GstPad * pad,
         GST_DEBUG("Sending video-mask custom downstream event\n");
 
         if (gst_pad_push_event (dlna_src->src_pad, event) != TRUE)
-        {           
+        {
            event = NULL;
            GST_WARNING("Sending custom downstream event failed!");
            break;
@@ -2573,7 +2584,6 @@ dlna_src_setup_dtcp (GstDlnaSrc * dlna_src)
 static gboolean
 dlna_src_uri_gather_info (GstDlnaSrc * dlna_src)
 {
-  GString *struct_str = g_string_sized_new (MAX_HTTP_BUF_SIZE);
 
   gchar *content_features_head_request_headers[][2] =
       { {HEADER_GET_CONTENT_FEATURES_TITLE,
@@ -2677,15 +2687,19 @@ dlna_src_uri_gather_info (GstDlnaSrc * dlna_src)
   } else {
     GST_INFO_OBJECT (dlna_src, "Not issuing another HEAD request");
   }
-
+ 
   /* Print out results of HEAD request */
-  dlna_src_head_response_struct_to_str (dlna_src, dlna_src->server_info,
-      struct_str);
+  if (gst_debug_category_get_threshold(gst_dlna_src_debug) >= GST_LEVEL_INFO)
+  {
+    GString *struct_str = g_string_sized_new (MAX_HTTP_BUF_SIZE);
+    dlna_src_head_response_struct_to_str (dlna_src, dlna_src->server_info,
+        struct_str);
 
-  GST_INFO_OBJECT (dlna_src, "Parsed HEAD Response into struct: %s",
-      struct_str->str);
+    GST_INFO_OBJECT (dlna_src, "Parsed HEAD Response into struct: %s",
+        struct_str->str);
 
-  g_string_free (struct_str, TRUE);
+    g_string_free (struct_str, TRUE);
+  }
 
   return TRUE;
 }
@@ -2719,7 +2733,8 @@ dlna_src_soup_issue_head (GstDlnaSrc * dlna_src, gsize header_array_size,
         soup_session_send_message (dlna_src->soup_session, soup_msg);
 
      /* Print out HEAD request & response */
-     dlna_src_soup_log_msg (dlna_src, soup_msg);
+     if (gst_debug_category_get_threshold(gst_dlna_src_debug) >= GST_LEVEL_INFO)
+        dlna_src_soup_log_msg (dlna_src, soup_msg);
 
      /* Make sure return code from HEAD response is some form of success */
      if (head_response->ret_code != HTTP_STATUS_OK &&
@@ -2773,11 +2788,12 @@ dlna_src_update_overall_info (GstDlnaSrc * dlna_src,
   GST_INFO_OBJECT (dlna_src, "Called");
 
   guint64 content_size;
-  GString *npt_str = g_string_sized_new (32);
+  GString *npt_str = g_string_sized_new (64);
 
   if (!head_response) {
     GST_WARNING_OBJECT (dlna_src,
         "No head response, can't determine info about content");
+    g_string_free (npt_str, TRUE);
     return FALSE;
   }
 
@@ -2936,10 +2952,6 @@ static void
 dlna_src_head_response_free_struct (GstDlnaSrc * dlna_src,
     GstDlnaSrcHeadResponse * head_response)
 {
-  g_free (dlna_src->npt_start_str);
-  g_free (dlna_src->npt_end_str);
-  g_free (dlna_src->npt_duration_str);
-
   int i = 0;
   if (head_response) {
     if (head_response->content_features) {
@@ -4727,45 +4739,46 @@ dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
 {
   /* Issue head to get conversion info */
   GstDlnaSrcHeadResponse *head_response = NULL;
-  gchar head_request_str[MAX_HTTP_BUF_SIZE] = { 0 };
-  gint head_request_max_size = MAX_HTTP_BUF_SIZE;
+  GString *head_request_str = g_string_sized_new(MAX_HTTP_BUF_SIZE);
   gchar tmpStr[32] = { 0 };
   gsize tmp_str_max_size = 32;
   gchar *time_seek_head_request_headers[][2] =
       { {HEADER_TIME_SEEK_RANGE_TITLE, HEADER_TIME_SEEK_RANGE_VALUE} };
   gsize time_seek_head_request_headers_array_size = 1;
-
+  
   /* Convert start time from nanos into secs string */
   guint64 npt_secs = npt_nanos / GST_SECOND;
 
   if (!dlna_src_head_response_init_struct (dlna_src, &head_response)) {
     GST_ERROR_OBJECT (dlna_src,
         "Problems initializing struct to store HEAD response");
+    g_string_free(head_request_str, TRUE);
     return FALSE;
   }
 
   /* Include time seek range to get conversion values */
-  if (g_strlcat (head_request_str, "TimeSeekRange.dlna.org: npt=",
-          head_request_max_size) >= head_request_max_size)
+  if (g_strlcat (head_request_str->str, "TimeSeekRange.dlna.org: npt=",
+          head_request_str->allocated_len) >= head_request_str->allocated_len)
     goto overflow;
 
   /* Include starting npt (since bytes are only included in response) */
   g_snprintf (tmpStr, tmp_str_max_size, "%" G_GUINT64_FORMAT, npt_secs);
-  if (g_strlcat (head_request_str, tmpStr,
-          head_request_max_size) >= head_request_max_size)
+  if (g_strlcat (head_request_str->str, tmpStr,
+          head_request_str->allocated_len) >= head_request_str->allocated_len)
     goto overflow;
 
-  if (g_strlcat (head_request_str, "-",
-          head_request_max_size) >= head_request_max_size)
+  if (g_strlcat (head_request_str->str, "-",
+          head_request_str->allocated_len) >= head_request_str->allocated_len)
     goto overflow;
-  if (g_strlcat (head_request_str, CRLF,
-          head_request_max_size) >= head_request_max_size)
+  if (g_strlcat (head_request_str->str, CRLF,
+          head_request_str->allocated_len) >= head_request_str->allocated_len)
     goto overflow;
 
   if (!dlna_src_soup_issue_head (dlna_src,
           time_seek_head_request_headers_array_size,
           time_seek_head_request_headers, head_response, FALSE)) {
     GST_WARNING_OBJECT (dlna_src, "Problems with HEAD request");
+    g_string_free(head_request_str, TRUE);
     return FALSE;
   }
 
@@ -4775,13 +4788,15 @@ dlna_src_convert_npt_nanos_to_bytes (GstDlnaSrc * dlna_src, guint64 npt_nanos,
       GST_TIME_ARGS (npt_nanos), *bytes);
 
   dlna_src_head_response_free_struct (dlna_src, head_response);
+  g_string_free(head_request_str, TRUE);
 
   return TRUE;
 
 overflow:
   GST_ERROR_OBJECT (dlna_src,
       "Overflow - exceeded head request string size of: %d",
-      head_request_max_size);
+      head_request_str->allocated_len);
+  g_string_free(head_request_str, TRUE);
   return FALSE;
 }
 
@@ -4863,7 +4878,7 @@ dlna_src_nanos_to_npt (GstDlnaSrc * dlna_src, guint64 media_time_nanos,
   gint minutes = remainder / (60 * 1000);
   float seconds = roundf ((remainder % (60 * 1000))) / 1000.0;
 
-  g_string_append_printf (npt_str, "%d:%02d:%02.3f", hours, minutes, seconds);
+  g_string_printf (npt_str, "%d:%02d:%02.3f", hours, minutes, seconds);
 }
 
 
