@@ -566,6 +566,7 @@ gst_dlna_src_init (GstDlnaSrc * dlna_src)
 
   dlna_src->kill_boundary_thread = FALSE;
   g_mutex_init(&dlna_src->boundary_thread_mutex);
+  g_mutex_init(&dlna_src->parse_msg_mutex);
 
   dlna_src->last_tsb_slide = 0;
 
@@ -2334,6 +2335,7 @@ dlna_src_uri_assign (GstDlnaSrc * dlna_src, const gchar * uri)
 
   if (dlna_src->dlna_uri) {
     dlna_src_head_response_free_struct (dlna_src, dlna_src->server_info);
+    dlna_src->server_info = NULL;
     g_free (dlna_src->dlna_uri);
     dlna_src->dlna_uri = NULL;
     g_free (dlna_src->http_uri);
@@ -2746,9 +2748,12 @@ dlna_src_soup_issue_head (GstDlnaSrc * dlna_src, gsize header_array_size,
               head_response->ret_code, head_response->ret_msg);
         break;
      }
+     
+     g_mutex_lock(&dlna_src->parse_msg_mutex);
      /* Parse HEAD response to gather info about URI content item */
      if (!dlna_src_head_response_parse (dlna_src, soup_msg, head_response)) {
         GST_WARNING_OBJECT (dlna_src, "Problems parsing HEAD response");
+        g_mutex_unlock(&dlna_src->parse_msg_mutex);
         break;
      }
 
@@ -2759,7 +2764,8 @@ dlna_src_soup_issue_head (GstDlnaSrc * dlna_src, gsize header_array_size,
            GST_WARNING_OBJECT (dlna_src, "Problems initializing content info");
      } else
         GST_INFO_OBJECT (dlna_src, "Not updating overall info");
-
+     
+     g_mutex_unlock(&dlna_src->parse_msg_mutex);
      ret = TRUE;
 
   }while(0);
@@ -3082,6 +3088,7 @@ dlna_src_head_response_parse (GstDlnaSrc * dlna_src, SoupMessage *soup_msg,
       GST_INFO_OBJECT (dlna_src, "No Idx found for Field:%s", header_name);
   }
 
+  
   /* Parse value from each field header string */
   for (i = 0; i < HEAD_RESPONSE_HEADERS_CNT; i++) {
     if (field_values[i] != NULL) {
@@ -3089,7 +3096,7 @@ dlna_src_head_response_parse (GstDlnaSrc * dlna_src, SoupMessage *soup_msg,
           field_values[i]);
     }
   }
-
+  
   return TRUE;
 }
 

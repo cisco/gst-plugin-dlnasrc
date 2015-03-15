@@ -112,6 +112,8 @@ struct _GstDlnaSrc
 
     guint32 max_tsb_duration;
     guint32 last_tsb_slide;
+
+    GMutex parse_msg_mutex;
 };
 
 struct _GstDlnaSrcHeadResponse
