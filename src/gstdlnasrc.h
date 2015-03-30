@@ -65,7 +65,6 @@ struct _GstDlnaSrc
     gchar *http_uri;
 
     SoupSession *soup_session;
-    SoupMessage *soup_msg;
 
     GstDlnaSrcHeadResponse* server_info;
 
@@ -81,6 +80,7 @@ struct _GstDlnaSrc
 
     gboolean is_uri_initialized;
     gboolean is_live;
+    gboolean is_recInProgress;
     gboolean is_encrypted;
 
     gboolean byte_seek_supported;
@@ -95,6 +95,25 @@ struct _GstDlnaSrc
     guint64 npt_start_nanos;
     guint64 npt_end_nanos;
     guint64 npt_duration_nanos;
+
+    gboolean forward_event;
+
+    gboolean in_tsb;
+    gboolean seek_to_play;
+
+    guint32 tune_start_pts;
+    guint32 start_pts;
+    guint32 end_pts;
+
+    GThread *boundary_thread;
+    GCond boundary_thread_cond;
+    GMutex boundary_thread_mutex;
+    gboolean kill_boundary_thread;
+
+    guint32 max_tsb_duration;
+    guint32 last_tsb_slide;
+
+    GMutex parse_msg_mutex;
 };
 
 struct _GstDlnaSrcHeadResponse
@@ -175,6 +194,9 @@ struct _GstDlnaSrcHeadResponse
 
     GstDlnaSrcHeadResponseContentFeatures* content_features;
     gint  content_features_idx;
+
+    guint32 start_pts;
+    guint32 end_pts;
 };
 
 struct _GstDlnaSrcHeadResponseContentFeatures
